@@ -36,6 +36,10 @@ pnpm test              # 全仓测试（61 个用例）
 合约端点 `fapi.binance.com` 与 WS 端点均可用 `BINANCE_*_BASE_URL` 环境变量显式覆盖（如走代理/镜像）。
 `GET /api/health` 返回 `binance: { ok, host }` 展示当前选中的可用主机。
 
+**行情实现选择**（`.env` `BINANCE_PROVIDER`）：
+- `native`（默认）：自研轻量客户端（REST 多主机回退 + WS 自动重连），零依赖、已实测国内网络可用；
+- `official`：币安官方自动生成连接器（`@binance/spot` / `@binance/derivatives-trading-usds-futures`），REST 走官方 SDK 并支持 `basePath` 指向回退主机（`data-api.binance.vision`），WebSocket 复用内置客户端。两种实现都实现同一 `MarketDataProvider` 接口，业务层无感知。
+
 ```bash
 pnpm dev:api   # http://127.0.0.1:3000 （默认 .env，真实 Binance 行情）
 pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）

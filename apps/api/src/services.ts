@@ -1,5 +1,5 @@
 import { createStorage, type StorageAdapter } from '@agentwin/db';
-import { BinanceMarketData, MockMarketData, type MarketDataProvider } from '@agentwin/market';
+import { BinanceMarketData, BinanceOfficialMarketData, MockMarketData, type MarketDataProvider } from '@agentwin/market';
 import { registerBuiltinStrategies, builtinRegistry } from '@agentwin/strategy';
 import { LLMService } from '@agentwin/llm';
 import { TradingToolkit } from '@agentwin/llm';
@@ -22,17 +22,22 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   const storage = createStorage({ engine: config.dbEngine as 'sqlite', path: config.dbPath });
   await storage.init();
 
-  // 行情源：Binance 真实数据；环境变量 AGENTWIN_USE_MOCK=1 时使用 Mock（离线开发）
-  // api.binance.com 不可达时自动回退到 data-api.binance.vision（可通过 BINANCE_*_BASE_URL 覆盖）
+  // 行情源选择：
+  //   AGENTWIN_USE_MOCK=1        → Mock（离线开发）
+  //   BINANCE_PROVIDER=official  → 官方自动生成连接器（@binance/spot 等，basePath 多主机回退）
+  //   默认 native                → 自研轻量客户端（多主机自动回退，已实测国内网络可用）
+  const baseOpts = {
+    apiKey: config.binanceApiKey,
+    apiSecret: config.binanceApiSecret,
+    spotBaseUrl: process.env.BINANCE_SPOT_BASE_URL,
+    futuresBaseUrl: process.env.BINANCE_FUTURES_BASE_URL,
+    dataApiBaseUrl: process.env.BINANCE_DATA_API_BASE_URL,
+  };
   const marketData: MarketDataProvider = process.env.AGENTWIN_USE_MOCK === '1'
     ? new MockMarketData()
-    : new BinanceMarketData({
-        apiKey: config.binanceApiKey,
-        apiSecret: config.binanceApiSecret,
-        spotBaseUrl: process.env.BINANCE_SPOT_BASE_URL,
-        futuresBaseUrl: process.env.BINANCE_FUTURES_BASE_URL,
-        dataApiBaseUrl: process.env.BINANCE_DATA_API_BASE_URL,
-      });
+    : process.env.BINANCE_PROVIDER === 'official'
+      ? new BinanceOfficialMarketData(baseOpts)
+      : new BinanceMarketData(baseOpts);
   await marketData.init();
 
   const llm = new LLMService({ provider: config.llmProvider, model: config.llmModel });

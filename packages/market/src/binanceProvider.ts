@@ -2,7 +2,7 @@ import type { Candle, Interval, Market, SymbolInfo, Ticker } from '@agentwin/sha
 import type { KlineQuery, MarketDataProvider, MarketEvent, PingResult, StreamSubscription, Unsubscribe } from './provider.ts';
 import { BinanceRest, type RestOptions } from './binance/rest.ts';
 import { BinanceWs, aggTradeStream, bookTickerStream, klineStream, markPriceStream } from './binance/ws.ts';
-import type { RawWsAggTrade, RawWsBookTicker, RawWsKline, RawWsMarkPrice } from './binance/types.ts';
+import { toMarketEvent } from './events.ts';
 
 /** Binance 真实行情适配：REST（历史 K 线/行情）+ WebSocket（实时），多主机自动回退 */
 export class BinanceMarketData implements MarketDataProvider {
@@ -65,7 +65,7 @@ export class BinanceMarketData implements MarketDataProvider {
     }
     const stream = this.wsStreamFor(sub);
     const handler = (raw: Record<string, unknown>) => {
-      const ev = this.toEvent(sub, raw);
+      const ev = toMarketEvent(sub, raw);
       if (ev) cb(ev);
     };
     const unsubscribe = this.ws.subscribe(stream, handler);
@@ -85,32 +85,4 @@ export class BinanceMarketData implements MarketDataProvider {
     }
   }
 
-  private toEvent(sub: StreamSubscription, raw: Record<string, unknown>): MarketEvent | null {
-    const base = { symbol: sub.symbol, market: sub.market, stream: sub.stream };
-    switch (sub.stream) {
-      case 'kline': {
-        const k = raw['k'] as RawWsKline['k'];
-        if (!k) return null;
-        return { ...base, candle: {
-          openTime: k.t, open: parseFloat(k.o), high: parseFloat(k.h), low: parseFloat(k.l),
-          close: parseFloat(k.c), volume: parseFloat(k.v), closeTime: k.T,
-          quoteVolume: parseFloat(k.q), trades: k.n, takerBuyBase: parseFloat(k.V), takerBuyQuote: parseFloat(k.Q),
-        } };
-      }
-      case 'aggTrade': {
-        const a = raw as unknown as RawWsAggTrade;
-        return { ...base, aggTrade: { id: a.a, price: parseFloat(a.p), qty: parseFloat(a.q), time: a.T, isBuyerMaker: a.m } };
-      }
-      case 'bookTicker': {
-        const b = raw as unknown as RawWsBookTicker;
-        return { ...base, bookTicker: {
-          bidPrice: parseFloat(b.b), bidQty: parseFloat(b.B), askPrice: parseFloat(b.a), askQty: parseFloat(b.A),
-        } };
-      }
-      case 'markPrice': {
-        const m = raw as unknown as RawWsMarkPrice;
-        return { ...base, markPrice: { markPrice: parseFloat(m.p), indexPrice: parseFloat(m.i), fundingRate: parseFloat(m.r), nextFundingTime: m.T } };
-      }
-    }
-  }
 }
