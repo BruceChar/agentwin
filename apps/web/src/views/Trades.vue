@@ -54,7 +54,8 @@ const cards = computed(() => {
 });
 
 async function load() {
-  accounts.value = await api.get<AccountSummary[]>('/accounts');
+  const res = await api.get<{ accounts: AccountSummary[] }>('/accounts');
+  accounts.value = res.accounts;
   if (!accountId.value) accountId.value = accounts.value[0]?.id ?? '';
   const q = accountId.value ? '?accountId=' + accountId.value : '';
   agg.value = await api.get<TradeAgg>('/pnl' + q);

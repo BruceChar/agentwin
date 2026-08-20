@@ -101,7 +101,8 @@ function renderCurve(points: EquityPoint[]) {
 }
 
 async function load() {
-  accounts.value = await api.get<AccountSummary[]>('/accounts');
+  const res = await api.get<{ accounts: AccountSummary[] }>('/accounts');
+  accounts.value = res.accounts;
   if (!accountId.value) accountId.value = accounts.value.find((a) => a.type === 'real')?.id ?? accounts.value[0]?.id ?? '';
   const cur = accounts.value.find((a) => a.id === accountId.value);
   if (!cur) return;
@@ -134,8 +135,8 @@ async function syncNow() {
 }
 
 onMounted(async () => {
-  await load();
-  binanceStatus.value = await api.get<{ configured: boolean; reachable: boolean; message?: string }>('/binance/status').catch(() => null);
+  await load().catch(() => { /* 账户加载失败不阻断状态查询 */ });
+  binanceStatus.value = await api.get<{ configured: boolean; reachable: boolean; message?: string; proxy?: { enabled: boolean; url?: string; mode: string; source: string } }>('/binance/status').catch(() => null);
 });
 </script>
 
