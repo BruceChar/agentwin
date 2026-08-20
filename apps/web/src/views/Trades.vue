@@ -1,5 +1,14 @@
 <template>
   <div>
+    <el-card shadow="never" class="mb">
+      <div class="row">
+        <span class="label">账户：</span>
+        <el-select v-model="accountId" style="width: 220px" @change="load">
+          <el-option v-for="a in accounts" :key="a.id" :value="a.id" :label="(a.type === 'real' ? '真实 ' : '模拟 ') + a.name" />
+        </el-select>
+        <el-button size="small" @click="load">刷新</el-button>
+      </div>
+    </el-card>
     <el-row :gutter="16">
       <el-col :span="4" v-for="c in cards" :key="c.label">
         <el-card shadow="never" class="metric"><div class="mlabel">{{ c.label }}</div><div class="mvalue" :class="c.cls">{{ c.text }}</div></el-card>
@@ -22,8 +31,10 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { api, type Trade, type TradeAgg } from '../api.ts';
+import { api, type AccountSummary, type Trade, type TradeAgg } from '../api.ts';
 
+const accounts = ref<AccountSummary[]>([]);
+const accountId = ref('');
 const agg = ref<TradeAgg | null>(null);
 const trades = ref<Trade[]>([]);
 
@@ -42,14 +53,22 @@ const cards = computed(() => {
   ];
 });
 
-onMounted(async () => {
-  agg.value = await api.get<TradeAgg>('/pnl');
-  trades.value = (await api.get<{ trades: Trade[] }>('/trades?limit=200')).trades;
-});
+async function load() {
+  accounts.value = await api.get<AccountSummary[]>('/accounts');
+  if (!accountId.value) accountId.value = accounts.value[0]?.id ?? '';
+  const q = accountId.value ? '?accountId=' + accountId.value : '';
+  agg.value = await api.get<TradeAgg>('/pnl' + q);
+  trades.value = (await api.get<{ trades: Trade[] }>('/trades' + (q ? q + '&' : '?') + 'limit=200')).trades;
+}
+
+onMounted(load);
 </script>
 
 <style scoped>
+.mb { margin-bottom: 16px; }
 .mt { margin-top: 16px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.label { font-weight: 600; }
 .metric { text-align: center; }
 .mlabel { color: #999; font-size: 12px; }
 .mvalue { font-size: 18px; font-weight: 700; margin-top: 4px; }

@@ -20,7 +20,7 @@ function str(v: unknown, dflt = ''): string {
 }
 
 export function registerRoutes(app: FastifyInstance, services: AppServices, paper: PaperManager): void {
-  const { storage, marketData, toolkit, llm, sentiment } = services;
+  const { storage, marketData, toolkit, llm, sentiment, rest, sync } = services;
 
   // ---------------- 健康检查 ----------------
   app.get('/api/health', async () => {
@@ -88,7 +88,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   });
 
   app.post('/api/accounts', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const account = await storage.createAccount({
       name: str(b['name'], 'account-' + Date.now().toString(36)),
       type: (b['type'] === 'real' ? 'real' : 'paper') as 'paper' | 'real',
@@ -116,7 +116,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   app.get('/api/strategies', async () => ({ strategies: await storage.listStrategies() }));
 
   app.post('/api/strategies', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const name = str(b['name']);
     if (!builtinRegistry.has(name)) return app.httpErrors.badRequest('unknown strategy kind: ' + name);
     const now = Date.now();
@@ -141,7 +141,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   });
 
   app.patch('/api/strategies/:id', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const patch: Record<string, unknown> = {};
     if (b['params'] !== undefined) patch['parameters'] = b['params'];
     if (b['enabled'] !== undefined) patch['enabled'] = b['enabled'] === true;
@@ -153,7 +153,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
 
   // ---------------- 回测 ----------------
   app.post('/api/backtest', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const name = str(b['strategy']);
     const strategy = builtinRegistry.create(name);
     if (!strategy) return app.httpErrors.badRequest('unknown strategy: ' + name);
@@ -188,7 +188,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
 
   // ---------------- Paper Trading ----------------
   app.post('/api/paper/start', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     let accountId = str(b['accountId']);
     if (!accountId) {
       const accounts = await storage.listAccounts();
@@ -212,6 +212,53 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   app.post('/api/paper/stop', async () => paper.stop());
   app.get('/api/paper/status', async () => paper.status());
 
+  // ---------------- Binance 真实账户（只读） ----------------
+  app.get('/api/binance/status', async () => sync.status());
+
+  app.post('/api/binance/sync', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    return sync.syncAll({
+      symbols: Array.isArray(b['symbols']) ? (b['symbols'] as string[]) : [],
+      limitPerSymbol: num(b['limit'], 100),
+    });
+  });
+
+  app.get('/api/binance/account', async () => {
+    try {
+      const [spot, futures] = await Promise.all([rest.spotAccount(), rest.futuresAccount()]);
+      return { spot, futures };
+    } catch (e) {
+      return app.httpErrors.serviceUnavailable(e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  app.get('/api/binance/trades', async (req) => {
+    const q = req.query as Body;
+    const symbol = str(q['symbol'], 'BTCUSDT').toUpperCase();
+    const limit = num(q['limit'], 100);
+    try {
+      const [spot, futures] = await Promise.all([
+        rest.myTrades('SPOT', symbol, { limit }).catch(() => []),
+        rest.myTrades('USDT_M', symbol, { limit }).catch(() => []),
+      ]);
+      return { symbol, spot, futures };
+    } catch (e) {
+      return app.httpErrors.serviceUnavailable(e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  app.get('/api/binance/orders', async () => {
+    try {
+      const [spot, futures] = await Promise.all([
+        rest.openOrders('SPOT').catch(() => []),
+        rest.openOrders('USDT_M').catch(() => []),
+      ]);
+      return { spot, futures };
+    } catch (e) {
+      return app.httpErrors.serviceUnavailable(e instanceof Error ? e.message : String(e));
+    }
+  });
+
   // ---------------- 交易 & 盈亏 ----------------
   app.get('/api/trades', async (req) => {
     const q = req.query as Body;
@@ -226,7 +273,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
 
   // ---------------- LLM ----------------
   app.post('/api/llm/chat', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const message = str(b['message']);
     if (!message) return app.httpErrors.badRequest('message required');
     const sessionId = str(b['sessionId'], 'adv-' + Date.now().toString(36));
@@ -242,7 +289,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
 
   // 流式聊天（SSE）：POST /api/llm/chat-stream
   app.post('/api/llm/chat-stream', async (req, reply) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const message = str(b['message']);
     if (!message) return app.httpErrors.badRequest('message required');
     const sessionId = str(b['sessionId'], 'adv-' + Date.now().toString(36));
@@ -280,7 +327,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   });
 
   app.post('/api/llm/iterate', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const strategyId = str(b['strategyId']);
     const config = strategyId ? await storage.getStrategy(strategyId) : null;
     if (!config) return app.httpErrors.badRequest('strategy config not found: ' + strategyId);
@@ -309,7 +356,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   });
 
   app.post('/api/llm/analyze-journal', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const trades = await storage.listTrades({ limit: num(b['tradeLimit'], 50) });
     const journal = await storage.listJournalEntries({ limit: num(b['journalLimit'], 20) });
     const agent = new JournalAnalyzer(llm);
@@ -322,14 +369,14 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
 
   // ---------------- 舆情 ----------------
   app.post('/api/sentiment/scan', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const symbol = str(b['symbol'], 'BTCUSDT').toUpperCase();
     const res = await sentiment.scan(symbol, { useLLM: b['useLLM'] === true });
     return res;
   });
 
   app.post('/api/sentiment/score', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const symbol = str(b['symbol'], 'BTCUSDT').toUpperCase();
     const rec = await sentiment.scanManual(symbol, str(b['headline']), b['body'] !== undefined ? str(b['body']) : undefined, true);
     return rec;
@@ -347,7 +394,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   });
 
   app.post('/api/journal', async (req) => {
-    const b = req.body as Body;
+    const b = (req.body ?? {}) as Body;
     const entry = await storage.createJournalEntry({
       kind: (['trade', 'insight', 'review', 'note'].includes(str(b['kind'])) ? str(b['kind']) : 'note') as 'note',
       title: str(b['title'], '无标题'),

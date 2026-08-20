@@ -62,6 +62,15 @@ pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）
 - `DuckdbStorage`：`DB_ENGINE=duckdb` 切换，列存向量化，适合大量 K 线与回测数据（schema 用 BIGINT/DOUBLE 保证跨引擎一致）；
 - Postgres 适配（多进程/远程）按同一接口补充即可，业务层无感知。
 
+## 真实账户（只读对账）
+
+在 `.env` 配置 `BINANCE_API_KEY` / `BINANCE_API_SECRET` 后，系统会：
+- 启动时自动创建「真实」账户（`binance-real`）并**自动同步一次**：现货余额 + 合约钱包/持仓 + 最近成交（按余额币种 + 默认列表，每币种 100 条，幂等去重）；
+- 提供 `POST /api/binance/sync`（手动全量同步）、`GET /api/binance/account`（实时快照）、`GET /api/binance/trades?symbol=`（实时成交）、`GET /api/binance/orders`（当前挂单）、`GET /api/binance/status`（Key 配置与官方接口连通性）；
+- 看板「总览」可切换真实/模拟账户并点击「从币安同步」，「交易与盈亏」页可切换账户查看。
+
+> 注意：私有接口（签名请求）只对官方主端点 `api.binance.com` / `fapi.binance.com` 有效——如果这两个域名在你的网络不可达（DNS 污染），同步会失败并在看板给出提示，此时请配置代理或 `BINANCE_*_BASE_URL` 指向可用的主端点镜像。全程只读，不会通过同步模块下单。
+
 ## Paper Trading 设计
 
 - 订阅 Binance **真实行情**（REST 300 根预热 + WebSocket 实时），成交价含滑点与手续费模拟；

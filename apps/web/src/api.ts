@@ -32,7 +32,7 @@ export interface TradeAgg {
   netPnl: number; grossProfit: number; grossLoss: number; profitFactor: number; feesPaid: number;
 }
 export interface AccountSummary {
-  id: string; name: string; type: string; balances: { asset: string; free: number }[];
+  id: string; name: string; type: string; balances: { asset: string; free: number; locked: number }[];
   positions: { symbol: string; side: string; quantity: number; avgEntryPrice: number; unrealizedPnl: number }[];
   equity: number | null; totalTrades: number; netPnl: number; winRate: number;
 }

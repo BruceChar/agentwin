@@ -1,16 +1,20 @@
 import { createStorage, type StorageAdapter } from '@agentwin/db';
-import { BinanceMarketData, BinanceOfficialMarketData, MockMarketData, type MarketDataProvider } from '@agentwin/market';
+import { BinanceMarketData, BinanceOfficialMarketData, BinanceRest, MockMarketData, type MarketDataProvider } from '@agentwin/market';
 import { registerBuiltinStrategies, builtinRegistry } from '@agentwin/strategy';
 import { LLMService } from '@agentwin/llm';
 import { TradingToolkit } from '@agentwin/llm';
 import { SentimentAnalyzer } from '@agentwin/llm';
 import { SentimentService } from '@agentwin/sentiment';
+import { BinanceAccountSync } from './binance-sync.ts';
 import type { AppConfig } from './config.ts';
 
 export interface AppServices {
   config: AppConfig;
   storage: StorageAdapter;
   marketData: MarketDataProvider;
+  /** Binance 私有接口（真实账户同步；仅只读） */
+  rest: BinanceRest;
+  sync: BinanceAccountSync;
   llm: LLMService;
   toolkit: TradingToolkit;
   sentiment: SentimentService;
@@ -58,7 +62,26 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     analyzer: new SentimentAnalyzer(llm),
   });
 
-  return { config, storage, marketData, llm, toolkit, sentiment };
+  // Binance 私有接口 + 真实账户同步（key 只对官方主端点有效）
+  const rest = new BinanceRest({
+    apiKey: config.binanceApiKey,
+    apiSecret: config.binanceApiSecret,
+    spotBaseUrl: process.env.BINANCE_SPOT_BASE_URL,
+    futuresBaseUrl: process.env.BINANCE_FUTURES_BASE_URL,
+  });
+  const sync = new BinanceAccountSync(storage, rest, marketData);
+
+  const services: AppServices = { config, storage, marketData, rest, sync, llm, toolkit, sentiment };
+
+  // 配置了 key 且非 Mock 模式：启动后自动同步一次真实账户（不阻塞启动）
+  if (process.env.AGENTWIN_USE_MOCK !== '1' && config.binanceApiKey && config.binanceApiSecret) {
+    void services.sync.syncAll().then((r) => {
+      if (r.ok) console.log('[sync] 真实账户已同步: 余额 ' + r.balancesUpserted + ' 笔, 合约持仓 ' + r.futuresPositions + ' 个, 成交 ' + r.tradesSynced + ' 条');
+      else console.warn('[sync] 真实账户同步失败: ' + (r.message ?? 'unknown'));
+    }).catch((e) => console.warn('[sync] 真实账户同步异常: ' + (e instanceof Error ? e.message : String(e))));
+  }
+
+  return services;
 }
 
 export async function closeServices(services: AppServices): Promise<void> {

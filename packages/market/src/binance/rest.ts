@@ -169,17 +169,133 @@ export class BinanceRest {
     return raw.map((a) => ({ id: a.a, price: parseFloat(a.p), qty: parseFloat(a.q), time: a.T, isBuyerMaker: a.m }));
   }
 
-  /** 私有只读：账户信息（用于真实账户对账，本系统不会用它下单） */
-  async accountBalances(market: Market): Promise<Record<string, number>> {
-    const raw = await this.request<{ balances?: { asset: string; free: string; locked: string }[]; assets?: { asset: string; walletBalance: string; availableBalance: string }[] }>(
-      market, 'GET', market === 'SPOT' ? '/api/v3/account' : '/fapi/v2/account', { recvWindow: 10000 }, true,
+  // ================= 私有只读：账户/成交/挂单（真实账户对账用；本系统从不经此下单） =================
+
+  /** 现货账户：全部资产余额 */
+  async spotAccount(): Promise<SpotAccountInfo> {
+    const raw = await this.request<{
+      balances?: { asset: string; free: string; locked: string }[];
+      canTrade?: boolean; accountType?: string;
+    }>('SPOT', 'GET', '/api/v3/account', { recvWindow: 10000 }, true);
+    return {
+      balances: (raw.balances ?? []).map((b) => ({ asset: b.asset, free: parseFloat(b.free), locked: parseFloat(b.locked) })),
+    };
+  }
+
+  /** U本位合约账户：钱包余额 + 持仓 */
+  async futuresAccount(): Promise<FuturesAccountInfo> {
+    const raw = await this.request<{
+      assets?: { asset: string; walletBalance: string; availableBalance: string }[];
+      positions?: {
+        symbol: string; positionSide: string; positionAmt: string; entryPrice: string;
+        markPrice: string; unrealizedProfit: string; realizedProfit: string;
+      }[];
+      totalWalletBalance?: string; totalUnrealizedProfit?: string; totalMarginBalance?: string;
+    }>('USDT_M', 'GET', '/fapi/v2/account', { recvWindow: 10000 }, true);
+    return {
+      balances: (raw.assets ?? []).map((a) => ({ asset: a.asset, walletBalance: parseFloat(a.walletBalance), availableBalance: parseFloat(a.availableBalance) })),
+      positions: (raw.positions ?? [])
+        .filter((p) => parseFloat(p.positionAmt) !== 0)
+        .map((p) => ({
+          symbol: p.symbol, positionSide: p.positionSide, positionAmt: parseFloat(p.positionAmt),
+          entryPrice: parseFloat(p.entryPrice), markPrice: parseFloat(p.markPrice),
+          unrealizedProfit: parseFloat(p.unrealizedProfit), realizedProfit: parseFloat(p.realizedProfit),
+        })),
+      totalWalletBalance: parseFloat(raw.totalWalletBalance ?? '0'),
+      totalUnrealizedProfit: parseFloat(raw.totalUnrealizedProfit ?? '0'),
+      totalMarginBalance: parseFloat(raw.totalMarginBalance ?? '0'),
+    };
+  }
+
+  /** 我的成交（现货 /api/v3/myTrades；合约 /fapi/v1/userTrades），按 symbol 查询 */
+  async myTrades(market: Market, symbol: string, opts: { limit?: number; fromId?: number } = {}): Promise<MyTradeRow[]> {
+    const raw = await this.request<RawMyTrade[]>(
+      market, 'GET', market === 'SPOT' ? '/api/v3/myTrades' : '/fapi/v1/userTrades',
+      { symbol, limit: opts.limit ?? 100, fromId: opts.fromId }, true,
     );
-    const out: Record<string, number> = {};
-    if (market === 'SPOT' && raw.balances) {
-      for (const b of raw.balances) out[b.asset] = parseFloat(b.free);
-    } else if (raw.assets) {
-      for (const b of raw.assets) out[b.asset] = parseFloat(b.walletBalance);
+    return raw.map((t) => ({
+      id: t.id, orderId: t.orderId, symbol: t.symbol, side: t.side as 'BUY' | 'SELL',
+      price: parseFloat(t.price), qty: parseFloat(t.qty),
+      commission: parseFloat(t.commission), commissionAsset: t.commissionAsset, time: t.time,
+      realizedPnl: t.realizedPnl !== undefined ? parseFloat(t.realizedPnl) : undefined,
+      positionSide: t.positionSide,
+    }));
+  }
+
+  /** 当前挂单（现货 /api/v3/openOrders；合约 /fapi/v1/openOrders） */
+  async openOrders(market: Market, symbol?: string): Promise<OpenOrderRow[]> {
+    const raw = await this.request<RawOpenOrder[]>(
+      market, 'GET', market === 'SPOT' ? '/api/v3/openOrders' : '/fapi/v1/openOrders',
+      symbol ? { symbol } : {}, true,
+    );
+    return raw.map((o) => ({
+      symbol: o.symbol, orderId: o.orderId, side: o.side as 'BUY' | 'SELL',
+      type: o.type, price: parseFloat(o.price), origQty: parseFloat(o.origQty),
+      executedQty: parseFloat(o.executedQty), status: o.status, time: o.time,
+    }));
+  }
+
+  /** 兼容旧接口：现货返回 free，合约返回 walletBalance */
+  async accountBalances(market: Market): Promise<Record<string, number>> {
+    if (market === 'SPOT') {
+      const info = await this.spotAccount();
+      const out: Record<string, number> = {};
+      for (const b of info.balances) if (b.free > 0) out[b.asset] = b.free;
+      return out;
     }
+    const info = await this.futuresAccount();
+    const out: Record<string, number> = {};
+    for (const b of info.balances) if (b.walletBalance > 0) out[b.asset] = b.walletBalance;
     return out;
   }
+}
+
+// ---------- 私有接口类型 ----------
+export interface SpotAccountInfo {
+  balances: { asset: string; free: number; locked: number }[];
+}
+export interface FuturesAccountInfo {
+  balances: { asset: string; walletBalance: number; availableBalance: number }[];
+  positions: {
+    symbol: string; positionSide: string; positionAmt: number; entryPrice: number;
+    markPrice: number; unrealizedProfit: number; realizedProfit: number;
+  }[];
+  totalWalletBalance: number;
+  totalUnrealizedProfit: number;
+  totalMarginBalance: number;
+}
+export interface MyTradeRow {
+  id: number;
+  orderId: number;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  price: number;
+  qty: number;
+  commission: number;
+  commissionAsset: string;
+  time: number;
+  /** 仅合约成交有 */
+  realizedPnl?: number;
+  positionSide?: string;
+}
+export interface OpenOrderRow {
+  symbol: string;
+  orderId: number;
+  side: 'BUY' | 'SELL';
+  type: string;
+  price: number;
+  origQty: number;
+  executedQty: number;
+  status: string;
+  time: number;
+}
+
+interface RawMyTrade {
+  id: number; orderId: number; symbol: string; side: string; price: string; qty: string;
+  commission: string; commissionAsset: string; time: number;
+  realizedPnl?: string; positionSide?: string;
+}
+interface RawOpenOrder {
+  symbol: string; orderId: number; side: string; type: string; price: string;
+  origQty: string; executedQty: string; status: string; time: number;
 }

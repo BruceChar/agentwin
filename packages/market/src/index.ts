@@ -1,5 +1,6 @@
 export * from './provider.ts';
 export { BinanceRest, SPOT_BASE, FUTURES_BASE, parseKlineRow, parseSymbolFilters } from './binance/rest.ts';
+export type { SpotAccountInfo, FuturesAccountInfo, MyTradeRow, OpenOrderRow } from './binance/rest.ts';
 export { BinanceWs, klineStream, aggTradeStream, bookTickerStream, markPriceStream } from './binance/ws.ts';
 export { BinanceMarketData } from './binanceProvider.ts';
 export { BinanceOfficialMarketData } from './officialProvider.ts';
