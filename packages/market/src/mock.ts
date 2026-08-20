@@ -72,6 +72,9 @@ export class MockMarketData implements MarketDataProvider {
   }
 
   async init(): Promise<void> {}
+  async ping(): Promise<{ ok: boolean; host?: string }> {
+    return { ok: true, host: 'mock' };
+  }
   async close(): Promise<void> {
     for (const t of this.timers) clearInterval(t);
     this.timers = [];

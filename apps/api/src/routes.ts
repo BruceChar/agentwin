@@ -23,34 +23,50 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   const { storage, marketData, toolkit, llm, sentiment } = services;
 
   // ---------------- 健康检查 ----------------
-  app.get('/api/health', async () => ({
-    ok: true, time: Date.now(), storage: storage.engine,
-    paperRunning: paper.running,
-    llmModel: llm.model,
-  }));
+  app.get('/api/health', async () => {
+    const binance = await marketData.ping().catch((e: Error) => ({ ok: false, detail: e.message }));
+    return {
+      ok: true, time: Date.now(), storage: storage.engine,
+      paperRunning: paper.running,
+      llmModel: llm.model,
+      binance,
+    };
+  });
 
   // ---------------- 行情 ----------------
   app.get('/api/market/symbols', async (req) => {
     const market = str((req.query as Body)['market'], 'SPOT') as Market;
-    return { symbols: await marketData.getSymbols(market) };
+    try {
+      return { symbols: await marketData.getSymbols(market) };
+    } catch (e) {
+      return app.httpErrors.serviceUnavailable(e instanceof Error ? e.message : String(e));
+    }
   });
 
   app.get('/api/market/klines', async (req) => {
     const q = req.query as Body;
     const market = str(q['market'], 'SPOT') as Market;
     const interval = str(q['interval'], '1h') as Interval;
-    return {
-      candles: await marketData.getKlines({
-        symbol: str(q['symbol'], 'BTCUSDT').toUpperCase(), market, interval,
-        limit: num(q['limit'], 200), startTime: q['startTime'] !== undefined ? num(q['startTime'], 0) : undefined,
-        endTime: q['endTime'] !== undefined ? num(q['endTime'], 0) : undefined,
-      }),
-    };
+    try {
+      return {
+        candles: await marketData.getKlines({
+          symbol: str(q['symbol'], 'BTCUSDT').toUpperCase(), market, interval,
+          limit: num(q['limit'], 200), startTime: q['startTime'] !== undefined ? num(q['startTime'], 0) : undefined,
+          endTime: q['endTime'] !== undefined ? num(q['endTime'], 0) : undefined,
+        }),
+      };
+    } catch (e) {
+      return app.httpErrors.serviceUnavailable(e instanceof Error ? e.message : String(e));
+    }
   });
 
   app.get('/api/market/tickers', async (req) => {
     const market = str((req.query as Body)['market'], 'SPOT') as Market;
-    return { tickers: await marketData.getTickers(market) };
+    try {
+      return { tickers: await marketData.getTickers(market) };
+    } catch (e) {
+      return app.httpErrors.serviceUnavailable(e instanceof Error ? e.message : String(e));
+    }
   });
 
   // ---------------- 账户 ----------------

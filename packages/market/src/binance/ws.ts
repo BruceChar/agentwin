@@ -1,7 +1,12 @@
 import type { Market } from '@agentwin/shared';
 
 export const SPOT_WS_BASE = 'wss://stream.binance.com:9443';
+export const SPOT_DATA_STREAM_BASE = 'wss://data-stream.binance.vision';
 export const FUTURES_WS_BASE = 'wss://fstream.binance.com';
+
+function dedupe(list: string[]): string[] {
+  return [...new Set(list.filter(Boolean))];
+}
 
 type WsMessageHandler = (raw: Record<string, unknown>) => void;
 
@@ -22,9 +27,13 @@ export class BinanceWs {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly market: Market;
-  private readonly opts: { onStatus?: (status: 'open' | 'close' | 'error', detail?: string) => void };
+  private readonly opts: {
+    onStatus?: (status: 'open' | 'close' | 'error', detail?: string) => void;
+    /** 显式指定 WS 端点（覆盖官方域名） */
+    baseUrl?: string;
+  };
 
-  constructor(market: Market, opts: { onStatus?: (status: 'open' | 'close' | 'error', detail?: string) => void } = {}) {
+  constructor(market: Market, opts: { onStatus?: (status: 'open' | 'close' | 'error', detail?: string) => void; baseUrl?: string } = {}) {
     this.market = market;
     this.opts = opts;
   }
@@ -33,41 +42,69 @@ export class BinanceWs {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  private wsBase(): string {
-    return this.market === 'SPOT' ? SPOT_WS_BASE : FUTURES_WS_BASE;
+  private wsBaseCandidates(): string[] {
+    const list: string[] = [];
+    if (this.opts.baseUrl) list.push(this.opts.baseUrl);
+    if (process.env.BINANCE_WS_BASE_URL) list.push(process.env.BINANCE_WS_BASE_URL);
+    if (this.market === 'SPOT') {
+      list.push(SPOT_WS_BASE, SPOT_DATA_STREAM_BASE);
+    } else {
+      list.push(FUTURES_WS_BASE);
+    }
+    return dedupe(list);
   }
 
-  private buildUrl(): string {
+  private buildUrl(base: string): string {
     const streams = [...this.handlers.keys()];
-    return this.wsBase() + '/stream?streams=' + streams.join('/');
+    return base + '/stream?streams=' + streams.join('/');
   }
 
+  /** 依次尝试候选主机，直到连接成功 */
   connect(): Promise<void> {
     if (this.connected || this.connecting) return Promise.resolve();
     if (this.handlers.size === 0) return Promise.resolve();
     this.closedByUser = false;
     this.connecting = true;
+    const candidates = this.wsBaseCandidates();
+    return this.tryConnect(candidates, 0);
+  }
+
+  private tryConnect(candidates: string[], idx: number): Promise<void> {
+    if (idx >= candidates.length) {
+      this.connecting = false;
+      return Promise.reject(new Error('BinanceWs: all stream hosts unreachable — 检查网络或设置 BINANCE_WS_BASE_URL'));
+    }
+    const base = candidates[idx]!;
     return new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(this.buildUrl());
+      let settled = false;
+      const ws = new WebSocket(this.buildUrl(base));
       this.ws = ws;
-      const onOpen = () => {
+      const fail = (reason: string) => {
+        if (settled) return;
+        settled = true;
+        this.opts.onStatus?.('error', reason);
+        try { ws.close(); } catch { /* ignore */ }
+        this.tryConnect(candidates, idx + 1).then(resolve, reject);
+      };
+      ws.addEventListener('open', () => {
+        if (settled) return;
+        settled = true;
         this.connecting = false;
         this.retryDelay = 1000;
         this.opts.onStatus?.('open');
         this.startPing();
         resolve();
-      };
-      const onError = (e: Event) => {
-        this.connecting = false;
-        this.opts.onStatus?.('error', String((e as ErrorEvent).message ?? ''));
-        if (!this.closedByUser) reject(new Error('BinanceWs connect error: ' + String((e as ErrorEvent).message ?? '')));
-      };
-      ws.addEventListener('open', onOpen);
-      ws.addEventListener('error', onError);
+      });
+      ws.addEventListener('error', () => fail('connect error on ' + base));
       ws.addEventListener('close', () => {
         this.connecting = false;
         this.stopPing();
         this.opts.onStatus?.('close');
+        if (!settled) {
+          settled = true;
+          this.tryConnect(candidates, idx + 1).then(resolve, reject);
+          return;
+        }
         if (!this.closedByUser && this.handlers.size > 0) this.scheduleReconnect();
       });
       ws.addEventListener('message', (ev: MessageEvent) => {
@@ -80,7 +117,6 @@ export class BinanceWs {
               for (const h of set) h(data);
             }
           } else if (msg['e'] && typeof msg['e'] === 'string') {
-            // 单流模式兜底：按事件类型分发
             const key = String(msg['s'] ?? '').toLowerCase() + '@' + msg['e'];
             const set = this.handlers.get(key) ?? this.handlers.get('*');
             if (set) for (const h of set) h(msg);

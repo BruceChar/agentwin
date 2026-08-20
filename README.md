@@ -31,6 +31,11 @@ pnpm test              # 全仓测试（61 个用例）
 
 **离线开发模式**（本机连不上 Binance 时）：`export AGENTWIN_USE_MOCK=1`，行情源切换为确定性 Mock 数据。
 
+**国内网络连通性**：`api.binance.com` 常被 DNS 污染（解析到错误 IP 导致超时）。行情层已内置多主机自动回退：
+现货 REST 回退 `data-api.binance.vision`、现货 WS 回退 `data-stream.binance.vision`（官方公共行情端点，已实测可用）；
+合约端点 `fapi.binance.com` 与 WS 端点均可用 `BINANCE_*_BASE_URL` 环境变量显式覆盖（如走代理/镜像）。
+`GET /api/health` 返回 `binance: { ok, host }` 展示当前选中的可用主机。
+
 ```bash
 pnpm dev:api   # http://127.0.0.1:3000 （默认 .env，真实 Binance 行情）
 pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）

@@ -23,9 +23,16 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   await storage.init();
 
   // 行情源：Binance 真实数据；环境变量 AGENTWIN_USE_MOCK=1 时使用 Mock（离线开发）
+  // api.binance.com 不可达时自动回退到 data-api.binance.vision（可通过 BINANCE_*_BASE_URL 覆盖）
   const marketData: MarketDataProvider = process.env.AGENTWIN_USE_MOCK === '1'
     ? new MockMarketData()
-    : new BinanceMarketData({ apiKey: config.binanceApiKey, apiSecret: config.binanceApiSecret });
+    : new BinanceMarketData({
+        apiKey: config.binanceApiKey,
+        apiSecret: config.binanceApiSecret,
+        spotBaseUrl: process.env.BINANCE_SPOT_BASE_URL,
+        futuresBaseUrl: process.env.BINANCE_FUTURES_BASE_URL,
+        dataApiBaseUrl: process.env.BINANCE_DATA_API_BASE_URL,
+      });
   await marketData.init();
 
   const llm = new LLMService({ provider: config.llmProvider, model: config.llmModel });

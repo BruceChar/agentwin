@@ -4,6 +4,7 @@ import type { RawAggTrade, RawExchangeInfo, RawKlineRow, RawMarkPrice, RawSymbol
 
 export const SPOT_BASE = 'https://api.binance.com';
 export const SPOT_TESTNET_BASE = 'https://testnet.binance.vision';
+export const SPOT_DATA_API_BASE = 'https://data-api.binance.vision';
 export const FUTURES_BASE = 'https://fapi.binance.com';
 
 export interface RestOptions {
@@ -11,11 +12,26 @@ export interface RestOptions {
   apiSecret?: string;
   testnet?: boolean;
   timeoutMs?: number;
+  /** 显式指定现货主端点（默认 api.binance.com） */
+  spotBaseUrl?: string;
+  /** 显式指定合约主端点（默认 fapi.binance.com） */
+  futuresBaseUrl?: string;
+  /** 备用公共行情端点（api.binance.com 不可达时自动回退；默认 data-api.binance.vision，仅现货） */
+  dataApiBaseUrl?: string;
+  /** 注入 fetch（测试用），默认全局 fetch */
+  fetchImpl?: typeof fetch;
 }
 
-function baseFor(market: Market, opts: RestOptions): string {
-  if (market === 'SPOT') return opts.testnet ? SPOT_TESTNET_BASE : SPOT_BASE;
-  return FUTURES_BASE;
+/** 市场数据不可达（所有候选主机均失败） */
+export class MarketDataUnavailableError extends Error {
+  constructor(market: Market, detail: string) {
+    super('Binance ' + market + ' 行情不可达：' + detail + ' — 请检查网络，或设置 BINANCE_*_BASE_URL / 使用 AGENTWIN_USE_MOCK=1');
+    this.name = 'MarketDataUnavailableError';
+  }
+}
+
+function dedupe(list: (string | undefined)[]): string[] {
+  return [...new Set(list.filter((s): s is string => Boolean(s)))];
 }
 
 /** 从 exchangeInfo 过滤器解析精度信息 */
@@ -53,13 +69,71 @@ export function parseKlineRow(row: RawKlineRow): Candle {
  */
 export class BinanceRest {
   private readonly opts: RestOptions;
+  private readonly fetchImpl: typeof fetch;
+  /** market -> 已选中的可用 base（带时间戳缓存） */
+  private baseCache = new Map<Market, { url: string; at: number }>();
 
   constructor(opts: RestOptions = {}) {
     this.opts = opts;
+    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  }
+
+  /** 候选主机：显式配置优先，随后官方主端点 + 备用公共行情端点 */
+  private candidatesFor(market: Market): string[] {
+    if (market === 'SPOT') {
+      return dedupe([
+        this.opts.spotBaseUrl,
+        process.env.BINANCE_SPOT_BASE_URL,
+        this.opts.testnet ? SPOT_TESTNET_BASE : SPOT_BASE,
+        this.opts.dataApiBaseUrl,
+        process.env.BINANCE_DATA_API_BASE_URL,
+        SPOT_DATA_API_BASE,
+      ]);
+    }
+    return dedupe([
+      this.opts.futuresBaseUrl,
+      process.env.BINANCE_FUTURES_BASE_URL,
+      FUTURES_BASE,
+    ]);
+  }
+
+  /** 探测主机可用性（ping，4s 超时） */
+  private async probe(base: string, market: Market): Promise<boolean> {
+    try {
+      const path = market === 'SPOT' ? '/api/v3/ping' : '/fapi/v1/ping';
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 4000);
+      try {
+        const res = await this.fetchImpl(base + path, { signal: ctrl.signal });
+        return res.ok;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  /** 选择可用主机（缓存 5 分钟；失败自动重探） */
+  private async pickBase(market: Market): Promise<string> {
+    const cached = this.baseCache.get(market);
+    if (cached && Date.now() - cached.at < 5 * 60_000) return cached.url;
+    let lastError = 'all hosts unreachable';
+    for (const url of this.candidatesFor(market)) {
+      if (await this.probe(url, market)) {
+        this.baseCache.set(market, { url, at: Date.now() });
+        return url;
+      }
+      lastError = 'failed: ' + url;
+    }
+    throw new MarketDataUnavailableError(market, lastError);
   }
 
   private async request<T>(market: Market, method: string, path: string, params: Record<string, string | number | boolean | undefined> = {}, signed = false): Promise<T> {
-    const base = baseFor(market, this.opts);
+    // 签名请求必须走官方主端点（key 只在该域名有效）
+    const base = signed
+      ? (market === 'SPOT' ? (this.opts.testnet ? SPOT_TESTNET_BASE : SPOT_BASE) : FUTURES_BASE)
+      : await this.pickBase(market);
     let url = base + path;
     const headers: Record<string, string> = {};
     if (signed) {
@@ -76,7 +150,7 @@ export class BinanceRest {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(url, { method, headers, signal: ctrl.signal });
+      const res = await this.fetchImpl(url, { method, headers, signal: ctrl.signal });
       if (!res.ok) {
         let body = '';
         try { body = await res.text(); } catch { /* ignore */ }
@@ -84,6 +158,10 @@ export class BinanceRest {
       }
       if (res.status === 204) return undefined as T;
       return (await res.json()) as T;
+    } catch (e) {
+      // 非签名请求失败：清空缓存，下次调用自动重探其他主机
+      if (!signed) this.baseCache.delete(market);
+      throw e;
     } finally {
       clearTimeout(timer);
     }
@@ -91,6 +169,11 @@ export class BinanceRest {
 
   async ping(market: Market): Promise<void> {
     await this.request(market, 'GET', market === 'SPOT' ? '/api/v3/ping' : '/fapi/v1/ping');
+  }
+
+  /** 当前选中的可用主机（触发一次探测） */
+  async activeBase(market: Market): Promise<string> {
+    return this.pickBase(market);
   }
 
   async serverTime(market: Market): Promise<number> {

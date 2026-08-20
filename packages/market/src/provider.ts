@@ -41,10 +41,18 @@ export type Unsubscribe = () => void;
  * 行情数据源抽象：真实 Binance（REST + WebSocket）或 Mock（离线/测试）。
  * 上层（回测 / paper trading）只依赖该接口。
  */
+export interface PingResult {
+  ok: boolean;
+  host?: string;
+  detail?: string;
+}
+
 export interface MarketDataProvider {
   readonly name: string;
   init(): Promise<void>;
   close(): Promise<void>;
+  /** 连通性探测（健康检查用） */
+  ping(): Promise<PingResult>;
   getKlines(q: KlineQuery): Promise<Candle[]>;
   getTicker(symbol: string, market: Market): Promise<Ticker>;
   getTickers(market: Market): Promise<Ticker[]>;

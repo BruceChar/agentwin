@@ -1,10 +1,10 @@
 import type { Candle, Interval, Market, SymbolInfo, Ticker } from '@agentwin/shared';
-import type { KlineQuery, MarketDataProvider, MarketEvent, StreamSubscription, Unsubscribe } from './provider.ts';
+import type { KlineQuery, MarketDataProvider, MarketEvent, PingResult, StreamSubscription, Unsubscribe } from './provider.ts';
 import { BinanceRest, type RestOptions } from './binance/rest.ts';
 import { BinanceWs, aggTradeStream, bookTickerStream, klineStream, markPriceStream } from './binance/ws.ts';
 import type { RawWsAggTrade, RawWsBookTicker, RawWsKline, RawWsMarkPrice } from './binance/types.ts';
 
-/** Binance 真实行情适配：REST（历史 K 线/行情）+ WebSocket（实时） */
+/** Binance 真实行情适配：REST（历史 K 线/行情）+ WebSocket（实时），多主机自动回退 */
 export class BinanceMarketData implements MarketDataProvider {
   readonly name = 'binance';
   private rest: BinanceRest;
@@ -13,7 +13,17 @@ export class BinanceMarketData implements MarketDataProvider {
 
   constructor(opts: RestOptions = {}) {
     this.rest = new BinanceRest(opts);
-    this.ws = new BinanceWs('SPOT', { onStatus: (s) => this.onWsStatus(s) });
+    this.ws = new BinanceWs('SPOT', { onStatus: (s) => this.onWsStatus(s), baseUrl: opts.spotBaseUrl ?? process.env.BINANCE_WS_BASE_URL });
+  }
+
+  /** 连通性探测：选中一个可用主机即视为可达 */
+  async ping(): Promise<PingResult> {
+    try {
+      const base = await this.rest.activeBase('SPOT');
+      return { ok: true, host: base };
+    } catch (e) {
+      return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+    }
   }
 
   private onWsStatus(_s: string): void {
