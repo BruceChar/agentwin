@@ -71,6 +71,11 @@ pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）
 
 > 注意：私有接口（签名请求）只对官方主端点 `api.binance.com` / `fapi.binance.com` 有效——如果这两个域名在你的网络不可达（DNS 污染），同步会失败并在看板给出提示，此时请配置代理或 `BINANCE_*_BASE_URL` 指向可用的主端点镜像。全程只读，不会通过同步模块下单。
 
+**真实账户同步排查**（看板显示「未配置 Key」或「同步失败」时按序检查）：
+1. **Key 是否被读取**：`GET /api/binance/status` 的 `configured`。为 `false` 说明服务端没读到 `.env`——请确认 Key 在**仓库根目录**的 `.env`（不是 `.env.example`），并重启 `pnpm dev:api`（现已自动加载仓库根 .env）。
+2. **主域名是否可达**：`reachable` 为 `false` 说明 `api.binance.com` 被 DNS 污染（运营商返回假 IP，如 Facebook 的地址）。处理：a) 看板代理开关切换直连/代理；b) 按 [docs/hosts-binance.txt](docs/hosts-binance.txt) 把真实 IP 写入系统 hosts（绕过污染 DNS）；c) 更换系统 DNS（223.5.5.5 / 1.1.1.1）；d) 签名请求会自动回退官方备用域名 `api1-4.binance.com`。
+3. **同步失败原因**：`status.lastSync.message`（看板有红色提示条）会给出具体错误（网络、Key 无权限等）。
+
 **代理设置**（报 `Service unavailable from a restricted location` 时，通常是代理出口 IP 在受限地区，如美区）：
 - `BINANCE_PROXY=off` 强制直连；`BINANCE_PROXY=on` 走代理（`BINANCE_PROXY_URL` 或 `HTTPS_PROXY`）；`BINANCE_PROXY=auto`（默认）有 `HTTPS_PROXY` 则走、否则直连。
 - REST 与 WebSocket 都支持（undici `ProxyAgent`，含 CONNECT 隧道）；`GET /api/binance/status` 与 `/api/health` 会返回当前代理配置（`proxy: { mode, url, enabled, source }`）便于诊断。

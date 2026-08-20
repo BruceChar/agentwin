@@ -21,7 +21,9 @@
       </div>
     </el-card>
     <el-alert v-if="isReal && binanceStatus && !binanceStatus.reachable" type="warning" :closable="false" class="mt"
-      :title="'无法连接币安官方账户接口：' + (binanceStatus.message ?? '请检查网络 / BINANCE_API_KEY 配置')" />
+      :title="'无法连接币安官方账户接口：' + (binanceStatus.message ?? '请检查网络 / BINANCE_API_KEY 配置') + '。建议：1) 用上方代理开关切换 直连/代理 试试；2) 按 docs/hosts-binance.txt 配置 hosts 绕过污染 DNS；3) 更换系统 DNS（如 223.5.5.5 或 1.1.1.1）'" />
+    <el-alert v-if="isReal && binanceStatus?.lastSync && !binanceStatus.lastSync.ok" type="error" :closable="false" class="mt"
+      :title="'最近一次同步失败：' + (binanceStatus.lastSync.message ?? '未知原因')" />
     <el-row :gutter="16" class="mt">
       <el-col :span="6"><el-card shadow="never"><div class="stat"><div class="label">总权益</div><div class="value">{{ fmt(equity) }}</div></div></el-card></el-col>
       <el-col :span="6"><el-card shadow="never"><div class="stat"><div class="label">净盈亏</div><div class="value" :class="netPnl >= 0 ? 'up' : 'down'">{{ fmt(netPnl) }}</div></div></el-card></el-col>
@@ -79,7 +81,13 @@ const curvePoints = ref<EquityPoint[]>([]);
 const syncing = ref(false);
 const proxyEnabled = ref(false);
 const proxyUrl = ref('');
-const binanceStatus = ref<{ configured: boolean; reachable: boolean; message?: string; proxy?: { enabled: boolean; url?: string; mode: string; source: string } } | null>(null);
+const binanceStatus = ref<{
+  configured: boolean;
+  reachable: boolean;
+  message?: string;
+  proxy?: { enabled: boolean; url?: string; mode: string; source: string };
+  lastSync?: { at: number; ok: boolean; message?: string; balancesUpserted: number; futuresPositions: number; tradesSynced: number } | null;
+} | null>(null);
 
 async function applyProxy() {
   try {

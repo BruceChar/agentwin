@@ -72,3 +72,38 @@ export async function pickReachableBase(market: Market, opts: HostOptions = {}, 
   }
   throw new MarketDataUnavailableError(market, lastError);
 }
+
+// 签名请求专用备用主机（币安官方国内直连域名；API Key 在这些域名同样有效）
+export const SIGNED_SPOT_CANDIDATES = [
+  'https://api1.binance.com',
+  'https://api2.binance.com',
+  'https://api3.binance.com',
+  'https://api4.binance.com',
+];
+
+/** 签名请求候选：显式配置的主端点优先，随后官方主域名 + api1-4 备用 */
+export function signedCandidatesFor(market: Market, opts: HostOptions = {}): string[] {
+  if (market === 'SPOT') {
+    return dedupe([
+      opts.spotBaseUrl,
+      process.env.BINANCE_SPOT_BASE_URL,
+      opts.testnet ? SPOT_TESTNET_BASE : SPOT_BASE,
+      ...SIGNED_SPOT_CANDIDATES,
+    ]);
+  }
+  return dedupe([
+    opts.futuresBaseUrl,
+    process.env.BINANCE_FUTURES_BASE_URL,
+    FUTURES_BASE,
+  ]);
+}
+
+/** 选择签名请求可用主机（api.binance.com 被 DNS 污染时自动尝试 api1-4） */
+export async function pickSignedBase(market: Market, opts: HostOptions = {}, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis), dispatcher?: unknown): Promise<string> {
+  let lastError = 'all signed hosts unreachable';
+  for (const url of signedCandidatesFor(market, opts)) {
+    if (await probeBase(url, market, fetchImpl, dispatcher)) return url;
+    lastError = 'failed: ' + url;
+  }
+  throw new MarketDataUnavailableError(market, lastError);
+}

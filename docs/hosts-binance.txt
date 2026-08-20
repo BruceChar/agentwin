@@ -1,0 +1,32 @@
+# Binance 真实 IP（2026-08-20 通过 DNSPod doh.pub 解析；绕过被污染的运营商 DNS）
+# 使用方法：把下面条目追加到系统 hosts 文件（macOS/Linux: /etc/hosts；Windows: C:\Windows\System32\drivers\etc\hosts，需管理员权限），保存后立即生效。
+# 注意：CloudFront IP 可能变化，若失效请重新解析（见 README 排查章节）或改走代理。
+
+# 现货 REST（私有/公有）
+99.84.42.165  api.binance.com
+# 现货备用域名（官方直连备用；系统已自动尝试）
+208.77.47.172 api1.binance.com
+18.182.208.114 api2.binance.com
+16.76.175.117  api2.binance.com
+52.196.184.95 api3.binance.com
+18.182.174.40  api3.binance.com
+13.158.159.7  api4.binance.com
+43.206.21.204 api4.binance.com
+
+# U本位合约
+18.164.154.88  fapi.binance.com
+18.164.154.52  fapi.binance.com
+18.164.154.129 fapi.binance.com
+18.164.154.18  fapi.binance.com
+
+# 现货 WS
+52.194.24.222  stream.binance.com
+13.113.45.95   stream.binance.com
+52.197.80.204  stream.binance.com
+18.180.69.52   stream.binance.com
+
+# 合约 WS
+57.183.56.96   fstream.binance.com
+3.112.86.250   fstream.binance.com
+18.176.188.196 fstream.binance.com
+18.181.143.194 fstream.binance.com

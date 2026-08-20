@@ -98,6 +98,17 @@ describe('BinanceAccountSync', () => {
     expect((await storage.listTrades({ accountId: acc.id })).length).toBe(4);
   });
 
+  it('records last sync result (incl. failure reason)', async () => {
+    const failingRest = { ...makeFakeRest(), spotAccount: async () => { throw new Error('network down'); } } as unknown as BinanceRest;
+    const sync2 = new BinanceAccountSync(storage, failingRest, marketData);
+    const report = await sync2.syncAll();
+    expect(report.ok).toBe(false);
+    const st = await sync2.status();
+    expect(st.lastSync?.ok).toBe(false);
+    expect(st.lastSync?.message).toContain('network down');
+    expect(st.lastSync?.at).toBeGreaterThan(0);
+  });
+
   it('status reports configured + reachable with keys', async () => {
     const prevKey = process.env.BINANCE_API_KEY;
     const prevSecret = process.env.BINANCE_API_SECRET;

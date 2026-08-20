@@ -24,6 +24,8 @@ export interface BinanceStatus {
   futuresHost: string;
   /** 当前代理配置（BINANCE_PROXY / BINANCE_PROXY_URL / HTTPS_PROXY） */
   proxy: ProxyConfig;
+  /** 最近一次同步结果（含失败原因，前端可直接展示） */
+  lastSync?: { at: number; ok: boolean; message?: string; balancesUpserted: number; futuresPositions: number; tradesSynced: number } | null;
 }
 
 /**
@@ -35,11 +37,17 @@ export class BinanceAccountSync {
   private readonly storage: StorageAdapter;
   private readonly rest: BinanceRest;
   private readonly marketData: MarketDataProvider;
+  /** 最近一次同步结果（诊断用） */
+  private lastReport: SyncReport | null = null;
 
   constructor(storage: StorageAdapter, rest: BinanceRest, marketData: MarketDataProvider) {
     this.storage = storage;
     this.rest = rest;
     this.marketData = marketData;
+  }
+
+  get lastSync(): SyncReport | null {
+    return this.lastReport;
   }
 
   async ensureRealAccount(): Promise<Account> {
@@ -61,7 +69,10 @@ export class BinanceAccountSync {
         message = e instanceof Error ? e.message : String(e);
       }
     }
-    return { configured, reachable, message, spotHost: 'api.binance.com', futuresHost: 'fapi.binance.com', proxy: this.rest.proxy };
+    const lastSync = this.lastReport
+      ? { at: this.lastReport.at, ok: this.lastReport.ok, message: this.lastReport.message, balancesUpserted: this.lastReport.balancesUpserted, futuresPositions: this.lastReport.futuresPositions, tradesSynced: this.lastReport.tradesSynced }
+      : null;
+    return { configured, reachable, message, spotHost: 'api.binance.com', futuresHost: 'fapi.binance.com', proxy: this.rest.proxy, lastSync };
   }
 
   /** 全量同步：余额 → 合约持仓 → 成交 → 权益快照 */
@@ -120,6 +131,7 @@ export class BinanceAccountSync {
     } catch (e) {
       report.message = e instanceof Error ? e.message : String(e);
     }
+    this.lastReport = report;
     return report;
   }
 

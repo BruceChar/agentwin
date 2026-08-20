@@ -1,7 +1,7 @@
 import type { AggTrade, Candle, Interval, Market, MarkPrice, SymbolInfo, Ticker } from '@agentwin/shared';
 import { buildQueryString, buildSignedQuery } from './sign.ts';
 import type { RawAggTrade, RawExchangeInfo, RawKlineRow, RawMarkPrice, RawSymbolFilter, RawTicker } from './types.ts';
-import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, pickReachableBase, probeBase, type HostOptions } from './hosts.ts';
+import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, pickReachableBase, pickSignedBase as pickSignedBaseHost, probeBase, type HostOptions } from './hosts.ts';
 import { getProxyDispatcher, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
 
 // 常量与错误类型由 hosts.ts 提供，这里统一再导出（兼容既有引用）
@@ -77,10 +77,20 @@ export class BinanceRest {
     return url;
   }
 
+  /** 签名请求主机：api.binance.com 不可达时自动回退 api1-4（官方备用域名，Key 同样有效） */
+  private async pickSignedBase(market: Market): Promise<string> {
+    const key = (market + ':signed') as Market;
+    const cached = this.baseCache.get(key);
+    if (cached && Date.now() - cached.at < 5 * 60_000) return cached.url;
+    const url = await pickSignedBaseHost(market, this.opts, this.fetchImpl, getProxyDispatcher(this.proxyConfig));
+    this.baseCache.set(key, { url, at: Date.now() });
+    return url;
+  }
+
   private async request<T>(market: Market, method: string, path: string, params: Record<string, string | number | boolean | undefined> = {}, signed = false): Promise<T> {
-    // 签名请求必须走官方主端点（key 只在该域名有效）
+    // 签名请求走官方主端点，api.binance.com 不可达时自动回退 api1-4（Key 在备用域名同样有效）
     const base = signed
-      ? (market === 'SPOT' ? (this.opts.testnet ? SPOT_TESTNET_BASE : SPOT_BASE) : FUTURES_BASE)
+      ? (this.opts.testnet ? SPOT_TESTNET_BASE : await this.pickSignedBase(market))
       : await this.pickBase(market);
     let url = base + path;
     const headers: Record<string, string> = {};

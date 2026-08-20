@@ -49,6 +49,21 @@ describe('BinanceRest host fallback', () => {
     await expect(rest.klines('SPOT', 'BTCUSDT', '1h')).rejects.toThrow(/行情不可达/);
   });
 
+  it('signed requests fall back to api1-4 when primary is unreachable', async () => {
+    const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.startsWith(SPOT_BASE)) return new Response(null, { status: 502 }); // 主域名不可达
+      if (url.startsWith('https://api1.binance.com')) {
+        if (url.includes('/ping')) return new Response('{}', { status: 200 });
+        if (url.includes('/api/v3/account')) return new Response(JSON.stringify({ balances: [{ asset: 'USDT', free: '100', locked: '0' }] }), { status: 200 });
+      }
+      return new Response(null, { status: 502 });
+    }) as typeof fetch;
+    const rest = new BinanceRest({ fetchImpl, apiKey: 'k', apiSecret: 's' });
+    const info = await rest.spotAccount();
+    expect(info.balances[0]?.free).toBe(100);
+  });
+
   it('recovers after a transient failure (cache cleared)', async () => {
     let reachable = false;
     const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
