@@ -32,13 +32,23 @@ export function resolveProxyConfig(env: NodeJS.ProcessEnv = process.env): ProxyC
   return { mode: 'off', enabled: false, source: 'off' };
 }
 
-let sharedProxyAgent: ProxyAgent | null = null;
+const proxyAgents = new Map<string, ProxyAgent>();
 
-/** 获取代理 dispatcher（未启用或未配置返回 undefined） */
+/** 获取代理 dispatcher（未启用或未配置返回 undefined；按 URL 缓存，切换地址时自动重建） */
 export function getProxyDispatcher(cfg: ProxyConfig): ProxyAgent | undefined {
   if (!cfg.enabled || !cfg.url) return undefined;
-  if (!sharedProxyAgent) sharedProxyAgent = new ProxyAgent(cfg.url);
-  return sharedProxyAgent;
+  let agent = proxyAgents.get(cfg.url);
+  if (!agent) {
+    agent = new ProxyAgent(cfg.url);
+    proxyAgents.set(cfg.url, agent);
+  }
+  return agent;
+}
+
+/** 测试/诊断用：清空代理实例缓存 */
+export function clearProxyAgents(): void {
+  for (const a of proxyAgents.values()) a.close();
+  proxyAgents.clear();
 }
 
 /** 解析代理 URL 为 @binance/common 期望的 proxy 配置（host/port/protocol/auth） */

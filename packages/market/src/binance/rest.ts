@@ -1,7 +1,7 @@
 import type { AggTrade, Candle, Interval, Market, MarkPrice, SymbolInfo, Ticker } from '@agentwin/shared';
 import { buildQueryString, buildSignedQuery } from './sign.ts';
 import type { RawAggTrade, RawExchangeInfo, RawKlineRow, RawMarkPrice, RawSymbolFilter, RawTicker } from './types.ts';
-import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, pickReachableBase, type HostOptions } from './hosts.ts';
+import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, pickReachableBase, probeBase, type HostOptions } from './hosts.ts';
 import { getProxyDispatcher, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
 
 // 常量与错误类型由 hosts.ts 提供，这里统一再导出（兼容既有引用）
@@ -124,6 +124,11 @@ export class BinanceRest {
   /** 当前选中的可用主机（触发一次探测） */
   async activeBase(market: Market): Promise<string> {
     return this.pickBase(market);
+  }
+
+  /** 官方主端点快速连通性探测（4s；用于真实账户状态检查，避免长时间阻塞） */
+  async reachable(): Promise<boolean> {
+    return probeBase(SPOT_BASE, 'SPOT', this.fetchImpl, getProxyDispatcher(this.proxyConfig));
   }
 
   async serverTime(market: Market): Promise<number> {

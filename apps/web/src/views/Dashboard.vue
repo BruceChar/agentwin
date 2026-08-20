@@ -11,9 +11,13 @@
         <el-tag v-if="binanceStatus" size="small" :type="binanceStatus.reachable ? 'success' : 'warning'" class="ml">
           {{ binanceStatus.configured ? (binanceStatus.reachable ? '币安账户已连接' : '币安账户不可达') : '未配置币安 Key' }}
         </el-tag>
-        <el-tag v-if="binanceStatus?.proxy" size="small" type="info" effect="plain">
-          代理：{{ binanceStatus.proxy.enabled ? '开 (' + (binanceStatus.proxy.url ?? '') + ')' : '关（直连）' }}
-        </el-tag>
+      </div>
+      <div class="row mt-sm">
+        <span class="label">代理：</span>
+        <el-switch v-model="proxyEnabled" active-text="走代理" inactive-text="直连" @change="applyProxy" />
+        <el-input v-model="proxyUrl" placeholder="代理地址，如 http://127.0.0.1:7890" style="width: 260px" @keyup.enter="applyProxy" />
+        <el-button size="small" type="primary" @click="applyProxy">应用</el-button>
+        <span class="dim">切换即时生效（REST + WebSocket）；受限地区报错时建议直连或换非美区节点</span>
       </div>
     </el-card>
     <el-alert v-if="isReal && binanceStatus && !binanceStatus.reachable" type="warning" :closable="false" class="mt"
@@ -73,7 +77,24 @@ const positions = ref<AccountSummary['positions']>([]);
 const balances = ref<{ asset: string; free: number; locked: number }[]>([]);
 const curvePoints = ref<EquityPoint[]>([]);
 const syncing = ref(false);
+const proxyEnabled = ref(false);
+const proxyUrl = ref('');
 const binanceStatus = ref<{ configured: boolean; reachable: boolean; message?: string; proxy?: { enabled: boolean; url?: string; mode: string; source: string } } | null>(null);
+
+async function applyProxy() {
+  try {
+    const cfg = await api.post<{ enabled: boolean; url?: string; mode: string }>('/binance/proxy', {
+      mode: proxyEnabled.value ? 'on' : 'off',
+      url: proxyUrl.value,
+    });
+    proxyEnabled.value = cfg.enabled;
+    proxyUrl.value = cfg.url ?? '';
+    ElMessage.success('代理已切换：' + (cfg.enabled ? '走 ' + cfg.url : '直连'));
+    binanceStatus.value = await api.get<{ configured: boolean; reachable: boolean; message?: string; proxy?: { enabled: boolean; url?: string; mode: string; source: string } }>('/binance/status').catch(() => null);
+  } catch (e) {
+    ElMessage.error((e as Error).message);
+  }
+}
 const chartEl = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
 
@@ -137,12 +158,18 @@ async function syncNow() {
 onMounted(async () => {
   await load().catch(() => { /* 账户加载失败不阻断状态查询 */ });
   binanceStatus.value = await api.get<{ configured: boolean; reachable: boolean; message?: string; proxy?: { enabled: boolean; url?: string; mode: string; source: string } }>('/binance/status').catch(() => null);
+  if (binanceStatus.value?.proxy) {
+    proxyEnabled.value = binanceStatus.value.proxy.enabled;
+    proxyUrl.value = binanceStatus.value.proxy.url ?? '';
+  }
 });
 </script>
 
 <style scoped>
 .mt { margin-top: 16px; }
+.mt-sm { margin-top: 10px; }
 .row { display: flex; align-items: center; gap: 8px; }
+.dim { color: #999; font-size: 12px; }
 .label { font-weight: 600; }
 .ml { margin-left: auto; }
 .chart { height: 300px; }

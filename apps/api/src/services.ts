@@ -1,5 +1,6 @@
 import { createStorage, type StorageAdapter } from '@agentwin/db';
-import { BinanceMarketData, BinanceOfficialMarketData, BinanceRest, MockMarketData, type MarketDataProvider } from '@agentwin/market';
+import { BinanceMarketData, BinanceOfficialMarketData, BinanceRest, MockMarketData, resolveProxyConfig, type MarketDataProvider } from '@agentwin/market';
+import { ProxySettings } from './proxy-settings.ts';
 import { registerBuiltinStrategies, builtinRegistry } from '@agentwin/strategy';
 import { LLMService } from '@agentwin/llm';
 import { TradingToolkit } from '@agentwin/llm';
@@ -15,6 +16,8 @@ export interface AppServices {
   /** Binance 私有接口（真实账户同步；仅只读） */
   rest: BinanceRest;
   sync: BinanceAccountSync;
+  /** 运行时代理设置（前端可开关） */
+  proxySettings: ProxySettings;
   llm: LLMService;
   toolkit: TradingToolkit;
   sentiment: SentimentService;
@@ -30,12 +33,15 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   //   AGENTWIN_USE_MOCK=1        → Mock（离线开发）
   //   BINANCE_PROVIDER=official  → 官方自动生成连接器（@binance/spot 等，basePath 多主机回退）
   //   默认 native                → 自研轻量客户端（多主机自动回退，已实测国内网络可用）
+  // 运行时代理设置：所有客户端共享同一 ProxyConfig 对象，前端切换即时生效
+  const proxySettings = new ProxySettings(resolveProxyConfig());
   const baseOpts = {
     apiKey: config.binanceApiKey,
     apiSecret: config.binanceApiSecret,
     spotBaseUrl: process.env.BINANCE_SPOT_BASE_URL,
     futuresBaseUrl: process.env.BINANCE_FUTURES_BASE_URL,
     dataApiBaseUrl: process.env.BINANCE_DATA_API_BASE_URL,
+    proxyConfig: proxySettings.config,
   };
   const marketData: MarketDataProvider = process.env.AGENTWIN_USE_MOCK === '1'
     ? new MockMarketData()
@@ -68,10 +74,11 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     apiSecret: config.binanceApiSecret,
     spotBaseUrl: process.env.BINANCE_SPOT_BASE_URL,
     futuresBaseUrl: process.env.BINANCE_FUTURES_BASE_URL,
+    proxyConfig: proxySettings.config,
   });
   const sync = new BinanceAccountSync(storage, rest, marketData);
 
-  const services: AppServices = { config, storage, marketData, rest, sync, llm, toolkit, sentiment };
+  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, llm, toolkit, sentiment };
 
   // 配置了 key 且非 Mock 模式：启动后自动同步一次真实账户（不阻塞启动）
   if (process.env.AGENTWIN_USE_MOCK !== '1' && config.binanceApiKey && config.binanceApiSecret) {

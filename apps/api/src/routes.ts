@@ -214,7 +214,22 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   app.get('/api/paper/status', async () => paper.status());
 
   // ---------------- Binance 真实账户（只读） ----------------
-  app.get('/api/binance/status', async () => sync.status());
+  app.get('/api/binance/status', async () => {
+    const st = await sync.status();
+    return { ...st, proxy: services.proxySettings.get() };
+  });
+
+  // 运行时代理开关（前端可手动切换，即时生效）
+  app.get('/api/binance/proxy', async () => services.proxySettings.get());
+
+  app.post('/api/binance/proxy', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    try {
+      return services.proxySettings.apply({ mode: b['mode'] as never, url: b['url'] !== undefined ? String(b['url']) : undefined });
+    } catch (e) {
+      return app.httpErrors.badRequest(e instanceof Error ? e.message : String(e));
+    }
+  });
 
   app.post('/api/binance/sync', async (req) => {
     const b = (req.body ?? {}) as Body;

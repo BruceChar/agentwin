@@ -74,6 +74,7 @@ pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）
 **代理设置**（报 `Service unavailable from a restricted location` 时，通常是代理出口 IP 在受限地区，如美区）：
 - `BINANCE_PROXY=off` 强制直连；`BINANCE_PROXY=on` 走代理（`BINANCE_PROXY_URL` 或 `HTTPS_PROXY`）；`BINANCE_PROXY=auto`（默认）有 `HTTPS_PROXY` 则走、否则直连。
 - REST 与 WebSocket 都支持（undici `ProxyAgent`，含 CONNECT 隧道）；`GET /api/binance/status` 与 `/api/health` 会返回当前代理配置（`proxy: { mode, url, enabled, source }`）便于诊断。
+- **运行时开关**：`GET/POST /api/binance/proxy`（`POST` body：`{ mode: 'off'|'on'|'auto', url? }`）可在不重启的情况下切换，看板「总览」页也有代理开关（直连/走代理 + 地址输入，即时生效）。
 
 ## Paper Trading 设计
 
@@ -85,8 +86,8 @@ pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）
 ## API 速览（前缀 /api）
 
 `health` · `market/klines|tickers|symbols` · `accounts` · `strategies(+builtin)` · `backtest(s)` ·
-`paper/start|stop|status` · `trades` · `pnl` · `llm/chat|chat-stream(SSE)|iterate|analyze-journal|sessions` ·
-`sentiment/scan|score|:symbol` · `journal`
+`paper/start|stop|status` · `trades` · `pnl` · `binance/status|sync|account|trades|orders|proxy` ·
+`llm/chat|chat-stream(SSE)|iterate|analyze-journal|sessions` · `sentiment/scan|score|:symbol` · `journal`
 
 ## 测试
 

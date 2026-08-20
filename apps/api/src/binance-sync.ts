@@ -55,8 +55,8 @@ export class BinanceAccountSync {
     let message: string | undefined;
     if (configured) {
       try {
-        await this.rest.serverTime('SPOT');
-        reachable = true;
+        reachable = await this.rest.reachable();
+        if (!reachable) message = 'api.binance.com 不可达（DNS 污染或网络受限）';
       } catch (e) {
         message = e instanceof Error ? e.message : String(e);
       }
