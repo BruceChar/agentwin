@@ -64,6 +64,21 @@ describe('BinanceRest host fallback', () => {
     expect(info.balances[0]?.free).toBe(100);
   });
 
+  it('futures requests fall back to fapi1-3 when fapi.binance.com unreachable', async () => {
+    const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.startsWith('https://fapi.binance.com')) return new Response(null, { status: 502 });
+      if (url.startsWith('https://fapi1.binance.com')) {
+        if (url.includes('/ping')) return new Response('{}', { status: 200 });
+        if (url.includes('/fapi/v1/klines')) return new Response(JSON.stringify([[1700000000000, '100', '110', '90', '105', '10', 1700000059999, '1000', 50, '5', '500']]), { status: 200 });
+      }
+      return new Response(null, { status: 502 });
+    }) as typeof fetch;
+    const rest = new BinanceRest({ fetchImpl });
+    const candles = await rest.klines('USDT_M', 'BTCUSDT', '1h', { limit: 1 });
+    expect(candles).toHaveLength(1);
+  });
+
   it('recovers after a transient failure (cache cleared)', async () => {
     let reachable = false;
     const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {

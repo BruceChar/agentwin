@@ -13,11 +13,20 @@
 13.158.159.7  api4.binance.com
 43.206.21.204 api4.binance.com
 
-# U本位合约
+# U本位合约（主 + 备用；系统已自动依次尝试）
 18.164.154.88  fapi.binance.com
 18.164.154.52  fapi.binance.com
 18.164.154.129 fapi.binance.com
 18.164.154.18  fapi.binance.com
+18.180.196.234 fapi1.binance.com
+35.74.218.2    fapi1.binance.com
+54.199.248.154 fapi1.binance.com
+18.180.196.234 fapi2.binance.com
+54.199.248.154 fapi2.binance.com
+35.74.218.2    fapi2.binance.com
+35.74.218.2    fapi3.binance.com
+54.199.248.154 fapi3.binance.com
+18.180.196.234 fapi3.binance.com
 
 # 现货 WS
 52.194.24.222  stream.binance.com

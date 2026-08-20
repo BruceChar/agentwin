@@ -18,6 +18,12 @@ export interface SyncReport {
 
 export interface BinanceStatus {
   configured: boolean;
+  /** 是否读到 BINANCE_API_KEY */
+  hasKey: boolean;
+  /** 是否读到 BINANCE_API_SECRET */
+  hasSecret: boolean;
+  /** 缺失的配置项（如 ["BINANCE_API_SECRET"]） */
+  missing: string[];
   reachable: boolean;
   message?: string;
   spotHost: string;
@@ -58,7 +64,12 @@ export class BinanceAccountSync {
 
   /** 私有接口连通性（key 只对 api.binance.com / fapi.binance.com 有效） */
   async status(): Promise<BinanceStatus> {
-    const configured = Boolean(process.env.BINANCE_API_KEY && process.env.BINANCE_API_SECRET);
+    const hasKey = Boolean(process.env.BINANCE_API_KEY?.trim());
+    const hasSecret = Boolean(process.env.BINANCE_API_SECRET?.trim());
+    const missing: string[] = [];
+    if (!hasKey) missing.push('BINANCE_API_KEY');
+    if (!hasSecret) missing.push('BINANCE_API_SECRET');
+    const configured = hasKey && hasSecret;
     let reachable = false;
     let message: string | undefined;
     if (configured) {
@@ -72,7 +83,7 @@ export class BinanceAccountSync {
     const lastSync = this.lastReport
       ? { at: this.lastReport.at, ok: this.lastReport.ok, message: this.lastReport.message, balancesUpserted: this.lastReport.balancesUpserted, futuresPositions: this.lastReport.futuresPositions, tradesSynced: this.lastReport.tradesSynced }
       : null;
-    return { configured, reachable, message, spotHost: 'api.binance.com', futuresHost: 'fapi.binance.com', proxy: this.rest.proxy, lastSync };
+    return { configured, hasKey, hasSecret, missing, reachable, message, spotHost: 'api.binance.com', futuresHost: 'fapi.binance.com', proxy: this.rest.proxy, lastSync };
   }
 
   /** 全量同步：余额 → 合约持仓 → 成交 → 权益快照 */

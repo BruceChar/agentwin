@@ -9,7 +9,7 @@
         <el-button v-if="isReal" type="primary" size="small" :loading="syncing" @click="syncNow">从币安同步</el-button>
         <el-button v-else size="small" @click="load">刷新</el-button>
         <el-tag v-if="binanceStatus" size="small" :type="binanceStatus.reachable ? 'success' : 'warning'" class="ml">
-          {{ binanceStatus.configured ? (binanceStatus.reachable ? '币安账户已连接' : '币安账户不可达') : '未配置币安 Key' }}
+          {{ keyStatusText }}
         </el-tag>
       </div>
       <div class="row mt-sm">
@@ -83,11 +83,23 @@ const proxyEnabled = ref(false);
 const proxyUrl = ref('');
 const binanceStatus = ref<{
   configured: boolean;
+  hasKey?: boolean;
+  hasSecret?: boolean;
+  missing?: string[];
   reachable: boolean;
   message?: string;
   proxy?: { enabled: boolean; url?: string; mode: string; source: string };
   lastSync?: { at: number; ok: boolean; message?: string; balancesUpserted: number; futuresPositions: number; tradesSynced: number } | null;
 } | null>(null);
+
+const keyStatusText = computed(() => {
+  const s = binanceStatus.value;
+  if (!s) return '';
+  if (s.configured) return s.reachable ? '币安账户已连接' : '币安账户不可达';
+  if (s.hasKey && !s.hasSecret) return '已配置 Key，缺少 BINANCE_API_SECRET';
+  if (!s.hasKey && s.hasSecret) return '已配置 Secret，缺少 BINANCE_API_KEY';
+  return '未配置币安 Key（.env 中填 BINANCE_API_KEY + BINANCE_API_SECRET）';
+});
 
 async function applyProxy() {
   try {

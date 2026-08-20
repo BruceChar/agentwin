@@ -98,6 +98,20 @@ describe('BinanceAccountSync', () => {
     expect((await storage.listTrades({ accountId: acc.id })).length).toBe(4);
   });
 
+  it('reports missing secret clearly', async () => {
+    const prevKey = process.env.BINANCE_API_KEY;
+    const prevSecret = process.env.BINANCE_API_SECRET;
+    process.env.BINANCE_API_KEY = 'k-only';
+    delete process.env.BINANCE_API_SECRET;
+    const st = await sync.status();
+    expect(st.configured).toBe(false);
+    expect(st.hasKey).toBe(true);
+    expect(st.hasSecret).toBe(false);
+    expect(st.missing).toContain('BINANCE_API_SECRET');
+    if (prevKey === undefined) delete process.env.BINANCE_API_KEY; else process.env.BINANCE_API_KEY = prevKey;
+    if (prevSecret === undefined) delete process.env.BINANCE_API_SECRET; else process.env.BINANCE_API_SECRET = prevSecret;
+  });
+
   it('records last sync result (incl. failure reason)', async () => {
     const failingRest = { ...makeFakeRest(), spotAccount: async () => { throw new Error('network down'); } } as unknown as BinanceRest;
     const sync2 = new BinanceAccountSync(storage, failingRest, marketData);
@@ -116,6 +130,9 @@ describe('BinanceAccountSync', () => {
     process.env.BINANCE_API_SECRET = 's';
     const st = await sync.status();
     expect(st.configured).toBe(true);
+    expect(st.hasKey).toBe(true);
+    expect(st.hasSecret).toBe(true);
+    expect(st.missing).toEqual([]);
     expect(st.reachable).toBe(true);
     if (prevKey === undefined) delete process.env.BINANCE_API_KEY; else process.env.BINANCE_API_KEY = prevKey;
     if (prevSecret === undefined) delete process.env.BINANCE_API_SECRET; else process.env.BINANCE_API_SECRET = prevSecret;

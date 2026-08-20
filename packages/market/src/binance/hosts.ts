@@ -41,6 +41,7 @@ export function restCandidatesFor(market: Market, opts: HostOptions = {}): strin
     opts.futuresBaseUrl,
     process.env.BINANCE_FUTURES_BASE_URL,
     FUTURES_BASE,
+    ...FUTURES_ALT_CANDIDATES,
   ]);
 }
 
@@ -73,6 +74,13 @@ export async function pickReachableBase(market: Market, opts: HostOptions = {}, 
   throw new MarketDataUnavailableError(market, lastError);
 }
 
+// 合约备用主机（官方国内直连域名，公开行情与签名请求都可用）
+export const FUTURES_ALT_CANDIDATES = [
+  'https://fapi1.binance.com',
+  'https://fapi2.binance.com',
+  'https://fapi3.binance.com',
+];
+
 // 签名请求专用备用主机（币安官方国内直连域名；API Key 在这些域名同样有效）
 export const SIGNED_SPOT_CANDIDATES = [
   'https://api1.binance.com',
@@ -95,6 +103,7 @@ export function signedCandidatesFor(market: Market, opts: HostOptions = {}): str
     opts.futuresBaseUrl,
     process.env.BINANCE_FUTURES_BASE_URL,
     FUTURES_BASE,
+    ...FUTURES_ALT_CANDIDATES,
   ]);
 }
 
