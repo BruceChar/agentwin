@@ -1,6 +1,6 @@
 import type { Account, Market, Trade } from '@agentwin/shared';
 import type { StorageAdapter } from '@agentwin/db';
-import type { BinanceRest, FuturesAccountInfo, MarketDataProvider, MyTradeRow, SpotAccountInfo } from '@agentwin/market';
+import type { BinanceRest, FuturesAccountInfo, MarketDataProvider, MyTradeRow, ProxyConfig, SpotAccountInfo } from '@agentwin/market';
 
 export const DEFAULT_SYNC_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT'];
 
@@ -22,6 +22,8 @@ export interface BinanceStatus {
   message?: string;
   spotHost: string;
   futuresHost: string;
+  /** 当前代理配置（BINANCE_PROXY / BINANCE_PROXY_URL / HTTPS_PROXY） */
+  proxy: ProxyConfig;
 }
 
 /**
@@ -59,7 +61,7 @@ export class BinanceAccountSync {
         message = e instanceof Error ? e.message : String(e);
       }
     }
-    return { configured, reachable, message, spotHost: 'api.binance.com', futuresHost: 'fapi.binance.com' };
+    return { configured, reachable, message, spotHost: 'api.binance.com', futuresHost: 'fapi.binance.com', proxy: this.rest.proxy };
   }
 
   /** 全量同步：余额 → 合约持仓 → 成交 → 权益快照 */

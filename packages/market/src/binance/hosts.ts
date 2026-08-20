@@ -45,13 +45,15 @@ export function restCandidatesFor(market: Market, opts: HostOptions = {}): strin
 }
 
 /** 探测主机可用性（ping，4s 超时） */
-export async function probeBase(base: string, market: Market, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<boolean> {
+export async function probeBase(base: string, market: Market, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis), dispatcher?: unknown): Promise<boolean> {
   try {
     const path = market === 'SPOT' ? '/api/v3/ping' : '/fapi/v1/ping';
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 4000);
     try {
-      const res = await fetchImpl(base + path, { signal: ctrl.signal });
+      const init: RequestInit = { signal: ctrl.signal };
+      if (dispatcher) (init as Record<string, unknown>)['dispatcher'] = dispatcher;
+      const res = await fetchImpl(base + path, init);
       return res.ok;
     } finally {
       clearTimeout(timer);
@@ -62,10 +64,10 @@ export async function probeBase(base: string, market: Market, fetchImpl: typeof 
 }
 
 /** 依次探测候选主机，返回第一个可用者；全部失败抛 MarketDataUnavailableError */
-export async function pickReachableBase(market: Market, opts: HostOptions = {}, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): Promise<string> {
+export async function pickReachableBase(market: Market, opts: HostOptions = {}, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis), dispatcher?: unknown): Promise<string> {
   let lastError = 'all hosts unreachable';
   for (const url of restCandidatesFor(market, opts)) {
-    if (await probeBase(url, market, fetchImpl)) return url;
+    if (await probeBase(url, market, fetchImpl, dispatcher)) return url;
     lastError = 'failed: ' + url;
   }
   throw new MarketDataUnavailableError(market, lastError);

@@ -8,3 +8,5 @@ export { MockMarketData, MOCK_SYMBOLS } from './mock.ts';
 export { buildQueryString, buildSignedQuery, hmacSha256 } from './binance/sign.ts';
 export { SPOT_DATA_API_BASE } from './binance/hosts.ts';
 export { SPOT_DATA_STREAM_BASE } from './binance/ws.ts';
+export { resolveProxyConfig, getProxyDispatcher, proxyToBinanceConnector } from './binance/proxy.ts';
+export type { ProxyConfig, ProxyMode } from './binance/proxy.ts';

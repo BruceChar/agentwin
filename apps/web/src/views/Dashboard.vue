@@ -11,6 +11,9 @@
         <el-tag v-if="binanceStatus" size="small" :type="binanceStatus.reachable ? 'success' : 'warning'" class="ml">
           {{ binanceStatus.configured ? (binanceStatus.reachable ? '币安账户已连接' : '币安账户不可达') : '未配置币安 Key' }}
         </el-tag>
+        <el-tag v-if="binanceStatus?.proxy" size="small" type="info" effect="plain">
+          代理：{{ binanceStatus.proxy.enabled ? '开 (' + (binanceStatus.proxy.url ?? '') + ')' : '关（直连）' }}
+        </el-tag>
       </div>
     </el-card>
     <el-alert v-if="isReal && binanceStatus && !binanceStatus.reachable" type="warning" :closable="false" class="mt"
@@ -70,7 +73,7 @@ const positions = ref<AccountSummary['positions']>([]);
 const balances = ref<{ asset: string; free: number; locked: number }[]>([]);
 const curvePoints = ref<EquityPoint[]>([]);
 const syncing = ref(false);
-const binanceStatus = ref<{ configured: boolean; reachable: boolean; message?: string } | null>(null);
+const binanceStatus = ref<{ configured: boolean; reachable: boolean; message?: string; proxy?: { enabled: boolean; url?: string; mode: string; source: string } } | null>(null);
 const chartEl = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
 

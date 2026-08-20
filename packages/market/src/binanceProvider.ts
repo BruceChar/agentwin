@@ -13,7 +13,11 @@ export class BinanceMarketData implements MarketDataProvider {
 
   constructor(opts: RestOptions = {}) {
     this.rest = new BinanceRest(opts);
-    this.ws = new BinanceWs('SPOT', { onStatus: (s) => this.onWsStatus(s), baseUrl: opts.spotBaseUrl ?? process.env.BINANCE_WS_BASE_URL });
+    this.ws = new BinanceWs('SPOT', {
+      onStatus: (s) => this.onWsStatus(s),
+      baseUrl: opts.spotBaseUrl ?? process.env.BINANCE_WS_BASE_URL,
+      proxyConfig: opts.proxyConfig,
+    });
   }
 
   /** 连通性探测：选中一个可用主机即视为可达 */

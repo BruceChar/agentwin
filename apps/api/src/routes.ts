@@ -30,6 +30,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
       paperRunning: paper.running,
       llmModel: llm.model,
       binance,
+      proxy: services.rest.proxy,
     };
   });
 

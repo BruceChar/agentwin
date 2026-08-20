@@ -71,6 +71,10 @@ pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）
 
 > 注意：私有接口（签名请求）只对官方主端点 `api.binance.com` / `fapi.binance.com` 有效——如果这两个域名在你的网络不可达（DNS 污染），同步会失败并在看板给出提示，此时请配置代理或 `BINANCE_*_BASE_URL` 指向可用的主端点镜像。全程只读，不会通过同步模块下单。
 
+**代理设置**（报 `Service unavailable from a restricted location` 时，通常是代理出口 IP 在受限地区，如美区）：
+- `BINANCE_PROXY=off` 强制直连；`BINANCE_PROXY=on` 走代理（`BINANCE_PROXY_URL` 或 `HTTPS_PROXY`）；`BINANCE_PROXY=auto`（默认）有 `HTTPS_PROXY` 则走、否则直连。
+- REST 与 WebSocket 都支持（undici `ProxyAgent`，含 CONNECT 隧道）；`GET /api/binance/status` 与 `/api/health` 会返回当前代理配置（`proxy: { mode, url, enabled, source }`）便于诊断。
+
 ## Paper Trading 设计
 
 - 订阅 Binance **真实行情**（REST 300 根预热 + WebSocket 实时），成交价含滑点与手续费模拟；

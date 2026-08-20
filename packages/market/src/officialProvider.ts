@@ -6,6 +6,7 @@ import { BinanceWs, aggTradeStream, bookTickerStream, klineStream, markPriceStre
 import { parseKlineRow, parseSymbolFilters } from './binance/rest.ts';
 import { pickReachableBase, type HostOptions } from './binance/hosts.ts';
 import { toMarketEvent } from './events.ts';
+import { getProxyDispatcher, proxyToBinanceConnector, resolveProxyConfig, type ProxyConfig } from './binance/proxy.ts';
 import type { RawKlineRow } from './binance/types.ts';
 
 export interface OfficialProviderOptions extends HostOptions {
@@ -14,6 +15,8 @@ export interface OfficialProviderOptions extends HostOptions {
   timeoutMs?: number;
   /** 注入 fetch（探测用），默认全局 fetch */
   fetchImpl?: typeof fetch;
+  /** 代理配置；缺省按 BINANCE_PROXY / BINANCE_PROXY_URL / HTTPS_PROXY 解析 */
+  proxyConfig?: ProxyConfig;
 }
 
 type RowLike = (string | number)[];
@@ -36,20 +39,28 @@ interface LooseRestApi {
 export class BinanceOfficialMarketData implements MarketDataProvider {
   readonly name = 'binance-official';
   private readonly opts: OfficialProviderOptions;
+  private readonly proxyConfig: ProxyConfig;
   private spot: Spot | null = null;
   private futures: DerivativesTradingUsdsFutures | null = null;
   private baseCache = new Map<Market, { url: string; at: number }>();
-  private ws = new BinanceWs('SPOT', {});
+  private ws: BinanceWs;
   private subHandlers = new Map<string, { cb: (e: MarketEvent) => void; unsubscribe: Unsubscribe }>();
 
   constructor(opts: OfficialProviderOptions = {}) {
     this.opts = opts;
+    this.proxyConfig = opts.proxyConfig ?? resolveProxyConfig();
+    this.ws = new BinanceWs('SPOT', { baseUrl: opts.spotBaseUrl ?? process.env.BINANCE_WS_BASE_URL, proxyConfig: this.proxyConfig });
+  }
+
+  /** 当前代理配置（诊断/状态展示用） */
+  get proxy(): ProxyConfig {
+    return this.proxyConfig;
   }
 
   private async pickBase(market: Market): Promise<string> {
     const cached = this.baseCache.get(market);
     if (cached && Date.now() - cached.at < 5 * 60_000) return cached.url;
-    const url = await pickReachableBase(market, this.opts, this.opts.fetchImpl);
+    const url = await pickReachableBase(market, this.opts, this.opts.fetchImpl, getProxyDispatcher(this.proxyConfig));
     this.baseCache.set(market, { url, at: Date.now() });
     return url;
   }
@@ -61,6 +72,7 @@ export class BinanceOfficialMarketData implements MarketDataProvider {
       configurationRestAPI: {
         apiKey: this.opts.apiKey ?? '', apiSecret: this.opts.apiSecret,
         basePath: base, timeout: this.opts.timeoutMs ?? 15000,
+        proxy: proxyToBinanceConnector(this.proxyConfig),
       },
     });
     return this.spot;
@@ -73,6 +85,7 @@ export class BinanceOfficialMarketData implements MarketDataProvider {
       configurationRestAPI: {
         apiKey: this.opts.apiKey ?? '', apiSecret: this.opts.apiSecret,
         basePath: base, timeout: this.opts.timeoutMs ?? 15000,
+        proxy: proxyToBinanceConnector(this.proxyConfig),
       },
     });
     return this.futures;

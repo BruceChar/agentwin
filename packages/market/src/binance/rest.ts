@@ -1,7 +1,8 @@
 import type { AggTrade, Candle, Interval, Market, MarkPrice, SymbolInfo, Ticker } from '@agentwin/shared';
 import { buildQueryString, buildSignedQuery } from './sign.ts';
 import type { RawAggTrade, RawExchangeInfo, RawKlineRow, RawMarkPrice, RawSymbolFilter, RawTicker } from './types.ts';
-import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, pickReachableBase, probeBase, type HostOptions } from './hosts.ts';
+import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, pickReachableBase, type HostOptions } from './hosts.ts';
+import { getProxyDispatcher, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
 
 // 常量与错误类型由 hosts.ts 提供，这里统一再导出（兼容既有引用）
 export { SPOT_BASE, SPOT_TESTNET_BASE, SPOT_DATA_API_BASE, FUTURES_BASE, MarketDataUnavailableError, restCandidatesFor } from './hosts.ts';
@@ -12,6 +13,8 @@ export interface RestOptions extends HostOptions {
   timeoutMs?: number;
   /** 注入 fetch（测试用），默认全局 fetch */
   fetchImpl?: typeof fetch;
+  /** 代理配置；缺省按 BINANCE_PROXY / BINANCE_PROXY_URL / HTTPS_PROXY 解析 */
+  proxyConfig?: ProxyConfig;
 }
 
 /** 从 exchangeInfo 过滤器解析精度信息 */
@@ -50,19 +53,26 @@ export function parseKlineRow(row: RawKlineRow): Candle {
 export class BinanceRest {
   private readonly opts: RestOptions;
   private readonly fetchImpl: typeof fetch;
+  private readonly proxyConfig: ProxyConfig;
   /** market -> 已选中的可用 base（带时间戳缓存） */
   private baseCache = new Map<Market, { url: string; at: number }>();
 
   constructor(opts: RestOptions = {}) {
     this.opts = opts;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.proxyConfig = opts.proxyConfig ?? resolveProxyConfig();
+  }
+
+  /** 当前代理配置（诊断/状态展示用） */
+  get proxy(): ProxyConfig {
+    return this.proxyConfig;
   }
 
   /** 选择可用主机（缓存 5 分钟；失败自动重探） */
   private async pickBase(market: Market): Promise<string> {
     const cached = this.baseCache.get(market);
     if (cached && Date.now() - cached.at < 5 * 60_000) return cached.url;
-    const url = await pickReachableBase(market, this.opts, this.fetchImpl);
+    const url = await pickReachableBase(market, this.opts, this.fetchImpl, getProxyDispatcher(this.proxyConfig));
     this.baseCache.set(market, { url, at: Date.now() });
     return url;
   }
@@ -87,8 +97,10 @@ export class BinanceRest {
     const timeoutMs = this.opts.timeoutMs ?? 15000;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const init: RequestInit = { method, headers, signal: ctrl.signal };
+    if (this.proxyConfig.enabled) (init as Record<string, unknown>)['dispatcher'] = getProxyDispatcher(this.proxyConfig);
     try {
-      const res = await this.fetchImpl(url, { method, headers, signal: ctrl.signal });
+      const res = await this.fetchImpl(url, init);
       if (!res.ok) {
         let body = '';
         try { body = await res.text(); } catch { /* ignore */ }

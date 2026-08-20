@@ -1,4 +1,5 @@
 import type { Market } from '@agentwin/shared';
+import { getProxyDispatcher, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
 
 export const SPOT_WS_BASE = 'wss://stream.binance.com:9443';
 export const SPOT_DATA_STREAM_BASE = 'wss://data-stream.binance.vision';
@@ -31,11 +32,15 @@ export class BinanceWs {
     onStatus?: (status: 'open' | 'close' | 'error', detail?: string) => void;
     /** 显式指定 WS 端点（覆盖官方域名） */
     baseUrl?: string;
+    /** 代理配置；缺省按 BINANCE_PROXY / BINANCE_PROXY_URL / HTTPS_PROXY 解析 */
+    proxyConfig?: ProxyConfig;
   };
+  private readonly proxyConfig: ProxyConfig;
 
-  constructor(market: Market, opts: { onStatus?: (status: 'open' | 'close' | 'error', detail?: string) => void; baseUrl?: string } = {}) {
+  constructor(market: Market, opts: { onStatus?: (status: 'open' | 'close' | 'error', detail?: string) => void; baseUrl?: string; proxyConfig?: ProxyConfig } = {}) {
     this.market = market;
     this.opts = opts;
+    this.proxyConfig = opts.proxyConfig ?? resolveProxyConfig();
   }
 
   get connected(): boolean {
@@ -77,7 +82,9 @@ export class BinanceWs {
     const base = candidates[idx]!;
     return new Promise<void>((resolve, reject) => {
       let settled = false;
-      const ws = new WebSocket(this.buildUrl(base));
+      const wsOptions: Record<string, unknown> = {};
+      if (this.proxyConfig.enabled) wsOptions['dispatcher'] = getProxyDispatcher(this.proxyConfig);
+      const ws = new WebSocket(this.buildUrl(base), wsOptions);
       this.ws = ws;
       const fail = (reason: string) => {
         if (settled) return;

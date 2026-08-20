@@ -9,7 +9,8 @@
   "dependencies": {
     "@agentwin/shared": "workspace:*",
     "@binance/derivatives-trading-usds-futures": "^38.0.1",
-    "@binance/spot": "^32.0.1"
+    "@binance/spot": "^32.0.1",
+    "undici": "^8.10.0"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
