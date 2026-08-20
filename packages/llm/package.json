@@ -1,0 +1,20 @@
+{
+  "name": "@agentwin/llm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@agentwin/shared": "workspace:*",
+    "@agentwin/core": "workspace:*",
+    "@agentwin/strategy": "workspace:*",
+    "@agentwin/engine": "workspace:*",
+    "@agentwin/db": "workspace:*",
+    "@agentwin/market": "workspace:*",
+    "@earendil-works/pi-ai": "0.84.2"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  }
+}

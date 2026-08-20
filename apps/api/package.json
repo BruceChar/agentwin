@@ -1,0 +1,25 @@
+{
+  "name": "@agentwin/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@agentwin/shared": "workspace:*",
+    "@agentwin/core": "workspace:*",
+    "@agentwin/market": "workspace:*",
+    "@agentwin/db": "workspace:*",
+    "@agentwin/strategy": "workspace:*",
+    "@agentwin/engine": "workspace:*",
+    "@agentwin/llm": "workspace:*",
+    "@agentwin/sentiment": "workspace:*",
+    "fastify": "^5.12.1",
+    "@fastify/cors": "^10.0.0",
+    "@fastify/sensible": "^6.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "dev": "node --watch src/index.ts"
+  }
+}
