@@ -1,0 +1,24 @@
+{
+  "name": "agentwin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Crypto dashboard investing system: Binance real market data + simulated account (paper trading), LLM (pi-ai) strategy advisor & system iteration, backtest, trade journal, P&L analytics, sentiment analysis, pluggable local DB.",
+  "packageManager": "pnpm@10.3.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "build": "pnpm -r --if-present build",
+    "dev:api": "pnpm --filter @agentwin/api dev",
+    "dev:web": "pnpm --filter @agentwin/web dev"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}
