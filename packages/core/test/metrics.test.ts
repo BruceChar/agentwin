@@ -19,6 +19,18 @@ describe('maxDrawdown', () => {
   });
 });
 
+import { SimulatedPortfolio } from '../src/portfolio.ts';
+
+describe('SimulatedPortfolio', () => {
+  it('cashDelta adjusts cash directly', () => {
+    const p = new SimulatedPortfolio(10000, 'SPOT');
+    p.cashDelta(-100);
+    expect(p.cash).toBe(9900);
+    p.cashDelta(50.5);
+    expect(p.cash).toBe(9950.5);
+  });
+});
+
 describe('computeMetrics', () => {
   it('empty series', () => {
     const m = computeMetrics(eq([10000]), [], { intervalMs: 3_600_000 });

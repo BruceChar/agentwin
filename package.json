@@ -22,6 +22,6 @@
     "vitest": "^4.1.11"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": ["esbuild", "duckdb"]
   }
 }

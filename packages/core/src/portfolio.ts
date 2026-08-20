@@ -64,6 +64,11 @@ export class SimulatedPortfolio {
     return this.cashValue;
   }
 
+  /** 直接调整现金（资金费/分红等外部现金流） */
+  cashDelta(delta: number): void {
+    this.cashValue += delta;
+  }
+
   get positions(): Position[] {
     return [...this.positionsMap.values()];
   }

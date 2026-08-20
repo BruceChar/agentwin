@@ -33,6 +33,7 @@ export type PaperEvent =
   | { type: 'order'; order: Order }
   | { type: 'trade'; trade: Trade }
   | { type: 'equity'; equity: number; cash: number; timestamp: number }
+  | { type: 'funding'; symbol: string; fundingRate: number; amount: number; nextFundingTime: number }
   | { type: 'stop' }
   | { type: 'error'; message: string };
 
@@ -69,6 +70,9 @@ export class PaperTradingEngine {
   private symbolInfo: SymbolInfo | null = null;
   private opts: PaperEngineOptions;
   private deps: PaperEngineDeps;
+  /** 合约资金费结算状态 */
+  private lastMarkPrice = 0;
+  private lastFundingSettled = 0;
 
   constructor(opts: PaperEngineOptions, deps: PaperEngineDeps) {
     this.opts = { feeRate: 0.001, slippageBps: 2, initialCapital: 10_000, ...opts };
@@ -142,6 +146,20 @@ export class PaperTradingEngine {
       ));
     } catch {
       // bookTicker 不可用时忽略
+    }
+
+    // 合约：订阅标记价格用于资金费结算
+    if (o.market === 'USDT_M') {
+      try {
+        this.unsubscribers.push(await marketData.subscribe(
+          { symbol: o.symbol, market: o.market, stream: 'markPrice' },
+          (ev) => {
+            if (ev.markPrice) this.onMarkPrice(ev.markPrice);
+          },
+        ));
+      } catch {
+        // markPrice 不可用时忽略（资金费不会结算）
+      }
     }
 
     this.runningFlag = true;
@@ -289,6 +307,33 @@ export class PaperTradingEngine {
 
   private markToMarket(): void {
     this.portfolio.markToMarket({ [this.opts.symbol]: this.lastPrice });
+  }
+
+  /**
+   * 合约资金费结算（Binance 约定：fundingRate > 0 时多头向空头支付）。
+   * 以标记价格为基准，在 nextFundingTime 到期时结算一次（8 小时周期）。
+   */
+  private async onMarkPrice(mp: { markPrice: number; indexPrice: number; fundingRate: number; nextFundingTime: number }): Promise<void> {
+    this.lastMarkPrice = mp.markPrice;
+    if (mp.nextFundingTime <= 0) return;
+    if (this.lastFundingSettled >= mp.nextFundingTime) return; // 已结算过该期
+    if (Date.now() < mp.nextFundingTime) return; // 未到结算时间
+    this.lastFundingSettled = mp.nextFundingTime;
+
+    const pos = this.portfolio.positionFor(this.opts.symbol);
+    if (!pos || pos.quantity <= 0) return;
+    const notional = mp.markPrice * pos.quantity;
+    const rate = mp.fundingRate;
+    // 多头在 rate>0 时支付；空头在 rate>0 时收取。amount 为现金变动（负=支出）
+    const amount = pos.side === 'LONG' ? -notional * rate : notional * rate;
+    const { storage } = this.deps;
+    this.portfolio.cashDelta(amount);
+    await storage.setBalance(this.opts.accountId, 'USDT', this.portfolio.cash, 0);
+    this.deps.onEvent?.({
+      type: 'funding', symbol: this.opts.symbol, fundingRate: rate,
+      amount, nextFundingTime: mp.nextFundingTime,
+    });
+    console.log('[paper] funding', this.opts.symbol, 'rate', rate.toFixed(6), 'amount', amount.toFixed(4));
   }
 
   private async snapshotEquity(): Promise<void> {

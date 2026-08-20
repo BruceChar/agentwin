@@ -37,13 +37,47 @@ async function send() {
   input.value = '';
   loading.value = true;
   scroll();
+  const base = import.meta.env.VITE_API_BASE ?? '/api';
   try {
-    const res = await api.post<{ reply: string; sessionId: string }>('/llm/chat', { message: text, sessionId: sessionId.value });
-    sessionId.value = res.sessionId;
-    localStorage.setItem('llm-session', res.sessionId);
-    messages.value.push({ role: 'assistant', content: res.reply });
+    const res = await fetch(base + '/llm/chat-stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: text, sessionId: sessionId.value }),
+    });
+    if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let current: ChatMsg | null = null;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() ?? '';
+      for (const frame of frames) {
+        if (!frame.startsWith('data: ')) continue;
+        const data = JSON.parse(frame.slice(6)) as Record<string, string>;
+        if (data.type === 'session') {
+          sessionId.value = data.sessionId;
+          localStorage.setItem('llm-session', data.sessionId);
+        } else if (data.type === 'delta' && data.delta) {
+          if (!current) {
+            current = { role: 'assistant', content: '' };
+            messages.value.push(current);
+          }
+          current.content += data.delta;
+          scroll();
+        } else if (data.type === 'done') {
+          if (!current) messages.value.push({ role: 'assistant', content: '' });
+          current = null;
+        } else if (data.type === 'error') {
+          messages.value.push({ role: 'assistant', content: '调用失败：' + (data.message ?? '未知错误') + '（请确认 DEEPSEEK_API_KEY 已配置且后端已启动）' });
+        }
+      }
+    }
   } catch (e) {
-    messages.value.push({ role: 'assistant', content: '调用失败：' + (e as Error).message + '（请确认 DEEPSEEK_API_KEY 已配置且后端已启动）' });
+    messages.value.push({ role: 'assistant', content: '调用失败：' + (e as Error).message });
   } finally {
     loading.value = false;
     scroll();

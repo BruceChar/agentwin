@@ -224,6 +224,40 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     return { sessionId: session.id, reply, streamed: deltas.join('') };
   });
 
+  // 流式聊天（SSE）：POST /api/llm/chat-stream
+  app.post('/api/llm/chat-stream', async (req, reply) => {
+    const b = req.body as Body;
+    const message = str(b['message']);
+    if (!message) return app.httpErrors.badRequest('message required');
+    const sessionId = str(b['sessionId'], 'adv-' + Date.now().toString(36));
+    let session = await storage.getSession(sessionId);
+    if (!session) session = await storage.createSession({ id: sessionId, kind: 'strategy', title: message.slice(0, 40) });
+    const advisor = new StrategyAdvisor(llm, toolkit, storage, session.id);
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+    const send = (data: unknown) => {
+      raw.write('data: ' + JSON.stringify(data) + '\n\n');
+    };
+    send({ type: 'session', sessionId: session.id });
+    try {
+      await advisor.ask(message, (e) => {
+        if (e.type === 'text_delta' && e.delta) send({ type: 'delta', delta: e.delta });
+        else if (e.type === 'toolcall_end') send({ type: 'tool', name: e.toolName ?? '' });
+      });
+      send({ type: 'done', sessionId: session.id });
+    } catch (e) {
+      send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      raw.end();
+    }
+    return reply;
+  });
+
   app.get('/api/llm/sessions', async () => ({ sessions: await storage.listSessions() }));
   app.get('/api/llm/sessions/:id/messages', async (req) => {
     return { messages: await storage.listMessages(str((req.params as Body)['id'])) };
