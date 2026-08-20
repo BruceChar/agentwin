@@ -7,6 +7,7 @@ import { BinanceAccountSync } from '../src/binance-sync.ts';
 function makeFakeRest() {
   return {
     serverTime: async () => Date.now(),
+    reachable: async () => true,
     spotAccount: async () => ({
       balances: [
         { asset: 'USDT', free: 5000, locked: 100 },
