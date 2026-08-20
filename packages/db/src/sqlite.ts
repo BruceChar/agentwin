@@ -318,6 +318,10 @@ export class SqliteStorage implements StorageAdapter {
     }));
   }
 
+  async deletePosition(accountId: string, symbol: string, market: Market): Promise<void> {
+    this.db.prepare('DELETE FROM positions WHERE account_id = ? AND symbol = ? AND market = ?').run(accountId, symbol, market);
+  }
+
   async clearPositions(accountId: string): Promise<void> {
     this.db.prepare('DELETE FROM positions WHERE account_id = ?').run(accountId);
   }

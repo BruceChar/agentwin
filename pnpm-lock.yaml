@@ -21,11 +21,35 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.2.0)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.12))
 
+  packages/core:
+    dependencies:
+      '@agentwin/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/db:
     dependencies:
       '@agentwin/shared':
         specifier: workspace:*
         version: link:../shared
+
+  packages/engine:
+    dependencies:
+      '@agentwin/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentwin/db':
+        specifier: workspace:*
+        version: link:../db
+      '@agentwin/market':
+        specifier: workspace:*
+        version: link:../market
+      '@agentwin/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@agentwin/strategy':
+        specifier: workspace:*
+        version: link:../strategy
 
   packages/market:
     dependencies:
@@ -34,6 +58,15 @@ importers:
         version: link:../shared
 
   packages/shared: {}
+
+  packages/strategy:
+    dependencies:
+      '@agentwin/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentwin/shared':
+        specifier: workspace:*
+        version: link:../shared
 
 packages:
 

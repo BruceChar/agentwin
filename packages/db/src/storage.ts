@@ -86,6 +86,7 @@ export interface StorageAdapter {
   // ---------- 持仓 ----------
   upsertPosition(p: Position): Promise<void>;
   getPositions(accountId: string): Promise<Position[]>;
+  deletePosition(accountId: string, symbol: string, market: Market): Promise<void>;
   clearPositions(accountId: string): Promise<void>;
 
   // ---------- 策略 ----------
