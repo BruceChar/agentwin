@@ -10,7 +10,7 @@
         <el-date-picker v-model="range" type="daterange" value-format="x" :clearable="false" @change="load" />
         <span class="label">市场：</span>
         <el-select v-model="market" style="width: 140px" clearable placeholder="全部" @change="load">
-          <el-option v-for="m in ['现货','U本位合约','币本位合约','全仓杠杆','逐仓杠杆']" :key="m" :value="m" :label="m" />
+          <el-option v-for="(label, m) in MARKET_LABELS" :key="m" :value="m" :label="label" />
         </el-select>
         <el-button size="small" @click="load">刷新</el-button>
         <span class="dim">统计分析基于所选账户的实际成交（{{ acctLabelText }}）</span>
