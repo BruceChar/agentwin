@@ -106,8 +106,8 @@ function setPeriod(row: PeriodRow, raw: string | number) {
   row.value = Math.max(1, Math.min(999, Math.round(v * 100) / 100));
   render();
 }
-const UP = '#f56c6c';
-const DOWN = '#67c23a';
+const UP = '#67c23a';
+const DOWN = '#f56c6c';
 const GRID_GAP = 14;
 const PANEL_H = 86;
 const SLIDER_H = 26;
@@ -184,12 +184,24 @@ function render() {
   if (!cs.length) return;
 
   const closes = cs.map((c) => c.close);
-  const times = cs.map((c) => fmtAxisTime(c.openTime, interval.value));
+  const PAD = 2; // 两端各补 2 个空位，K 线不贴左右边框
+  const times = ['', '', ...cs.map((c) => fmtAxisTime(c.openTime, interval.value)), '', ''];
+  const padArr = <T,>(a: T[]): (T | null)[] => [null, null, ...a, null, null];
 
   // 可见范围（VPVR 只统计可见 K 线）
   const from = Math.max(0, Math.floor((cs.length * zoomStart) / 100));
   const to = Math.min(cs.length, Math.max(from + 1, Math.ceil((cs.length * zoomEnd) / 100)));
   const visible = cs.slice(from, to);
+
+  // 价格轴范围：可见 K 线高低 + 6% 边距（K 线不贴上下边框），VPVR 轴同步
+  let yLo = Infinity, yHi = -Infinity;
+  for (const c of visible) {
+    if (c.low < yLo) yLo = c.low;
+    if (c.high > yHi) yHi = c.high;
+  }
+  const yPad = (yHi - yLo) * 0.06;
+  const priceMin = yLo - yPad;
+  const priceMax = yHi + yPad;
 
   // 指标
   const macdRes = macd(closes);
@@ -208,16 +220,17 @@ function render() {
   const gridTop: { top: number; height: number }[] = [];
   const gridIdx: Record<string, number> = {};
   const mainH = TOTAL_H - 8 - SLIDER_H - panels.length * (PANEL_H + GRID_GAP);
-  gridTop.push({ top: 4, height: mainH });
+  gridTop.push({ top: 4, height: mainH }); // 0: 价格区（K线+均线）
+  gridTop.push({ top: 4, height: mainH }); // 1: VPVR 右侧竖版条（与价格区同高，间隔分开）
   mainGridH = mainH;
   let top = 4 + mainH + GRID_GAP;
   for (let i = 0; i < panels.length; i++) {
     gridTop.push({ top, height: PANEL_H });
-    gridIdx[panels[i]!.key] = i + 1;
+    gridIdx[panels[i]!.key] = i + 2; // 面板从索引 2 开始
     top += PANEL_H + GRID_GAP;
   }
 
-  const catAxisIdx = [0, ...panels.map((_, i) => i + 1)];
+  const catAxisIdx = [0, ...panels.map((_, i) => i + 2)];
 
   // 坐标轴
   const xAxes: Record<string, unknown>[] = [];
@@ -235,11 +248,37 @@ function render() {
   xAxes.push(mkCatAxis(0, true));
   yAxes.push({
     gridIndex: 0,
+    min: priceMin,
+    max: priceMax,
     scale: true,
     axisLine: { show: false },
     axisLabel: { color: '#8a94a3', formatter: fmtPrice },
     splitLine: { lineStyle: { color: 'rgba(128,140,155,0.10)' } },
     axisPointer: { label: { formatter: (p: { value: number }) => fmtPrice(p.value) } },
+  });
+  // VPVR 专用轴：右侧竖版条，与价格轴同范围（保证与 K 线价格严格对齐）
+  xAxes.push({
+    id: 'vpvrAxis',
+    type: 'value',
+    gridIndex: 1,
+    min: 0,
+    max: 1,
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { show: false },
+    splitLine: { show: false },
+    axisPointer: { show: false },
+  });
+  yAxes.push({
+    gridIndex: 1,
+    min: priceMin,
+    max: priceMax,
+    scale: true,
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { show: false },
+    splitLine: { show: false },
+    axisPointer: { show: false },
   });
   for (const p of panels) {
     const gi = gridIdx[p.key]!;
@@ -267,7 +306,7 @@ function render() {
     type: 'candlestick',
     xAxisIndex: 0,
     yAxisIndex: 0,
-    data: cs.map((c) => [c.open, c.close, c.low, c.high]),
+    data: padArr(cs.map((c) => [c.open, c.close, c.low, c.high])),
     itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
     valueFormatter: (v: unknown) =>
       Array.isArray(v)
@@ -286,7 +325,7 @@ function render() {
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: sma(closes, row.value),
+        data: padArr(sma(closes, row.value)),
         symbol: 'none',
         connectNulls: false,
         z: 2,
@@ -301,7 +340,7 @@ function render() {
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: ema(closes, row.value),
+        data: padArr(ema(closes, row.value)),
         symbol: 'none',
         connectNulls: false,
         z: 2,
@@ -312,15 +351,16 @@ function render() {
     }
   }
 
-  // VPVR：右侧竖版量分布 —— 用 custom 系列按像素精确绘制，
-  // 柱锚定主图右边缘、与价格轴严格对齐、随可见区间重算
+  // VPVR：右侧独立竖版条 —— 用 custom 系列按像素精确绘制，
+  // 柱锚定 VPVR 网格右边缘、与价格轴严格对齐（同范围 y 轴）、随可见区间重算；
+  // VPVR 网格与 K 线网格之间留出间隔（见 grids 配置）
   if (vpvrOn.value && profile.length) {
     series.push({
       id: 'vpvr',
       name: 'VPVR',
       type: 'custom',
-      xAxisIndex: 0,
-      yAxisIndex: 0,
+      xAxisIndex: 1,
+      yAxisIndex: 1,
       clip: true,
       silent: true,
       tooltip: { show: false },
@@ -339,7 +379,7 @@ function render() {
         const yLo = api.coord([0, lo])[1];
         const yTop = Math.min(yHi, yLo);
         const h = Math.max(1, Math.abs(yHi - yLo));
-        const w = Math.max(0.5, frac * params.coordSys.width * 0.3);
+        const w = Math.max(1, frac * params.coordSys.width * 0.85);
         return {
           type: 'rect',
           shape: { x: right - w, y: yTop, width: w, height: h },
@@ -356,7 +396,7 @@ function render() {
       type: 'bar',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(245,108,108,0.5)' : 'rgba(103,194,58,0.5)' } })),
+      data: padArr(cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } }))),
       barMaxWidth: 8,
       valueFormatter: (v: unknown) => fmtVol(v as number),
     });
@@ -365,7 +405,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: volMa,
+      data: padArr(volMa),
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1, color: '#409eff' },
@@ -381,7 +421,7 @@ function render() {
       type: 'bar',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(245,108,108,0.55)' : 'rgba(103,194,58,0.55)' } })),
+      data: padArr(macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } }))),
       barMaxWidth: 6,
       valueFormatter: (v: unknown) => fmtPrice(v as number),
     });
@@ -390,7 +430,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: macdRes.dif,
+      data: padArr(macdRes.dif),
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1, color: '#f0a35e' },
@@ -402,7 +442,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: macdRes.dea,
+      data: padArr(macdRes.dea),
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1, color: '#4da3ff' },
@@ -418,7 +458,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: rsiRes,
+      data: padArr(rsiRes),
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1.2, color: '#4da3ff' },
@@ -433,7 +473,14 @@ function render() {
     });
   }
 
-  const grids = gridTop.map((g, i) => ({ left: 64, right: i === 0 ? 44 : 14, top: g.top, height: g.height }));
+  // 网格：0=价格区（右侧留出 VPVR 间隔），1=VPVR 右侧独立竖版条（与 K 线间隔约 40px），2+=副图面板
+  const grids = gridTop.map((g, i) =>
+    i === 0
+      ? { left: 64, right: 215, top: g.top, height: g.height }
+      : i === 1
+        ? { right: 40, width: 130, top: g.top, height: g.height }
+        : { left: 64, right: 16, top: g.top, height: g.height },
+  );
 
   chart.setOption(
     {
@@ -482,17 +529,33 @@ function onZoom() {
   if (s == null || e == null) return;
   zoomStart = s;
   zoomEnd = e;
-  if (!vpvrOn.value || !candles.value.length) return;
+  if (!candles.value.length) return;
   const cs = candles.value;
   const from = Math.max(0, Math.floor((cs.length * s) / 100));
   const to = Math.min(cs.length, Math.max(from + 1, Math.ceil((cs.length * e) / 100)));
   const visible = cs.slice(from, to);
-  const buckets = Math.max(16, Math.min(48, Math.round(visible.length / 4)));
-  const profile = volumeProfile(visible, buckets);
-  const maxVol = Math.max(1e-9, profile.reduce((m, b) => (b.volume > m ? b.volume : m), 0));
-  chart.setOption({
-    series: [{ id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) }],
-  });
+  // 缩放后价格轴范围随可见 K 线重算（K 线不贴上下边框），VPVR 轴同步
+  let yLo = Infinity, yHi = -Infinity;
+  for (const c of visible) {
+    if (c.low < yLo) yLo = c.low;
+    if (c.high > yHi) yHi = c.high;
+  }
+  const yPad = (yHi - yLo) * 0.06;
+  const priceMin = yLo - yPad;
+  const priceMax = yHi + yPad;
+  const opts: Record<string, unknown> = {
+    yAxis: [
+      { gridIndex: 0, min: priceMin, max: priceMax },
+      { gridIndex: 1, min: priceMin, max: priceMax },
+    ],
+  };
+  if (vpvrOn.value) {
+    const buckets = Math.max(16, Math.min(48, Math.round(visible.length / 4)));
+    const profile = volumeProfile(visible, buckets);
+    const maxVol = Math.max(1e-9, profile.reduce((m, b) => (b.volume > m ? b.volume : m), 0));
+    opts['series'] = [{ id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) }];
+  }
+  chart.setOption(opts);
 }
 
 // ---------- 生命周期 ----------
@@ -531,6 +594,6 @@ onBeforeUnmount(() => {
 .del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
 .del:hover { color: #f56c6c; }
 .px { margin-left: auto; font-size: 13px; font-family: var(--mono); }
-.up { color: #f56c6c; }
-.down { color: #67c23a; }
+.up { color: #67c23a; }
+.down { color: #f56c6c; }
 </style>

@@ -21,6 +21,35 @@
         </el-collapse>
       </el-card>
       <el-card shadow="never" class="mt">
+        <template #header>新增自定义策略（技术指标 + 文本描述）</template>
+        <el-form label-width="90px" size="small">
+          <el-form-item label="策略名称"><el-input v-model="custom.name" placeholder="如 顺势突破 v1" /></el-form-item>
+          <el-form-item label="市场 / 币种">
+            <el-select v-model="custom.market" style="width: 45%">
+              <el-option v-for="(label, m) in MARKET_LABELS" :key="m" :value="m" :label="label" />
+            </el-select>
+            <el-select v-model="custom.symbol" style="width: 45%">
+              <el-option v-for="s in ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','DOGEUSDT','WIFUSDT','ALLOUSDT','AVAXUSDT']" :key="s" :value="s" :label="s" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="周期"><el-select v-model="custom.interval" style="width: 45%">
+            <el-option v-for="i in ['1m','5m','15m','1h','4h','1d']" :key="i" :value="i" :label="i" />
+          </el-select></el-form-item>
+          <el-form-item label="技术指标">
+            <el-checkbox-group v-model="custom.indicators">
+              <el-checkbox v-for="ind in INDICATOR_OPTIONS" :key="ind" :value="ind" size="small">{{ ind }}</el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+          <el-form-item label="文本描述">
+            <el-input v-model="custom.description" type="textarea" :rows="4" placeholder="描述你的交易规则，例如：MA20 上穿 MA60 且 RSI 大于 50 时开多；跌破 MA20 平仓…" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" size="small" :loading="saving" @click="saveCustom">保存策略</el-button>
+            <span class="dim">保存后出现在下方「已保存策略」，供后续回测/启用</span>
+          </el-form-item>
+        </el-form>
+      </el-card>
+      <el-card shadow="never" class="mt">
         <template #header>已保存策略</template>
         <el-table :data="configs" size="small">
           <el-table-column prop="name" label="策略" />
@@ -60,14 +89,19 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
-import { api, type BacktestResult, type StrategyConfig, type StrategyMeta } from '../api.ts';
+import { api, MARKET_LABELS, type BacktestResult, type StrategyConfig, type StrategyMeta } from '../api.ts';
 
+const INDICATOR_OPTIONS = ['MA', 'EMA', 'MACD', 'RSI', 'BOLL(布林)', 'ATR', 'KDJ', '成交量', 'OBV', 'VWAP', '斐波那契', '趋势线/结构'];
 const metas = ref<StrategyMeta[]>([]);
 const configs = ref<StrategyConfig[]>([]);
 const result = ref<BacktestResult | null>(null);
 const chartEl = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
 const paramDrafts = reactive<Record<string, Record<string, number | string | boolean>>>({});
+const saving = ref(false);
+const custom = reactive<{ name: string; market: string; symbol: string; interval: string; indicators: string[]; description: string }>({
+  name: '', market: 'SPOT', symbol: 'BTCUSDT', interval: '1h', indicators: [], description: '',
+});
 
 const metricCards = computed(() => {
   const m = result.value?.metrics;
@@ -117,6 +151,37 @@ function renderChart() {
   });
 }
 
+/** 保存自定义策略：指标选择 + 文本描述，写入策略库 */
+async function saveCustom() {
+  if (!custom.name.trim()) { ElMessage.warning('请填写策略名称'); return; }
+  if (!custom.indicators.length) { ElMessage.warning('请至少选择一个技术指标'); return; }
+  if (!custom.description.trim()) { ElMessage.warning('请填写文本描述'); return; }
+  saving.value = true;
+  try {
+    await api.post('/strategies', {
+      name: 'custom',
+      id: 'custom-' + Date.now().toString(36),
+      description: custom.description.trim(),
+      market: custom.market,
+      symbol: custom.symbol,
+      interval: custom.interval,
+      params: {
+        indicators: custom.indicators.join(','),
+        description: custom.description.trim(),
+      },
+      source: 'user',
+      enabled: false,
+    });
+    ElMessage.success('自定义策略已保存');
+    Object.assign(custom, { name: '', indicators: [], description: '' });
+    configs.value = (await api.get<{ strategies: StrategyConfig[] }>('/strategies')).strategies;
+  } catch (e) {
+    ElMessage.error((e as Error).message);
+  } finally {
+    saving.value = false;
+  }
+}
+
 async function toggle(id: string, v: boolean) {
   await api.patch('/strategies/' + id, { enabled: v });
   ElMessage.success(v ? '已启用' : '已停用');
@@ -134,6 +199,6 @@ onMounted(load);
 .metric { text-align: center; }
 .mlabel { color: #999; font-size: 12px; }
 .mvalue { font-size: 18px; font-weight: 700; }
-.up { color: #f56c6c; }
-.down { color: #67c23a; }
+.up { color: #67c23a; }
+.down { color: #f56c6c; }
 </style>

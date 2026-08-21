@@ -5,11 +5,12 @@ import { createBollingerStrategy } from './bollinger.ts';
 import { createDcaStrategy } from './dca.ts';
 import { createMacdTrendStrategy } from './macdTrend.ts';
 import { createGridStrategy } from './grid.ts';
+import { createCustomStrategy } from './custom.ts';
 
 export function registerBuiltinStrategies(): void {
   const defs = [
     createMaCrossStrategy, createRsiStrategy, createBollingerStrategy,
-    createDcaStrategy, createMacdTrendStrategy, createGridStrategy,
+    createDcaStrategy, createMacdTrendStrategy, createGridStrategy, createCustomStrategy,
   ];
   for (const factory of defs) {
     const s = factory();

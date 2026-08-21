@@ -128,7 +128,7 @@ function render() {
   const bySym: Record<string, number> = {};
   for (const x of fs) bySym[x.symbol] = (bySym[x.symbol] ?? 0) + (x.realizedPnl ?? 0);
   const symKeys = Object.keys(bySym).sort((a, b) => (bySym[b] ?? 0) - (bySym[a] ?? 0));
-  bar(symChart.value, symKeys, symKeys.map((k) => bySym[k] ?? 0), (v) => (v >= 0 ? '#f0a35e' : '#4fbf9f'));
+  bar(symChart.value, symKeys, symKeys.map((k) => bySym[k] ?? 0), (v) => (v >= 0 ? '#67c23a' : '#f56c6c'));
 
   // 按市场
   const byMkt: Record<string, number> = {};
@@ -137,12 +137,12 @@ function render() {
     byMkt[k] = (byMkt[k] ?? 0) + (x.realizedPnl ?? 0);
   }
   const mktKeys = Object.keys(byMkt);
-  bar(mktChart.value, mktKeys, mktKeys.map((k) => byMkt[k] ?? 0), (v) => (v >= 0 ? '#f0a35e' : '#4fbf9f'));
+  bar(mktChart.value, mktKeys, mktKeys.map((k) => byMkt[k] ?? 0), (v) => (v >= 0 ? '#67c23a' : '#f56c6c'));
 
   // 按方向
   const byDir: Record<string, number> = { 做多: 0, 做空: 0 };
   for (const x of fs) byDir[x.side === 'BUY' ? '做多' : '做空'] += x.realizedPnl ?? 0;
-  bar(dirChart.value, ['做多', '做空'], [byDir['做多'] ?? 0, byDir['做空'] ?? 0], (v) => (v >= 0 ? '#f0a35e' : '#4fbf9f'));
+  bar(dirChart.value, ['做多', '做空'], [byDir['做多'] ?? 0, byDir['做空'] ?? 0], (v) => (v >= 0 ? '#67c23a' : '#f56c6c'));
 
   // 每日盈亏
   const byDay: Record<string, number> = {};
@@ -151,7 +151,7 @@ function render() {
     byDay[k] = (byDay[k] ?? 0) + (x.realizedPnl ?? 0);
   }
   const dayKeys = Object.keys(byDay).sort();
-  bar(dayChart.value, dayKeys, dayKeys.map((k) => byDay[k] ?? 0), (v) => (v >= 0 ? '#f0a35e' : '#4fbf9f'));
+  bar(dayChart.value, dayKeys, dayKeys.map((k) => byDay[k] ?? 0), (v) => (v >= 0 ? '#67c23a' : '#f56c6c'));
 
   // 累计净收益
   const sorted = fs.slice().sort((a, b) => a.tradedAt - b.tradedAt);
@@ -184,6 +184,6 @@ onMounted(async () => {
 .mvalue { font-size: 18px; font-weight: 700; margin-top: 4px; }
 .mono { font-family: var(--mono); }
 .chart { height: 260px; }
-.up { color: #f56c6c; }
-.down { color: #67c23a; }
+.up { color: #67c23a; }
+.down { color: #f56c6c; }
 </style>

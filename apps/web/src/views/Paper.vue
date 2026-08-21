@@ -98,6 +98,6 @@ onMounted(async () => {
 
 <style scoped>
 .mt { margin-top: 16px; }
-.up { color: #f56c6c; }
-.down { color: #67c23a; }
+.up { color: #67c23a; }
+.down { color: #f56c6c; }
 </style>

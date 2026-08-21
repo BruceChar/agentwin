@@ -313,6 +313,6 @@ onMounted(async () => {
 .chart { height: 280px; }
 .todo-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
 .todo-text { flex: 1; }
-.up { color: #f56c6c; }
-.down { color: #67c23a; }
+.up { color: #67c23a; }
+.down { color: #f56c6c; }
 </style>

@@ -219,6 +219,6 @@ onMounted(async () => {
 .chart { height: 300px; }
 .stat .label { color: #999; font-size: 13px; }
 .stat .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
-.up { color: #f56c6c; }
-.down { color: #67c23a; }
+.up { color: #67c23a; }
+.down { color: #f56c6c; }
 </style>

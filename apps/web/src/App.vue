@@ -182,8 +182,8 @@ onMounted(() => {
   --text: #d7dde4;
   --text-dim: #7b8794;
   --accent: #4da3ff;
-  --up: #f0a35e;
-  --down: #4fbf9f;
+  --up: #4fbf9f;
+  --down: #e5484d;
   --mono: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
 }
 /* 浅色主题 */
@@ -195,8 +195,8 @@ html:not(.dark) {
   --text: #1c2733;
   --text-dim: #7a8694;
   --accent: #2563eb;
-  --up: #d9551f;
-  --down: #14805f;
+  --up: #14805f;
+  --down: #d9551f;
 }
 html.dark {
   --el-bg-color: var(--bg-card);

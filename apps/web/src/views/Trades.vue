@@ -87,6 +87,6 @@ onMounted(load);
 .metric { text-align: center; }
 .mlabel { color: #999; font-size: 12px; }
 .mvalue { font-size: 18px; font-weight: 700; margin-top: 4px; }
-.up { color: #f56c6c; }
-.down { color: #67c23a; }
+.up { color: #67c23a; }
+.down { color: #f56c6c; }
 </style>
