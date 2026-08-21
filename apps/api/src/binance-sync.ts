@@ -198,7 +198,12 @@ export class BinanceAccountSync {
           report.futuresPositions++;
         }
         equityParts.push({ usdt: coinm.totalWalletBalance + coinm.totalUnrealizedProfit, note: '币本位合约(按计价币计)' });
-        await this.syncSymbolTrades(account.id, this.symbolsForSync(coinm.assets.map((a) => a.asset), coinm.positions.map((p) => p.symbol), opts.symbols ?? []), limit, 'COIN_M', report, skipTrades);
+        // 币本位（COIN_M）只同步真实币本位持仓 symbol（BTCUSD_PERP 等）。
+        // 注意：不能复用 symbolsForSync（会带入 USDT 本位品种如 SOLUSDT）——
+        // dapi 对被污染/不可达的 symbol 可能返回异常数据，造成假成交。
+        const coinmSymbols = coinm.positions.map((p) => p.symbol);
+        if (Array.isArray(opts.symbols) && opts.symbols.length) coinmSymbols.push(...opts.symbols);
+        await this.syncSymbolTrades(account.id, coinmSymbols, limit, 'COIN_M', report, skipTrades);
       } catch (e) {
         console.warn('[sync] coin-m futures failed:', e instanceof Error ? e.message : String(e));
       }
