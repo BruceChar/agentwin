@@ -37,6 +37,8 @@
           <el-descriptions-item label="账户">{{ accounts.length }} 个（{{ accounts.filter(a => a.type === 'real').length }} 真实）</el-descriptions-item>
         </el-descriptions>
         <div class="dim mt-sm">JSONL 为主存储（data/trade-journal.jsonl），SQLite 辅助查询/恢复。</div>
+        <el-alert type="warning" :closable="false" class="mt" title="清空数据库会删除全部本地数据（账户/成交/日志/策略等），并立即从币安重新同步历史成交。模拟账户将被关闭。" />
+        <el-button size="small" type="danger" class="mt" :loading="resetting" @click="resetAll">清空数据库并重新同步</el-button>
       </el-card>
     </el-col>
   </el-row>
@@ -44,14 +46,16 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { api } from '../api.ts';
+import { loadAccounts } from '../store.ts';
 
 const bs = ref<any>(null);
 const health = ref<any>(null);
 const accounts = ref<any[]>([]);
 const jstat = ref<any>(null);
 const syncing = ref(false);
+const resetting = ref(false);
 const proxyEnabled = ref(false);
 const proxyUrl = ref('');
 const proxyExit = ref('-');
@@ -90,6 +94,30 @@ async function sync() {
 async function diagnose() {
   const d = await api.get('/binance/diagnose').catch(() => null);
   diag.value = d ? JSON.stringify(d, null, 2) : '';
+}
+
+/** 清空数据库并从币安重新同步历史成交（增量起点 = 最新本地记录） */
+async function resetAll() {
+  try {
+    await ElMessageBox.confirm(
+      '将删除全部本地数据（账户/成交/权益/交易日志/策略等），关闭模拟账户，并立即从币安全量拉取历史成交。\n此操作不可恢复，确定继续？',
+      '清空数据库',
+      { type: 'warning', confirmButtonText: '清空并同步', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;
+  }
+  resetting.value = true;
+  try {
+    const res = await api.post<{ ok: boolean; accounts: { id: string; name: string; type: string }[]; sync: { tradesSynced: number; tradesSkipped: number; balancesUpserted: number; ok: boolean; message?: string } }>('/admin/reset');
+    ElMessage.success('已清空并同步：成交 ' + (res.sync?.tradesSynced ?? 0) + ' 条（跳过 ' + (res.sync?.tradesSkipped ?? 0) + '）');
+    await loadAccounts();
+    await load();
+  } catch (e) {
+    ElMessage.error('清空失败：' + (e instanceof Error ? e.message : String(e)));
+  } finally {
+    resetting.value = false;
+  }
 }
 
 async function applyProxy() {

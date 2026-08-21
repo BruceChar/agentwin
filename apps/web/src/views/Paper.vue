@@ -1,4 +1,5 @@
 <template>
+  <el-alert v-if="paperClosed" type="warning" :closable="false" class="mb" title="模拟账户已关闭（PAPER_ENABLED=0）" description="本系统当前仅使用真实账户，行情/交易/统计均展示币安同步的实际数据。" />
   <el-row :gutter="16">
     <el-col :span="8">
       <el-card shadow="never">
@@ -54,6 +55,7 @@
 import { onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { api, type StrategyConfig, type Trade } from '../api.ts';
+import { accountStore, loadAccounts } from '../store.ts';
 
 interface PaperStatus { running: boolean; lastPrice: number; equity: number; cash: number; lastBarOpenTime: number }
 
@@ -64,6 +66,7 @@ const market = ref('SPOT');
 const interval = ref('1h');
 const status = ref<PaperStatus | null>(null);
 const trades = ref<Trade[]>([]);
+const paperClosed = ref(false);
 
 async function refresh() {
   status.value = await api.get<PaperStatus>('/paper/status');
@@ -85,6 +88,8 @@ async function stop() {
 }
 
 onMounted(async () => {
+  await loadAccounts();
+  paperClosed.value = !accountStore.accounts.some((a) => a.type === 'paper');
   configs.value = (await api.get<{ strategies: StrategyConfig[] }>('/strategies')).strategies;
   await refresh();
   setInterval(refresh, 5000);

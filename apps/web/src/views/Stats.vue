@@ -2,6 +2,10 @@
   <div>
     <el-card shadow="never" class="mb">
       <div class="row">
+        <span class="label">账户：</span>
+        <el-select :model-value="accountStore.selectedId" style="width: 200px" @change="onAccountChange">
+          <el-option v-for="a in accountStore.accounts" :key="a.id" :value="a.id" :label="(a.type === 'real' ? '真实 ' : '模拟 ') + a.name" />
+        </el-select>
         <span class="label">时间范围：</span>
         <el-date-picker v-model="range" type="daterange" value-format="x" :clearable="false" @change="load" />
         <span class="label">市场：</span>
@@ -9,38 +13,66 @@
           <el-option v-for="m in ['现货','U本位合约','币本位合约','全仓杠杆','逐仓杠杆']" :key="m" :value="m" :label="m" />
         </el-select>
         <el-button size="small" @click="load">刷新</el-button>
+        <span class="dim">统计分析基于所选账户的实际成交（{{ acctLabelText }}）</span>
       </div>
     </el-card>
+
     <el-row :gutter="12">
-      <el-col :span="8"><el-card shadow="never"><template #header>R 倍数分布</template><div ref="rChart" class="chart"></div></el-card></el-col>
-      <el-col :span="8"><el-card shadow="never"><template #header>按品种 / 方向 / 策略盈亏</template>
-        <el-radio-group v-model="groupBy" size="small" class="mb"><el-radio-button value="market">市场</el-radio-button><el-radio-button value="strategy">策略</el-radio-button><el-radio-button value="direction">方向</el-radio-button></el-radio-group>
-        <div ref="gChart" class="chart"></div>
-      </el-card></el-col>
-      <el-col :span="8"><el-card shadow="never"><template #header>计划 vs 实际执行</template><div ref="pChart" class="chart"></div></el-card></el-col>
+      <el-col :span="4" v-for="c in cards" :key="c.label">
+        <el-card shadow="never" class="metric"><div class="mlabel">{{ c.label }}</div><div class="mvalue mono" :class="c.cls">{{ c.text }}</div></el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="12" class="mt">
+      <el-col :span="8"><el-card shadow="never"><template #header>按品种盈亏</template><div ref="symChart" class="chart"></div></el-card></el-col>
+      <el-col :span="8"><el-card shadow="never"><template #header>按市场盈亏</template><div ref="mktChart" class="chart"></div></el-card></el-col>
+      <el-col :span="8"><el-card shadow="never"><template #header>按方向盈亏</template><div ref="dirChart" class="chart"></div></el-card></el-col>
     </el-row>
     <el-row :gutter="12" class="mt">
-      <el-col :span="12"><el-card shadow="never"><template #header>规则符合度趋势</template><div ref="dChart" class="chart"></div></el-card></el-col>
-      <el-col :span="12"><el-card shadow="never"><template #header>净收益累计（R）</template><div ref="cChart" class="chart"></div></el-card></el-col>
+      <el-col :span="12"><el-card shadow="never"><template #header>每日盈亏</template><div ref="dayChart" class="chart"></div></el-card></el-col>
+      <el-col :span="12"><el-card shadow="never"><template #header>累计净收益（实际成交）</template><div ref="cumChart" class="chart"></div></el-card></el-col>
     </el-row>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import * as echarts from 'echarts';
-import { api } from '../api.ts';
+import { api, MARKET_LABELS, type TradeAgg } from '../api.ts';
+import { accountLabel, accountStore, loadAccounts, selectAccount } from '../store.ts';
+
+interface Fill { id: string; symbol: string; market: string; side: string; qty: number; price: number; fee: number; realizedPnl?: number; tradedAt: number }
 
 const range = ref<[number, number]>([Date.now() - 30 * 86400000, Date.now()]);
 const market = ref('');
-const groupBy = ref('market');
-const records = ref<any[]>([]);
-const rChart = ref<HTMLDivElement | null>(null);
-const gChart = ref<HTMLDivElement | null>(null);
-const pChart = ref<HTMLDivElement | null>(null);
-const dChart = ref<HTMLDivElement | null>(null);
-const cChart = ref<HTMLDivElement | null>(null);
+const agg = ref<TradeAgg | null>(null);
+const fills = ref<Fill[]>([]);
+const symChart = ref<HTMLDivElement | null>(null);
+const mktChart = ref<HTMLDivElement | null>(null);
+const dirChart = ref<HTMLDivElement | null>(null);
+const dayChart = ref<HTMLDivElement | null>(null);
+const cumChart = ref<HTMLDivElement | null>(null);
 const charts: echarts.ECharts[] = [];
+
+const acctLabelText = computed(() => {
+  const a = accountStore.accounts.find((x) => x.id === accountStore.selectedId) ?? null;
+  return accountLabel(a);
+});
+
+const cards = computed(() => {
+  const a = agg.value;
+  if (!a) return [];
+  const pf = a.profitFactor === Infinity ? '∞' : a.profitFactor.toFixed(2);
+  const n = a.totalTrades || 0;
+  return [
+    { label: '净盈亏', text: a.netPnl.toFixed(2), cls: a.netPnl >= 0 ? 'up' : 'down' },
+    { label: '胜率', text: (a.winRate * 100).toFixed(1) + '%', cls: '' },
+    { label: '盈亏比', text: pf, cls: '' },
+    { label: '交易数', text: String(n), cls: '' },
+    { label: '手续费', text: a.feesPaid.toFixed(2), cls: '' },
+    { label: '毛盈利', text: a.grossProfit.toFixed(2), cls: 'up' },
+  ];
+});
 
 function init(el: HTMLDivElement | null): echarts.ECharts | null {
   if (!el) return null;
@@ -49,64 +81,91 @@ function init(el: HTMLDivElement | null): echarts.ECharts | null {
   return c;
 }
 
+function bar(el: HTMLDivElement | null, labels: string[], values: number[], colors?: (v: number) => string) {
+  const c = init(el);
+  if (!c) return;
+  c.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 60, right: 12, top: 12, bottom: 28 },
+    xAxis: { type: 'category', data: labels, axisLabel: { rotate: labels.length > 5 ? 30 : 0, fontSize: 10 } },
+    yAxis: { type: 'value' },
+    series: [{ type: 'bar', data: values, itemStyle: colors ? { color: (p: any) => colors(p.value) } : { color: '#4da3ff' }, barMaxWidth: 40 }],
+  });
+}
+
+function line(el: HTMLDivElement | null, labels: string[], values: number[], fill = false) {
+  const c = init(el);
+  if (!c) return;
+  c.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 60, right: 12, top: 12, bottom: 28 },
+    xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10 } },
+    yAxis: { type: 'value', scale: true },
+    series: [{ type: 'line', data: values, showSymbol: false, lineStyle: { color: '#4da3ff', width: 1.5 }, areaStyle: fill ? { color: 'rgba(77,163,255,0.08)' } : undefined }],
+  });
+}
+
 async function load() {
+  await loadAccounts();
   const params = new URLSearchParams();
+  if (accountStore.selectedId) params.set('accountId', accountStore.selectedId);
   if (range.value?.[0]) params.set('from', String(range.value[0]));
   if (range.value?.[1]) params.set('to', String(range.value[1]));
   if (market.value) params.set('market', market.value);
-  const res = await api.get<{ records: any[] }>('/journal/trades?' + params.toString());
-  records.value = res.records;
+  const qs = params.toString();
+  const [a, t] = await Promise.all([
+    api.get<TradeAgg>('/pnl' + (qs ? '?' + qs : '')),
+    api.get<{ trades: Fill[] }>('/trades?' + (qs ? qs + '&' : '') + 'limit=1000'),
+  ]);
+  agg.value = a;
+  fills.value = t.trades;
   render();
 }
 
 function render() {
-  const r = records.value;
-  // R 分布直方图
-  const rs = r.map((x) => x.rMultiple).filter((v): v is number => v !== undefined && Number.isFinite(v));
-  const max = Math.max(2, ...rs.map((v) => Math.abs(v)));
-  const bins = new Array(9).fill(0);
-  for (const v of rs) {
-    const idx = Math.min(8, Math.max(0, Math.floor((v + max) / (2 * max / 9))));
-    bins[idx]++;
+  const fs = fills.value;
+  // 按品种
+  const bySym: Record<string, number> = {};
+  for (const x of fs) bySym[x.symbol] = (bySym[x.symbol] ?? 0) + (x.realizedPnl ?? 0);
+  const symKeys = Object.keys(bySym).sort((a, b) => (bySym[b] ?? 0) - (bySym[a] ?? 0));
+  bar(symChart.value, symKeys, symKeys.map((k) => bySym[k] ?? 0), (v) => (v >= 0 ? '#f0a35e' : '#4fbf9f'));
+
+  // 按市场
+  const byMkt: Record<string, number> = {};
+  for (const x of fs) {
+    const k = MARKET_LABELS[x.market] ?? x.market;
+    byMkt[k] = (byMkt[k] ?? 0) + (x.realizedPnl ?? 0);
   }
-  const labels = Array.from({ length: 9 }, (_, i) => (-max + (2 * max / 9) * (i + 0.5)).toFixed(1) + 'R');
-  let c = init(rChart.value);
-  c?.setOption({ grid: { left: 30, right: 10, top: 10, bottom: 24 }, xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 9 } }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: bins, itemStyle: { color: '#4da3ff' } }] });
+  const mktKeys = Object.keys(byMkt);
+  bar(mktChart.value, mktKeys, mktKeys.map((k) => byMkt[k] ?? 0), (v) => (v >= 0 ? '#f0a35e' : '#4fbf9f'));
 
-  // 分组盈亏
-  const groups: Record<string, { sum: number; count: number }> = {};
-  for (const x of r) {
-    const key = groupBy.value === 'strategy' ? (x.strategyVersion || '未标注') : groupBy.value === 'direction' ? (x.direction === 'LONG' ? '做多' : '做空') : (x.market || '未标注');
-    const g = groups[key] ?? { sum: 0, count: 0 };
-    g.sum += x.netPnl ?? 0;
-    g.count++;
-    groups[key] = g;
+  // 按方向
+  const byDir: Record<string, number> = { 做多: 0, 做空: 0 };
+  for (const x of fs) byDir[x.side === 'BUY' ? '做多' : '做空'] += x.realizedPnl ?? 0;
+  bar(dirChart.value, ['做多', '做空'], [byDir['做多'] ?? 0, byDir['做空'] ?? 0], (v) => (v >= 0 ? '#f0a35e' : '#4fbf9f'));
+
+  // 每日盈亏
+  const byDay: Record<string, number> = {};
+  for (const x of fs) {
+    const k = new Date(x.tradedAt).toLocaleDateString('zh-CN');
+    byDay[k] = (byDay[k] ?? 0) + (x.realizedPnl ?? 0);
   }
-  const keys = Object.keys(groups);
-  c = init(gChart.value);
-  c?.setOption({ grid: { left: 60, right: 10, top: 10, bottom: 24 }, xAxis: { type: 'category', data: keys }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: keys.map((k) => groups[k]!.sum), itemStyle: { color: (p: any) => (p.value >= 0 ? '#f0a35e' : '#4fbf9f') } }] });
+  const dayKeys = Object.keys(byDay).sort();
+  bar(dayChart.value, dayKeys, dayKeys.map((k) => byDay[k] ?? 0), (v) => (v >= 0 ? '#f0a35e' : '#4fbf9f'));
 
-  // 计划 vs 实际
-  const pd: Record<string, number> = { complete: 0, partial: 0, none: 0 };
-  for (const x of r) {
-    const key = String(x.planExecution) as 'complete' | 'partial' | 'none';
-    pd[key] = (pd[key] ?? 0) + 1;
-  }
-  c = init(pChart.value);
-  c?.setOption({ tooltip: { trigger: 'item' }, series: [{ type: 'pie', radius: ['40%', '68%'], data: (['完全执行', '部分执行', '未执行'] as const).map((name, i) => ({ name, value: pd[['complete', 'partial', 'none'][i]!] ?? 0 })).filter((d) => d.value > 0) }] });
-
-  // 符合度趋势
-  const disc = r.filter((x) => x.disciplineScore !== undefined).map((x) => ({ t: x.closeTime ?? x.createdAt, v: x.disciplineScore })).sort((a, b) => a.t - b.t);
-  c = init(dChart.value);
-  c?.setOption({ grid: { left: 30, right: 10, top: 10, bottom: 24 }, xAxis: { type: 'category', data: disc.map((d) => new Date(d.t).toLocaleDateString('zh-CN')) }, yAxis: { type: 'value', min: 0, max: 10 }, series: [{ type: 'line', data: disc.map((d) => d.v), lineStyle: { color: '#4da3ff' }, symbol: 'circle', symbolSize: 4 }] });
-
-  // 累计 R
-  const sorted = r.slice().sort((a, b) => (a.closeTime ?? 0) - (b.closeTime ?? 0));
+  // 累计净收益
+  const sorted = fs.slice().sort((a, b) => a.tradedAt - b.tradedAt);
   let cum = 0;
-  const cumData = sorted.map((x) => { cum += x.rMultiple ?? 0; return { t: x.closeTime ?? x.createdAt, v: cum }; });
-  c = init(cChart.value);
-  c?.setOption({ grid: { left: 40, right: 10, top: 10, bottom: 24 }, xAxis: { type: 'category', data: cumData.map((d) => new Date(d.t).toLocaleDateString('zh-CN')) }, yAxis: { type: 'value' }, series: [{ type: 'line', data: cumData.map((d) => d.v), lineStyle: { color: '#4da3ff' }, areaStyle: { color: 'rgba(77,163,255,0.08)' } }] });
+  const cumPts = sorted.map((x) => { cum += x.realizedPnl ?? 0; return { t: x.tradedAt, v: cum }; });
+  line(cumChart.value, cumPts.map((p) => new Date(p.t).toLocaleDateString('zh-CN')), cumPts.map((p) => p.v), true);
 }
+
+function onAccountChange(id: string) {
+  selectAccount(id);
+  load();
+}
+
+watch(() => accountStore.selectedId, () => load());
 
 onMounted(async () => {
   await load();
@@ -119,5 +178,12 @@ onMounted(async () => {
 .mt { margin-top: 12px; }
 .row { display: flex; align-items: center; gap: 10px; }
 .label { font-size: 13px; color: var(--text-dim); }
+.dim { color: var(--text-dim); font-size: 12px; }
+.metric { text-align: center; }
+.mlabel { color: var(--text-dim); font-size: 12px; }
+.mvalue { font-size: 18px; font-weight: 700; margin-top: 4px; }
+.mono { font-family: var(--mono); }
 .chart { height: 260px; }
+.up { color: #f56c6c; }
+.down { color: #67c23a; }
 </style>

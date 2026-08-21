@@ -3,8 +3,8 @@
     <el-card shadow="never" class="mb">
       <div class="row">
         <span class="label">账户：</span>
-        <el-select v-model="accountId" style="width: 220px" @change="load">
-          <el-option v-for="a in accounts" :key="a.id" :value="a.id" :label="(a.type === 'real' ? '真实 ' : '模拟 ') + a.name" />
+        <el-select :model-value="accountStore.selectedId" style="width: 220px" @change="onAccountChange">
+          <el-option v-for="a in accountStore.accounts" :key="a.id" :value="a.id" :label="(a.type === 'real' ? '真实 ' : '模拟 ') + a.name" />
         </el-select>
         <span class="label">市场：</span>
         <el-select v-model="market" style="width: 140px" @change="load">
@@ -36,11 +36,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { api, MARKET_LABELS, type AccountSummary, type Trade, type TradeAgg } from '../api.ts';
+import { computed, onMounted, ref, watch } from 'vue';
+import { api, MARKET_LABELS, type Trade, type TradeAgg } from '../api.ts';
+import { accountStore, loadAccounts, selectAccount } from '../store.ts';
 
-const accounts = ref<AccountSummary[]>([]);
-const accountId = ref('');
 const market = ref('');
 const agg = ref<TradeAgg | null>(null);
 const trades = ref<Trade[]>([]);
@@ -60,17 +59,22 @@ const cards = computed(() => {
   ];
 });
 
+function onAccountChange(id: string) {
+  selectAccount(id);
+  load();
+}
+
 async function load() {
-  const res = await api.get<{ accounts: AccountSummary[] }>('/accounts');
-  accounts.value = res.accounts;
-  if (!accountId.value) accountId.value = accounts.value[0]?.id ?? '';
+  await loadAccounts();
   const params = new URLSearchParams();
-  if (accountId.value) params.set('accountId', accountId.value);
+  if (accountStore.selectedId) params.set('accountId', accountStore.selectedId);
   if (market.value) params.set('market', market.value);
   const qs = params.toString();
   agg.value = await api.get<TradeAgg>('/pnl' + (qs ? '?' + qs : ''));
   trades.value = (await api.get<{ trades: Trade[] }>('/trades?' + (qs ? qs + '&' : '') + 'limit=200')).trades;
 }
+
+watch(() => accountStore.selectedId, () => load());
 
 onMounted(load);
 </script>

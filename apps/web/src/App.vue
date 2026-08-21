@@ -15,8 +15,25 @@
             <button class="acct-btn">{{ acctLabel }} <span class="caret">▾</span></button>
           </template>
           <div class="pop">
-            <div class="pop-title">账户信息</div>
-            <div class="pop-line dim">{{ acctLabel }}</div>
+            <div class="pop-title">账户（各页面数据跟随所选账户）</div>
+            <div class="acct-list">
+              <div
+                v-for="a in accountStore.accounts"
+                :key="a.id"
+                class="acct-item"
+                :class="{ active: a.id === accountStore.selectedId }"
+                @click="pickAccount(a.id)"
+              >
+                <span class="acct-dot" :class="a.type"></span>
+                <span class="acct-name">{{ a.type === 'real' ? '真实' : '模拟' }} · {{ a.name }}</span>
+                <span v-if="a.id === accountStore.selectedId" class="acct-check">✓</span>
+              </div>
+              <div v-if="!accountStore.accounts.length" class="pop-line dim">暂无账户</div>
+            </div>
+            <div class="pop-row">
+              <span class="dim">所选账户数据</span>
+              <el-button size="small" text type="danger" @click="resetAccountData">清除成交/权益</el-button>
+            </div>
             <el-divider />
             <div class="pop-row">
               <span>代理</span>
@@ -54,11 +71,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { api } from './api.ts';
 import AiChat from './components/AiChat.vue';
+import { accountLabel, accountStore, loadAccounts, selectAccount } from './store.ts';
 
 const router = useRouter();
 
@@ -78,8 +96,36 @@ const syncOk = ref(false);
 const proxyTag = ref('');
 const proxyEnabled = ref(false);
 const proxyUrl = ref('');
-const acctLabel = ref('');
 const lastSyncText = ref('-');
+const acctLabel = computed(() => {
+  const sel = accountStore.accounts.find((a) => a.id === accountStore.selectedId) ?? null;
+  return accountLabel(sel);
+});
+function pickAccount(id: string) {
+  selectAccount(id);
+}
+
+/** 清除所选账户的成交/权益脏数据（并暂停自动同步成交） */
+async function resetAccountData() {
+  const sel = accountStore.accounts.find((a) => a.id === accountStore.selectedId);
+  if (!sel) return;
+  try {
+    await ElMessageBox.confirm(
+      '确认清除「' + (sel.type === 'real' ? '真实' : '模拟') + ' · ' + sel.name + '」的成交记录与权益曲线？' +
+      '\n清除后该账户自动同步成交将暂停（手动同步可恢复）。',
+      '清除账户数据',
+      { type: 'warning', confirmButtonText: '清除', cancelButtonText: '取消' },
+    );
+  } catch {
+    return; // 用户取消
+  }
+  try {
+    const res = await api.post<{ cleared: { trades: number; equity: number } }>('/accounts/' + sel.id + '/reset', { trades: true, equity: true });
+    ElMessage.success('已清除成交 ' + res.cleared.trades + ' 条、权益 ' + res.cleared.equity + ' 点');
+  } catch (err) {
+    ElMessage.error('清除失败：' + (err instanceof Error ? err.message : String(err)));
+  }
+}
 const chatVisible = ref(false);
 const themeMode = ref(localStorage.getItem('aw-theme') === 'light' ? '浅色' : '深色');
 
@@ -115,9 +161,7 @@ async function refreshStatus() {
       proxyUrl.value = bs.proxy.url ?? '';
       proxyTag.value = bs.proxy.enabled ? '代理开' : '直连';
     }
-    const accounts = await api.get<{ accounts: { type: string; name: string }[] }>('/accounts').catch(() => null);
-    const real = accounts?.accounts?.find((a) => a.type === 'real');
-    acctLabel.value = real ? '真实 · ' + real.name : '模拟账户';
+    await loadAccounts().catch(() => null);
   } catch {
     syncOk.value = false;
   }
@@ -188,6 +232,15 @@ html, body, #app { height: 100%; margin: 0; background: var(--bg); color: var(--
 .pop-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .pop-line { font-size: 12px; margin-bottom: 4px; }
 .pop-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+.acct-list { display: flex; flex-direction: column; gap: 2px; }
+.acct-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text); }
+.acct-item:hover { background: var(--bg-elev); }
+.acct-item.active { background: rgba(77,163,255,0.12); color: var(--accent); }
+.acct-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.acct-dot.real { background: #f0a35e; box-shadow: 0 0 6px #f0a35e; }
+.acct-dot.paper { background: #4fbf9f; }
+.acct-name { flex: 1; }
+.acct-check { color: var(--accent); font-weight: 700; }
 .up { color: var(--up); }
 .down { color: var(--down); }
 .el-card { --el-card-border-color: var(--border); background: var(--bg-card); border-radius: 8px; }
