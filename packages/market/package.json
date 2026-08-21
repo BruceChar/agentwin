@@ -10,10 +10,15 @@
     "@agentwin/shared": "workspace:*",
     "@binance/derivatives-trading-usds-futures": "^38.0.1",
     "@binance/spot": "^32.0.1",
-    "undici": "^8.10.0"
+    "https-proxy-agent": "^9.1.0",
+    "undici": "^8.10.0",
+    "ws": "^8.21.3"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

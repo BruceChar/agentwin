@@ -45,7 +45,7 @@ export function restCandidatesFor(market: Market, opts: HostOptions = {}): strin
   ]);
 }
 
-/** 探测主机可用性（ping，4s 超时） */
+/** 探测主机可用性（ping，4s 超时；要求 200 且响应为合法 JSON——202/空响应视为不可用） */
 export async function probeBase(base: string, market: Market, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis), dispatcher?: unknown): Promise<boolean> {
   try {
     const path = market === 'SPOT' ? '/api/v3/ping' : '/fapi/v1/ping';
@@ -55,7 +55,11 @@ export async function probeBase(base: string, market: Market, fetchImpl: typeof 
       const init: RequestInit = { signal: ctrl.signal };
       if (dispatcher) (init as Record<string, unknown>)['dispatcher'] = dispatcher;
       const res = await fetchImpl(base + path, init);
-      return res.ok;
+      if (res.status !== 200) return false;
+      const text = await res.text();
+      if (!text.trim()) return false;
+      JSON.parse(text); // ping 返回 {}，202/空/非 JSON 均视为不可用
+      return true;
     } finally {
       clearTimeout(timer);
     }

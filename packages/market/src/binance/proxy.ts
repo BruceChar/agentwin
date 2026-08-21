@@ -1,4 +1,4 @@
-import { ProxyAgent } from 'undici';
+import { ProxyAgent, fetch as undiciFetch } from 'undici';
 
 export type ProxyMode = 'off' | 'on' | 'auto';
 
@@ -49,6 +49,32 @@ export function getProxyDispatcher(cfg: ProxyConfig): ProxyAgent | undefined {
 export function clearProxyAgents(): void {
   for (const a of proxyAgents.values()) a.close();
   proxyAgents.clear();
+}
+
+/**
+ * 返回带代理的 fetch 函数（undici 自带 fetch + ProxyAgent，避免与 Node 内置 fetch 的
+ * dispatcher 版本不兼容）；代理关闭时返回 undefined（调用方应使用自己的 fetch）。
+ * 注意：Node 全局 fetch 不能直接用 npm undici 的 ProxyAgent（报 invalid onRequestStart method）。
+ */
+export function createProxiedFetch(cfg: ProxyConfig): typeof fetch | undefined {
+  if (!cfg.enabled || !cfg.url) return undefined;
+  const dispatcher = getProxyDispatcher(cfg);
+  if (!dispatcher) return undefined;
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    return undiciFetch(input as Parameters<typeof undiciFetch>[0], { ...init, dispatcher });
+  }) as typeof fetch;
+}
+
+/** 判断 Binance 响应是否为地理封锁（受限地区） */
+export function isGeoRestricted(body: string): boolean {
+  return body.includes('Service unavailable from a restricted location')
+    || body.includes('restricted location')
+    || body.includes('b. Eligibility');
+}
+
+/** 地理封锁的友好中文提示 */
+export function geoRestrictedHint(): string {
+  return '币安拒绝了当前出口 IP（受限地区，通常为美国节点）。请把代理节点切换到非受限地区（如新加坡/日本/香港），或在页面关闭代理后重试。';
 }
 
 /** 解析代理 URL 为 @binance/common 期望的 proxy 配置（host/port/protocol/auth） */

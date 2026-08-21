@@ -2,7 +2,7 @@ import type { AggTrade, Candle, Interval, Market, MarkPrice, SymbolInfo, Ticker 
 import { buildQueryString, buildSignedQuery } from './sign.ts';
 import type { RawAggTrade, RawExchangeInfo, RawKlineRow, RawMarkPrice, RawSymbolFilter, RawTicker } from './types.ts';
 import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, pickReachableBase, pickSignedBase as pickSignedBaseHost, probeBase, type HostOptions } from './hosts.ts';
-import { getProxyDispatcher, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
+import { createProxiedFetch, getProxyDispatcher, isGeoRestricted, geoRestrictedHint, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
 
 // 常量与错误类型由 hosts.ts 提供，这里统一再导出（兼容既有引用）
 export { SPOT_BASE, SPOT_TESTNET_BASE, SPOT_DATA_API_BASE, FUTURES_BASE, MarketDataUnavailableError, restCandidatesFor } from './hosts.ts';
@@ -57,10 +57,19 @@ export class BinanceRest {
   /** market -> 已选中的可用 base（带时间戳缓存） */
   private baseCache = new Map<Market, { url: string; at: number }>();
 
+  private readonly proxiedFetch: typeof fetch | undefined;
+
   constructor(opts: RestOptions = {}) {
     this.opts = opts;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.proxyConfig = opts.proxyConfig ?? resolveProxyConfig();
+    // 走代理时必须用 undici 自带 fetch（Node 全局 fetch 与 undici ProxyAgent 版本不兼容）
+    this.proxiedFetch = createProxiedFetch(this.proxyConfig);
+  }
+
+  /** 统一请求入口：代理开启时用 undici fetch + dispatcher，否则用注入/全局 fetch */
+  private doFetch(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
+    return this.proxiedFetch ? this.proxiedFetch(input, init) : this.fetchImpl(input, init);
   }
 
   /** 当前代理配置（诊断/状态展示用） */
@@ -72,7 +81,7 @@ export class BinanceRest {
   private async pickBase(market: Market): Promise<string> {
     const cached = this.baseCache.get(market);
     if (cached && Date.now() - cached.at < 5 * 60_000) return cached.url;
-    const url = await pickReachableBase(market, this.opts, this.fetchImpl, getProxyDispatcher(this.proxyConfig));
+    const url = await pickReachableBase(market, this.opts, this.doFetch.bind(this));
     this.baseCache.set(market, { url, at: Date.now() });
     return url;
   }
@@ -82,7 +91,7 @@ export class BinanceRest {
     const key = (market + ':signed') as Market;
     const cached = this.baseCache.get(key);
     if (cached && Date.now() - cached.at < 5 * 60_000) return cached.url;
-    const url = await pickSignedBaseHost(market, this.opts, this.fetchImpl, getProxyDispatcher(this.proxyConfig));
+    const url = await pickSignedBaseHost(market, this.opts, this.doFetch.bind(this));
     this.baseCache.set(key, { url, at: Date.now() });
     return url;
   }
@@ -108,16 +117,26 @@ export class BinanceRest {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     const init: RequestInit = { method, headers, signal: ctrl.signal };
-    if (this.proxyConfig.enabled) (init as Record<string, unknown>)['dispatcher'] = getProxyDispatcher(this.proxyConfig);
     try {
-      const res = await this.fetchImpl(url, init);
+      const res = await this.doFetch(url, init);
       if (!res.ok) {
         let body = '';
         try { body = await res.text(); } catch { /* ignore */ }
-        throw new Error(`Binance ${market} ${method} ${path} -> ${res.status}: ${body.slice(0, 300)}`);
+        if (isGeoRestricted(body)) {
+          throw new Error('币安地理封锁（受限地区出口 IP）：' + geoRestrictedHint() + ' 原始响应: ' + body.slice(0, 160));
+        }
+        throw new Error('Binance ' + market + ' ' + method + ' ' + path + ' -> ' + res.status + ': ' + body.slice(0, 300));
       }
       if (res.status === 204) return undefined as T;
-      return (await res.json()) as T;
+      const bodyText = await res.text().catch(() => '');
+      if (!bodyText.trim()) {
+        throw new Error('Binance ' + market + ' ' + method + ' ' + path + ' -> ' + res.status + ': 响应为空（可能被代理/网关拦截或地理封锁）');
+      }
+      try {
+        return JSON.parse(bodyText) as T;
+      } catch {
+        throw new Error('Binance ' + market + ' ' + method + ' ' + path + ' -> ' + res.status + ': 响应非 JSON: ' + bodyText.slice(0, 160));
+      }
     } catch (e) {
       // 非签名请求失败：清空缓存，下次调用自动重探其他主机
       if (!signed) this.baseCache.delete(market);
@@ -138,7 +157,7 @@ export class BinanceRest {
 
   /** 官方主端点快速连通性探测（4s；用于真实账户状态检查，避免长时间阻塞） */
   async reachable(): Promise<boolean> {
-    return probeBase(SPOT_BASE, 'SPOT', this.fetchImpl, getProxyDispatcher(this.proxyConfig));
+    return probeBase(SPOT_BASE, 'SPOT', this.doFetch.bind(this));
   }
 
   async serverTime(market: Market): Promise<number> {

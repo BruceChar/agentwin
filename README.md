@@ -76,6 +76,11 @@ pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）
 2. **主域名是否可达**：`reachable` 为 `false` 说明 `api.binance.com` 被 DNS 污染（运营商返回假 IP，如 Facebook 的地址）。处理：a) 看板代理开关切换直连/代理；b) 按 [docs/hosts-binance.txt](docs/hosts-binance.txt) 把真实 IP 写入系统 hosts（绕过污染 DNS）；c) 更换系统 DNS（223.5.5.5 / 1.1.1.1）；d) 签名请求会自动回退官方备用域名 `api1-4.binance.com`。
 3. **同步失败原因**：`status.lastSync.message`（看板有红色提示条）会给出具体错误（网络、Key 无权限等）。
 
+**受限地区（Geo-block）专项排查**：若报错含 `Service unavailable from a restricted location`，说明**出口 IP 在受限地区（通常是美国）**。处理：
+1. `GET /api/binance/diagnose` 可直接查看「代理出口国家」（`proxyExit.country`）与 DNS 污染情况——把代理节点切换到非受限地区（新加坡/日本/香港等）即可；
+2. 若本机直连币安全部超时（DNS 污染 + 出口被墙），hosts 方案通常无效，**必须走代理**，且代理出口不能是受限地区；
+3. 走代理时 REST 使用 undici 自带 fetch（与 Node 内置 fetch 兼容性修复），WebSocket 使用 `ws` + `https-proxy-agent`（CONNECT 隧道），两者都已在本地代理上实测连通（457 拦截前能到达币安）。
+
 **代理设置**（报 `Service unavailable from a restricted location` 时，通常是代理出口 IP 在受限地区，如美区）：
 - `BINANCE_PROXY=off` 强制直连；`BINANCE_PROXY=on` 走代理（`BINANCE_PROXY_URL` 或 `HTTPS_PROXY`）；`BINANCE_PROXY=auto`（默认）有 `HTTPS_PROXY` 则走、否则直连。
 - REST 与 WebSocket 都支持（undici `ProxyAgent`，含 CONNECT 隧道）；`GET /api/binance/status` 与 `/api/health` 会返回当前代理配置（`proxy: { mode, url, enabled, source }`）便于诊断。

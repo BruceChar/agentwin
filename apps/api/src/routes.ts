@@ -1,9 +1,11 @@
+import { promises as dns } from 'node:dns';
 import type { FastifyInstance } from 'fastify';
 import type { Interval, Market } from '@agentwin/shared';
 import { runBacktest } from '@agentwin/engine';
 import { builtinRegistry, normalizeParams } from '@agentwin/strategy';
 import { LLMService } from '@agentwin/llm';
 import { SystemIterationAgent, JournalAnalyzer, SentimentAnalyzer, StrategyAdvisor } from '@agentwin/llm';
+import { createProxiedFetch } from '@agentwin/market';
 import type { AppServices } from './services.ts';
 import type { PaperManager } from './paper-manager.ts';
 
@@ -73,6 +75,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   // ---------------- 账户 ----------------
   app.get('/api/accounts', async () => {
     const accounts = await storage.listAccounts();
+    console.log('accounts:', accounts)
     const out = [];
     for (const a of accounts) {
       const balances = await storage.getBalances(a.id);
@@ -237,6 +240,28 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
       symbols: Array.isArray(b['symbols']) ? (b['symbols'] as string[]) : [],
       limitPerSymbol: num(b['limit'], 100),
     });
+  });
+
+  // 网络诊断：代理出口地区 + DNS 污染对比（定位"受限地区"与"DNS 污染"）
+  app.get('/api/binance/diagnose', async () => {
+    const out: Record<string, unknown> = { proxy: services.proxySettings.get() };
+    const proxiedFetch = createProxiedFetch(services.proxySettings.config);
+    if (proxiedFetch) {
+      try {
+        const res = await proxiedFetch('https://ipwho.is/', { signal: AbortSignal.timeout(8000) });
+        const j = (await res.json()) as { ip?: string; country?: string; country_code?: string; success?: boolean };
+        out.proxyExit = { ip: j.ip, country: j.country, countryCode: j.country_code, success: j.success !== false };
+      } catch (e) {
+        out.proxyExit = { error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    try {
+      const local = await dns.resolve4('api.binance.com').catch(() => ['解析失败']);
+      out.dns = { local, note: 'local 应为币安真实 IP（如 99.84.x.x）；若为 Facebook/推特等地址说明 DNS 被污染' };
+    } catch {
+      out.dns = { local: ['解析失败'] };
+    }
+    return out;
   });
 
   app.get('/api/binance/account', async () => {
