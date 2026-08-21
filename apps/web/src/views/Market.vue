@@ -46,10 +46,13 @@ async function load() {
     axisPointer: { type: 'cross' },
     grid: [{ left: 60, right: 20, top: 20, height: '62%' }, { left: 60, right: 20, top: '75%', height: '15%' }],
     xAxis: [
-      { type: 'category', data: cs.map((c) => new Date(c.openTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit' })), boundaryGap: true },
-      { type: 'category', gridIndex: 1, data: cs.map((c) => new Date(c.openTime).toLocaleString('zh-CN', { hour: '2-digit' })), boundaryGap: true, axisLabel: { show: false } },
+      { type: 'category', data: cs.map((c) => new Date(c.openTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit' })), boundaryGap: true, axisLine: { lineStyle: { color: 'rgba(128,140,155,0.25)' } }, axisLabel: { color: '#8a94a3' }, splitLine: { show: false } },
+      { type: 'category', gridIndex: 1, data: cs.map((c) => new Date(c.openTime).toLocaleString('zh-CN', { hour: '2-digit' })), boundaryGap: true, axisLabel: { show: false }, splitLine: { show: false } },
     ],
-    yAxis: [{ scale: true }, { gridIndex: 1, scale: true }],
+    yAxis: [
+      { scale: true, axisLine: { show: false }, axisLabel: { color: '#8a94a3' }, splitLine: { lineStyle: { color: 'rgba(128,140,155,0.10)', width: 1 } } },
+      { gridIndex: 1, scale: true, axisLine: { show: false }, splitLine: { show: false } },
+    ],
     dataZoom: [{ type: 'inside', xAxisIndex: [0, 1] }],
     series: [
       {

@@ -6,8 +6,10 @@ import * as Icons from '@element-plus/icons-vue';
 import App from './App.vue';
 import { router } from './router.ts';
 
-// 深色简约技术风格
-document.documentElement.classList.add('dark');
+// 主题：默认深色，可切换浅色（设置里）
+const savedTheme = localStorage.getItem('aw-theme');
+if (savedTheme === 'light') document.documentElement.classList.remove('dark');
+else document.documentElement.classList.add('dark');
 
 const app = createApp(App);
 for (const [name, comp] of Object.entries(Icons)) {
