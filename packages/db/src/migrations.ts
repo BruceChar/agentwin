@@ -214,4 +214,30 @@ ALTER TABLE balances_new RENAME TO balances;
 CREATE INDEX IF NOT EXISTS idx_balances_account ON balances(account_id, market);
 `,
   },
+  {
+    version: 3,
+    sql: `
+-- 结构化交易日志（JSONL 主存储的 SQLite 镜像，辅助查询/统计/恢复）
+CREATE TABLE IF NOT EXISTS trade_journal (
+  id TEXT PRIMARY KEY,
+  trade_no TEXT,
+  symbol TEXT,
+  market TEXT,
+  direction TEXT,
+  open_time BIGINT,
+  close_time BIGINT,
+  pnl DOUBLE,
+  net_pnl DOUBLE,
+  r_multiple DOUBLE,
+  discipline_score DOUBLE,
+  tags TEXT,
+  data TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tj_symbol ON trade_journal(symbol, close_time);
+CREATE INDEX IF NOT EXISTS idx_tj_close ON trade_journal(close_time);
+CREATE INDEX IF NOT EXISTS idx_tj_market ON trade_journal(market);
+`,
+  },
 ];

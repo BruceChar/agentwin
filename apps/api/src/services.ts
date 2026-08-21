@@ -7,6 +7,8 @@ import { TradingToolkit } from '@agentwin/llm';
 import { SentimentAnalyzer } from '@agentwin/llm';
 import { SentimentService } from '@agentwin/sentiment';
 import { BinanceAccountSync } from './binance-sync.ts';
+import { TradeJournalStore } from './journal-store.ts';
+import { JournalAutoFill } from './journal-autofill.ts';
 import type { AppConfig } from './config.ts';
 
 export interface AppServices {
@@ -18,6 +20,9 @@ export interface AppServices {
   sync: BinanceAccountSync;
   /** 运行时代理设置（前端可开关） */
   proxySettings: ProxySettings;
+  /** 结构化交易日志（JSONL 主存储 + SQLite 镜像） */
+  journalStore: TradeJournalStore;
+  journalAutoFill: JournalAutoFill;
   llm: LLMService;
   toolkit: TradingToolkit;
   sentiment: SentimentService;
@@ -78,7 +83,12 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   });
   const sync = new BinanceAccountSync(storage, rest, marketData);
 
-  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, llm, toolkit, sentiment };
+  // 结构化交易日志：JSONL 主存储 + SQLite 镜像
+  const journalStore = new TradeJournalStore(process.env.JOURNAL_PATH ?? './data/trade-journal.jsonl', storage);
+  await journalStore.init();
+  const journalAutoFill = new JournalAutoFill(marketData);
+
+  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, journalStore, journalAutoFill, llm, toolkit, sentiment };
 
   // 配置了 key 且非 Mock 模式：启动后自动同步一次真实账户（不阻塞启动）
   if (process.env.AGENTWIN_USE_MOCK !== '1' && config.binanceApiKey && config.binanceApiSecret) {

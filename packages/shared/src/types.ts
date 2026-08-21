@@ -343,7 +343,7 @@ export interface SentimentRecord {
   createdAt: number;
 }
 
-// ---------- 交易日志 ----------
+// ---------- 交易日志（简单笔记） ----------
 export type JournalKind = 'trade' | 'insight' | 'review' | 'note';
 
 export interface JournalEntry {
@@ -354,6 +354,115 @@ export interface JournalEntry {
   body: string;
   tags: string[];
   createdAt: number;
+}
+
+// ---------- 结构化交易日志（核心：用于迭代交易系统） ----------
+export type PlanExecution = 'complete' | 'partial' | 'none';
+export type JournalTag = '情绪化交易' | '执行错误' | '系统缺陷' | '正常亏损' | '正常盈利' | '运气成分' | string;
+
+/** 每笔交易一条，A-G 七段结构；JSONL 主存储 + SQLite 辅助查询 */
+export interface TradeJournal {
+  id: string;
+  accountId?: string;
+
+  // A. 基本信息
+  tradeNo: string;              // 交易编号，如 20260821-001
+  symbol: string;               // 品种/市场，如 BTCUSDT
+  market: string;               // 现货 / U本位合约 / 币本位合约 / 全仓杠杆 / 逐仓杠杆 / 外汇 / A股 ...
+  direction: 'LONG' | 'SHORT';  // 交易方向
+  timeframe?: string;           // 5分钟 / 1小时 / 日线
+  strategyVersion?: string;     // 策略版本 / 交易计划编号
+  subAccount?: string;          // 账户/子账户
+  openTime?: number;            // 开仓时间(ms)
+  closeTime?: number;           // 平仓时间(ms)
+
+  // B. 交易前计划
+  plannedEntry?: number;        // 计划入场区间/价格
+  plannedStop?: number;         // 计划止损价（必填）
+  plannedTargets?: number[];    // 计划止盈价/目标
+  plannedRR?: string;           // 计划风险回报比，如 "1:3"
+  plannedSize?: string;         // 计划仓位/数量，如 "0.5 手"
+  plannedRiskAmount?: number;   // 计划最大风险金额
+  plannedRiskPct?: number;      // 计划最大风险百分比（占总资金）
+  plannedHolding?: string;      // 计划持仓周期：日内/波段/趋势
+  invalidation?: string;        // 失效/取消条件
+
+  // C. 实际执行
+  actualEntry?: number;         // 实际开仓价
+  actualExit?: number;          // 实际平仓价
+  actualQty?: number;           // 实际数量
+  leverage?: number;            // 杠杆倍数
+  orderType?: string;           // 市价单/限价单/条件单
+  slippage?: number;            // 滑点
+  holdingDuration?: string;     // 持仓时长，如 "4 小时 15 分钟"
+  planExecution: PlanExecution; // 是否按计划执行
+  deviationReason?: string;     // 偏差原因
+
+  // D. 市场条件
+  marketTrend?: string;         // 看涨/看跌/震荡
+  volatility?: string;          // ATR、布林带宽度等
+  volumeLiquidity?: string;     // 放量/缩量/深度
+  supportResistance?: string;   // 关键支撑阻力/市场结构
+  economicEvents?: string;      // 重要经济数据/事件
+  indicatorState?: string;      // 技术指标状态
+  relatedSymbols?: string;      // 相关品种表现
+  session?: string;             // 亚盘/欧盘/美盘
+
+  // E. 情绪与决策
+  entryReason?: string;         // 入场理由
+  exitReason?: string;          // 出场理由：止盈/止损/手动离场/时间离场
+  emotionScore?: number;        // 情绪评分 1-10（1=冷静 10=恐惧/贪婪）
+  confidenceScore?: number;     // 信心评分 1-10
+  psychologicalNote?: string;   // 持仓过程心理变化
+  emotionAffected?: boolean;    // 是否受情绪影响操作
+
+  // F. 结果分析（可自动计算）
+  pnl?: number;                 // 盈亏金额
+  pnlPct?: number;              // 盈亏百分比
+  fees?: number;                // 交易费用明细
+  netPnl?: number;              // 净收益
+  rMultiple?: number;           // R 倍数 = 盈亏 ÷ 初始风险
+  mfe?: number;                 // 最大浮盈
+  mae?: number;                 // 最大浮亏
+  attribution?: string;         // 盈亏归因：系统信号/执行质量/市场运气/情绪干扰
+
+  // G. 复盘总结与迭代
+  disciplineScore?: number;     // 规则符合度 1-10
+  signalCorrect?: boolean;      // 系统信号是否正确
+  strengths?: string;           // 成功的方面
+  improvements?: string;        // 需要改进的方面
+  nextPlan?: string;            // 后续计划
+  tags: JournalTag[];           // 情绪化交易/执行错误/系统缺陷/正常亏损/正常盈利/运气成分
+  postCloseVerification?: string; // 交易后市场走势验证
+
+  /** 自动从行情提取的指标（开仓时点的 RSI/ATR/EMA 等） */
+  indicators?: Record<string, number | string | boolean | null>;
+  /** 自动提取结果说明 */
+  autoNotes?: string[];
+
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type NewTradeJournal = Omit<TradeJournal, 'id' | 'createdAt' | 'updatedAt' | 'planExecution' | 'tags'> & Partial<Pick<TradeJournal, 'planExecution' | 'tags'>>;
+
+/** 交易日志统计（迭代交易系统用） */
+export interface TradeJournalStats {
+  total: number;
+  closed: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  avgR: number;
+  expectancy: number;       // 期望值 = 平均R × 胜率...
+  profitFactor: number;
+  netPnl: number;
+  avgDiscipline: number;
+  avgEmotion: number;
+  tagFrequency: Record<string, number>;
+  byStrategy: Record<string, { total: number; winRate: number; avgR: number; netPnl: number }>;
+  byMarket: Record<string, { total: number; winRate: number; netPnl: number }>;
+  planDeviation: { complete: number; partial: number; none: number };
 }
 
 // ---------- 聚合统计 ----------

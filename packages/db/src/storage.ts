@@ -1,7 +1,7 @@
 import type {
   Account, Balance, Candle, CandleKey, EquityPoint, Interval, JournalEntry, JournalKind,
   LLMMessage, LLMSession, LLMSessionKind, Market, NewAccount, Order, NewOrder, OrderStatus,
-  Position, SentimentRecord, StrategyConfig, Trade, TradeAggregates,
+  Position, SentimentRecord, StrategyConfig, Trade, TradeAggregates, TradeJournal,
 } from '@agentwin/shared';
 
 export interface KlineFilter {
@@ -116,7 +116,13 @@ export interface StorageAdapter {
   getBacktest(id: string): Promise<BacktestRunRecord | null>;
   listBacktests(limit?: number): Promise<BacktestRunRecord[]>;
 
-  // ---------- 交易日志 ----------
+  // ---------- 交易日志（简单笔记） ----------
   createJournalEntry(e: { id?: string; accountId?: string; kind: JournalKind; title: string; body: string; tags?: string[]; createdAt?: number }): Promise<JournalEntry>;
   listJournalEntries(f?: { accountId?: string; limit?: number }): Promise<JournalEntry[]>;
+
+  // ---------- 结构化交易日志（SQLite 镜像，JSONL 为主存储） ----------
+  upsertTradeJournal(j: TradeJournal): Promise<void>;
+  getTradeJournal(id: string): Promise<TradeJournal | null>;
+  listTradeJournals(f?: { symbol?: string; market?: string; from?: number; to?: number; limit?: number }): Promise<TradeJournal[]>;
+  deleteTradeJournal(id: string): Promise<void>;
 }

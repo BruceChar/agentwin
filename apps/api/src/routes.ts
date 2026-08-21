@@ -462,4 +462,90 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     });
     return entry;
   });
+
+  // ---------------- 结构化交易日志（JSONL 主存储 + SQLite 镜像） ----------------
+  const tj = services.journalStore;
+  const tjFill = services.journalAutoFill;
+
+  // 统计（先注册，避免被 :id 捕获）
+  app.get('/api/journal/trades/stats', async (req) => {
+    const q = req.query as Body;
+    return tj.stats({
+      symbol: q['symbol'] !== undefined ? str(q['symbol']) : undefined,
+      market: q['market'] !== undefined ? str(q['market']) : undefined,
+      tag: q['tag'] !== undefined ? str(q['tag']) : undefined,
+      from: q['from'] !== undefined ? num(q['from'], 0) : undefined,
+      to: q['to'] !== undefined ? num(q['to'], 0) : undefined,
+    });
+  });
+
+  app.get('/api/journal/trades', async (req) => {
+    const q = req.query as Body;
+    return { records: tj.list({
+      symbol: q['symbol'] !== undefined ? str(q['symbol']) : undefined,
+      market: q['market'] !== undefined ? str(q['market']) : undefined,
+      tag: q['tag'] !== undefined ? str(q['tag']) : undefined,
+      from: q['from'] !== undefined ? num(q['from'], 0) : undefined,
+      to: q['to'] !== undefined ? num(q['to'], 0) : undefined,
+      limit: num(q['limit'], 100),
+    }) };
+  });
+
+  // 仅自动计算（不保存），供前端"自动计算"按钮预览
+  app.post('/api/journal/trades/autofill', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    const res = await tjFill.fill((b['record'] ?? {}) as never);
+    return res;
+  });
+
+  app.post('/api/journal/trades', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    const input = (b['record'] ?? {}) as Record<string, unknown>;
+    const useAuto = b['autofill'] === true;
+    let record = input;
+    const notes: string[] = [];
+    if (useAuto) {
+      const res = await tjFill.fill(input as never);
+      record = res.record as Record<string, unknown>;
+      notes.push(...res.notes);
+    }
+    const journal = await tj.create({
+      ...record,
+      symbol: str(record['symbol'], 'BTCUSDT').toUpperCase(),
+      direction: (record['direction'] === 'SHORT' ? 'SHORT' : 'LONG') as 'LONG' | 'SHORT',
+      tradeNo: str(record['tradeNo'], 'T' + Date.now().toString(36)),
+      market: str(record['market'], 'U本位合约'),
+      tags: Array.isArray(record['tags']) ? (record['tags'] as string[]) : [],
+    } as never);
+    return { journal, notes };
+  });
+
+  app.get('/api/journal/trades/:id', async (req) => {
+    const j = tj.get(str((req.params as Body)['id']));
+    if (!j) return app.httpErrors.notFound('trade journal not found');
+    return j;
+  });
+
+  app.patch('/api/journal/trades/:id', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    const id = str((req.params as Body)['id']);
+    const patch = (b['patch'] ?? {}) as Record<string, unknown>;
+    const useAuto = b['autofill'] === true;
+    let merged = patch;
+    const notes: string[] = [];
+    if (useAuto) {
+      const cur = tj.get(id);
+      const res = await tjFill.fill({ ...cur, ...patch } as never);
+      merged = res.record as Record<string, unknown>;
+      notes.push(...res.notes);
+    }
+    const updated = await tj.update(id, merged as never);
+    if (!updated) return app.httpErrors.notFound('trade journal not found');
+    return { journal: updated, notes };
+  });
+
+  app.delete('/api/journal/trades/:id', async (req) => {
+    const ok = await tj.remove(str((req.params as Body)['id']));
+    return { deleted: ok };
+  });
 }

@@ -86,6 +86,16 @@ pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）
 - REST 与 WebSocket 都支持（undici `ProxyAgent`，含 CONNECT 隧道）；`GET /api/binance/status` 与 `/api/health` 会返回当前代理配置（`proxy: { mode, url, enabled, source }`）便于诊断。
 - **运行时开关**：`GET/POST /api/binance/proxy`（`POST` body：`{ mode: 'off'|'on'|'auto', url? }`）可在不重启的情况下切换，看板「总览」页也有代理开关（直连/走代理 + 地址输入，即时生效）。
 
+## 结构化交易日志（核心：迭代交易系统）
+
+每笔交易按 **A-G 七段模板** 记录（基本信息 / 交易前计划 / 实际执行 / 市场条件 / 情绪与决策 / 结果分析 / 复盘总结与迭代），用于持续迭代自己的交易系统。
+
+- **存储**：JSONL 为主（`data/trade-journal.jsonl`，每行一条，便于备份/迁移），SQLite 为辅助镜像（快速查询/统计；JSONL 丢失可自动从镜像恢复）；
+- **自动提取**（`POST /api/journal/trades/autofill`）：填写 开/平仓价+数量+方向+风险金额 后，自动计算 盈亏/费用/净收益/R倍数/盈亏%/持仓时长，并从**真实行情**提取 开仓点 RSI/ATR/EMA 指标、波动率、持仓期间 MFE/MAE；
+- **统计**（`GET /api/journal/trades/stats`）：胜率、盈亏比、平均 R、期望值、净盈亏、规则符合度、标签频率、按策略版本/市场分组、"计划 vs 实际"偏差统计；
+- **看板**（交易日志页）：A-G 折叠表单 + 一键「自动计算」+ 统计卡片 + 记录列表（点击行编辑）；
+- 结合 `/api/llm/iterate` 与 `/api/llm/analyze-journal`，可让 LLM 基于日志给出系统迭代建议。
+
 ## Paper Trading 设计
 
 - 订阅 Binance **真实行情**（REST 300 根预热 + WebSocket 实时），成交价含滑点与手续费模拟；

@@ -5,7 +5,7 @@ import duckdb from 'duckdb';
 import type {
   Account, Balance, Candle, CandleKey, EquityPoint, Interval, JournalEntry, JournalKind,
   LLMMessage, LLMSession, LLMSessionKind, Market, NewAccount, NewOrder, Order, OrderStatus,
-  Position, SentimentRecord, StrategyConfig, Trade, TradeAggregates,
+  Position, SentimentRecord, StrategyConfig, Trade, TradeAggregates, TradeJournal,
 } from '@agentwin/shared';
 import { MIGRATIONS } from './migrations.ts';
 import type { BacktestRunRecord, KlineFilter, OrderFilter, StorageAdapter, TradeFilter } from './storage.ts';
@@ -546,5 +546,44 @@ export class DuckdbStorage implements StorageAdapter {
       kind: String(r.kind) as JournalKind, title: String(r.title), body: String(r.body),
       tags: parseJson<string[]>(r.tags) ?? [], createdAt: Number(r.created_at),
     }));
+  }
+
+  // ---------- 结构化交易日志（SQLite 镜像） ----------
+  async upsertTradeJournal(j: TradeJournal): Promise<void> {
+    await this.run(
+      `INSERT INTO trade_journal (id, trade_no, symbol, market, direction, open_time, close_time, pnl, net_pnl, r_multiple, discipline_score, tags, data, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET
+         trade_no=excluded.trade_no, symbol=excluded.symbol, market=excluded.market, direction=excluded.direction,
+         open_time=excluded.open_time, close_time=excluded.close_time, pnl=excluded.pnl, net_pnl=excluded.net_pnl,
+         r_multiple=excluded.r_multiple, discipline_score=excluded.discipline_score, tags=excluded.tags,
+         data=excluded.data, updated_at=excluded.updated_at`,
+      j.id, j.tradeNo, j.symbol, j.market, j.direction,
+      j.openTime ?? null, j.closeTime ?? null, j.pnl ?? null, j.netPnl ?? null, j.rMultiple ?? null,
+      j.disciplineScore ?? null, JSON.stringify(j.tags), JSON.stringify(j), j.createdAt, j.updatedAt,
+    );
+  }
+
+  async getTradeJournal(id: string): Promise<TradeJournal | null> {
+    const r = await this.get('SELECT data FROM trade_journal WHERE id = ?', id);
+    return r ? parseJson<TradeJournal>(r.data) ?? null : null;
+  }
+
+  async listTradeJournals(f: { symbol?: string; market?: string; from?: number; to?: number; limit?: number } = {}): Promise<TradeJournal[]> {
+    const conds: string[] = [];
+    const params: (string | number)[] = [];
+    if (f.symbol) { conds.push('symbol = ?'); params.push(f.symbol); }
+    if (f.market) { conds.push('market = ?'); params.push(f.market); }
+    if (f.from !== undefined) { conds.push('close_time >= ?'); params.push(f.from); }
+    if (f.to !== undefined) { conds.push('close_time <= ?'); params.push(f.to); }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    let sql = `SELECT data FROM trade_journal ${where} ORDER BY close_time DESC`;
+    if (f.limit !== undefined) { sql += ' LIMIT ?'; params.push(f.limit); }
+    const rows = await this.all(sql, ...params);
+    return rows.map((r) => parseJson<TradeJournal>(r.data)).filter((j): j is TradeJournal => j !== null);
+  }
+
+  async deleteTradeJournal(id: string): Promise<void> {
+    await this.run('DELETE FROM trade_journal WHERE id = ?', id);
   }
 }
