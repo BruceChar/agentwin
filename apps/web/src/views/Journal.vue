@@ -1,259 +1,286 @@
-<!-- 结构化交易日志：JSONL 主存储 + SQLite 镜像；自动提取指标/盈亏 -->
 <template>
-  <el-tabs v-model="tab">
-    <el-tab-pane label="交易日志（A-G）" name="trades">
-      <el-row :gutter="16">
-        <el-col :span="9">
-          <el-card shadow="never">
-            <template #header>
-              <div class="row">
-                <b>{{ editingId ? '编辑交易' : '记录一笔交易' }}</b>
-                <el-button v-if="editingId" size="small" type="info" @click="resetForm">新建</el-button>
-              </div>
-            </template>
-            <el-collapse v-model="openSections">
-              <el-collapse-item name="A" title="A. 基本信息">
-                <el-form label-width="90px" size="small">
-                  <el-form-item label="交易编号"><el-input v-model="form.tradeNo" placeholder="如 20260821-001" /></el-form-item>
-                  <el-form-item label="品种"><el-input v-model="form.symbol" placeholder="如 BTCUSDT" /></el-form-item>
-                  <el-form-item label="市场">
-                    <el-select v-model="form.market" style="width: 100%">
-                      <el-option v-for="m in ['现货','U本位合约','币本位合约','全仓杠杆','逐仓杠杆','外汇','A股','期货']" :key="m" :value="m" :label="m" />
-                    </el-select>
-                  </el-form-item>
-                  <el-form-item label="方向">
-                    <el-radio-group v-model="form.direction">
-                      <el-radio-button value="LONG">做多</el-radio-button>
-                      <el-radio-button value="SHORT">做空</el-radio-button>
-                    </el-radio-group>
-                  </el-form-item>
-                  <el-form-item label="时间框架"><el-input v-model="form.timeframe" placeholder="5分钟/1小时/日线" /></el-form-item>
-                  <el-form-item label="策略版本"><el-input v-model="form.strategyVersion" placeholder="如 趋势跟踪 v2.3" /></el-form-item>
-                  <el-form-item label="开仓时间"><el-date-picker v-model="form.openTime" type="datetime" value-format="x" style="width: 100%" /></el-form-item>
-                  <el-form-item label="平仓时间"><el-date-picker v-model="form.closeTime" type="datetime" value-format="x" style="width: 100%" /></el-form-item>
-                </el-form>
-              </el-collapse-item>
-              <el-collapse-item name="B" title="B. 交易前计划">
-                <el-form label-width="110px" size="small">
-                  <el-form-item label="计划入场价"><el-input-number v-model="form.plannedEntry" :precision="4" style="width: 100%" /></el-form-item>
-                  <el-form-item label="计划止损价"><el-input-number v-model="form.plannedStop" :precision="4" style="width: 100%" /></el-form-item>
-                  <el-form-item label="止盈目标"><el-input v-model="targetsText" placeholder="逗号分隔多个，如 71000,72000" /></el-form-item>
-                  <el-form-item label="风险回报比"><el-input v-model="form.plannedRR" placeholder="如 1:3" /></el-form-item>
-                  <el-form-item label="计划仓位"><el-input v-model="form.plannedSize" placeholder="如 0.5 手" /></el-form-item>
-                  <el-form-item label="风险金额"><el-input-number v-model="form.plannedRiskAmount" :precision="2" style="width: 100%" /></el-form-item>
-                  <el-form-item label="风险百分比%"><el-input-number v-model="form.plannedRiskPct" :precision="2" style="width: 100%" /></el-form-item>
-                  <el-form-item label="持仓周期"><el-input v-model="form.plannedHolding" placeholder="日内/波段/趋势" /></el-form-item>
-                  <el-form-item label="失效条件"><el-input v-model="form.invalidation" type="textarea" :rows="2" /></el-form-item>
-                </el-form>
-              </el-collapse-item>
-              <el-collapse-item name="C" title="C. 实际执行">
-                <el-form label-width="110px" size="small">
-                  <el-form-item label="实际开仓价"><el-input-number v-model="form.actualEntry" :precision="4" style="width: 100%" /></el-form-item>
-                  <el-form-item label="实际平仓价"><el-input-number v-model="form.actualExit" :precision="4" style="width: 100%" /></el-form-item>
-                  <el-form-item label="实际数量"><el-input-number v-model="form.actualQty" :precision="6" style="width: 100%" /></el-form-item>
-                  <el-form-item label="杠杆倍数"><el-input-number v-model="form.leverage" :min="1" style="width: 100%" /></el-form-item>
-                  <el-form-item label="订单类型"><el-input v-model="form.orderType" placeholder="市价单/限价单/条件单" /></el-form-item>
-                  <el-form-item label="滑点"><el-input-number v-model="form.slippage" :precision="4" style="width: 100%" /></el-form-item>
-                  <el-form-item label="按计划执行">
-                    <el-select v-model="form.planExecution" style="width: 100%">
-                      <el-option value="complete" label="完全执行" /><el-option value="partial" label="部分执行" /><el-option value="none" label="未执行" />
-                    </el-select>
-                  </el-form-item>
-                  <el-form-item label="偏差原因"><el-input v-model="form.deviationReason" type="textarea" :rows="2" /></el-form-item>
-                </el-form>
-              </el-collapse-item>
-              <el-collapse-item name="D" title="D. 市场条件">
-                <el-form label-width="110px" size="small">
-                  <el-form-item label="市场趋势"><el-input v-model="form.marketTrend" placeholder="看涨/看跌/震荡" /></el-form-item>
-                  <el-form-item label="波动率"><el-input v-model="form.volatility" placeholder="ATR/布林宽度（可自动提取）" /></el-form-item>
-                  <el-form-item label="量能流动性"><el-input v-model="form.volumeLiquidity" placeholder="放量/缩量" /></el-form-item>
-                  <el-form-item label="支撑阻力"><el-input v-model="form.supportResistance" type="textarea" :rows="2" /></el-form-item>
-                  <el-form-item label="重要事件"><el-input v-model="form.economicEvents" placeholder="非农/CPI/利率决议" /></el-form-item>
-                  <el-form-item label="指标状态"><el-input v-model="form.indicatorState" type="textarea" :rows="2" /></el-form-item>
-                  <el-form-item label="相关品种"><el-input v-model="form.relatedSymbols" /></el-form-item>
-                  <el-form-item label="交易时段"><el-input v-model="form.session" placeholder="亚盘/欧盘/美盘" /></el-form-item>
-                </el-form>
-              </el-collapse-item>
-              <el-collapse-item name="E" title="E. 情绪与决策">
-                <el-form label-width="110px" size="small">
-                  <el-form-item label="入场理由"><el-input v-model="form.entryReason" type="textarea" :rows="2" /></el-form-item>
-                  <el-form-item label="出场理由"><el-input v-model="form.exitReason" placeholder="止盈/止损/手动离场/时间离场" /></el-form-item>
-                  <el-form-item label="情绪评分"><el-rate v-model="form.emotionScore" :max="10" /><span class="dim">1=冷静 10=恐惧/贪婪</span></el-form-item>
-                  <el-form-item label="信心评分"><el-rate v-model="form.confidenceScore" :max="10" /></el-form-item>
-                  <el-form-item label="心理变化"><el-input v-model="form.psychologicalNote" type="textarea" :rows="2" /></el-form-item>
-                  <el-form-item label="受情绪影响"><el-switch v-model="form.emotionAffected" /></el-form-item>
-                </el-form>
-              </el-collapse-item>
-              <el-collapse-item name="F" title="F. 结果分析（可自动计算）">
-                <el-alert type="info" :closable="false" class="mb" title="填好 开/平仓价+数量+方向+风险金额 后点「自动计算」，可自动得到盈亏/R倍数/MFE/MAE/RSI/ATR 等" />
-                <el-form label-width="110px" size="small">
-                  <el-form-item label="盈亏金额"><el-input-number v-model="form.pnl" :precision="4" style="width: 100%" /></el-form-item>
-                  <el-form-item label="净收益"><el-input-number v-model="form.netPnl" :precision="4" style="width: 100%" /></el-form-item>
-                  <el-form-item label="R 倍数"><el-input-number v-model="form.rMultiple" :precision="3" style="width: 100%" /></el-form-item>
-                  <el-form-item label="MFE/MAE"><el-input :model-value="(form.mfe ?? '-') + ' / ' + (form.mae ?? '-')" disabled /></el-form-item>
-                  <el-form-item label="盈亏归因">
-                    <el-select v-model="form.attribution" style="width: 100%">
-                      <el-option v-for="a in ['系统信号','执行质量','市场运气','情绪干扰']" :key="a" :value="a" :label="a" />
-                    </el-select>
-                  </el-form-item>
-                </el-form>
-              </el-collapse-item>
-              <el-collapse-item name="G" title="G. 复盘总结与迭代">
-                <el-form label-width="110px" size="small">
-                  <el-form-item label="规则符合度"><el-rate v-model="form.disciplineScore" :max="10" /></el-form-item>
-                  <el-form-item label="信号正确"><el-switch v-model="form.signalCorrect" /></el-form-item>
-                  <el-form-item label="成功方面"><el-input v-model="form.strengths" type="textarea" :rows="2" /></el-form-item>
-                  <el-form-item label="改进方面"><el-input v-model="form.improvements" type="textarea" :rows="2" /></el-form-item>
-                  <el-form-item label="后续计划"><el-input v-model="form.nextPlan" type="textarea" :rows="2" /></el-form-item>
-                  <el-form-item label="标签">
-                    <el-checkbox-group v-model="form.tags">
-                      <el-checkbox v-for="t in TAG_OPTIONS" :key="t" :value="t">{{ t }}</el-checkbox>
-                    </el-checkbox-group>
-                  </el-form-item>
-                  <el-form-item label="走势验证"><el-input v-model="form.postCloseVerification" type="textarea" :rows="2" /></el-form-item>
-                </el-form>
-              </el-collapse-item>
-            </el-collapse>
-            <div class="row mt">
-              <el-button type="primary" :loading="saving" @click="save">{{ editingId ? '保存修改' : '保存交易' }}</el-button>
-              <el-button :loading="filling" @click="autofill">自动计算</el-button>
-            </div>
-            <el-alert v-if="notes.length" type="success" :closable="false" class="mt">
-              <div v-for="(n, i) in notes" :key="i">· {{ n }}</div>
-            </el-alert>
-          </el-card>
-        </el-col>
-        <el-col :span="15">
-          <el-card shadow="never" class="mb">
-            <template #header>统计（迭代交易系统）</template>
-            <el-row :gutter="8">
-              <el-col :span="3" v-for="c in statCards" :key="c.label">
-                <div class="stat"><div class="slabel">{{ c.label }}</div><div class="svalue">{{ c.text }}</div></div>
-              </el-col>
-            </el-row>
-            <div v-if="stats?.tagFrequency && Object.keys(stats.tagFrequency).length" class="mt-sm">
-              <el-tag v-for="(cnt, tag) in stats.tagFrequency" :key="tag" size="small" class="mr-sm" type="info" effect="plain">{{ tag }} ×{{ cnt }}</el-tag>
-            </div>
-          </el-card>
-          <el-card shadow="never">
-            <template #header>
-              <div class="row">
-                <span>交易记录</span>
-                <el-input v-model="filterSymbol" placeholder="搜索品种" size="small" style="width: 140px" @input="loadList" />
-                <el-select v-model="filterMarket" size="small" style="width: 120px" clearable placeholder="市场" @change="loadList">
-                  <el-option v-for="m in ['现货','U本位合约','币本位合约','全仓杠杆','逐仓杠杆']" :key="m" :value="m" :label="m" />
-                </el-select>
-                <el-button size="small" @click="loadStats">刷新统计</el-button>
-              </div>
-            </template>
-            <el-table :data="records" size="small" max-height="520" @row-click="editRow">
-              <el-table-column prop="tradeNo" label="编号" width="110" />
-              <el-table-column prop="symbol" label="品种" width="100" />
-              <el-table-column label="方向" width="60"><template #default="{ row }"><el-tag :type="row.direction === 'LONG' ? 'danger' : 'success'" size="small">{{ row.direction === 'LONG' ? '多' : '空' }}</el-tag></template></el-table-column>
-              <el-table-column label="净盈亏" width="90"><template #default="{ row }"><span :class="(row.netPnl ?? 0) >= 0 ? 'up' : 'down'">{{ row.netPnl?.toFixed(2) ?? '-' }}</span></template></el-table-column>
-              <el-table-column label="R" width="60"><template #default="{ row }">{{ row.rMultiple?.toFixed(2) ?? '-' }}</template></el-table-column>
-              <el-table-column label="符合度" width="60"><template #default="{ row }">{{ row.disciplineScore ?? '-' }}</template></el-table-column>
-              <el-table-column prop="strategyVersion" label="策略版本" />
-              <el-table-column label="时间"><template #default="{ row }">{{ row.closeTime ? new Date(row.closeTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-' }}</template></el-table-column>
-              <el-table-column label="" width="60"><template #default="{ row }"><el-button size="small" type="danger" text @click.stop="remove(row.id!)">删除</el-button></template></el-table-column>
-            </el-table>
-          </el-card>
-        </el-col>
-      </el-row>
-    </el-tab-pane>
-    <el-tab-pane label="速记笔记" name="notes">
-      <el-row :gutter="16">
-        <el-col :span="8">
-          <el-card shadow="never">
-            <template #header>写笔记</template>
-            <el-form label-width="60px">
-              <el-form-item label="类型">
-                <el-select v-model="noteForm.kind" style="width: 100%">
-                  <el-option value="insight" label="心得" /><el-option value="review" label="复盘" /><el-option value="note" label="备忘" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="标题"><el-input v-model="noteForm.title" /></el-form-item>
-              <el-form-item label="内容"><el-input type="textarea" :rows="5" v-model="noteForm.body" /></el-form-item>
-              <el-form-item label="标签"><el-input v-model="tagsText" placeholder="逗号分隔" /></el-form-item>
-              <el-form-item><el-button type="primary" @click="saveNote">保存</el-button></el-form-item>
-            </el-form>
-          </el-card>
-        </el-col>
-        <el-col :span="16">
-          <el-card shadow="never">
-            <template #header>笔记列表</template>
-            <el-timeline v-if="notesList.length">
-              <el-timeline-item v-for="e in notesList" :key="e.id" :timestamp="new Date(e.createdAt).toLocaleString('zh-CN')">
-                <b>{{ e.title }}</b>
-                <div class="dim">{{ e.body }}</div>
-              </el-timeline-item>
-            </el-timeline>
-            <el-empty v-else description="暂无笔记" />
-          </el-card>
-        </el-col>
-      </el-row>
-    </el-tab-pane>
-  </el-tabs>
+  <div>
+    <!-- 筛选栏 -->
+    <el-card shadow="never" class="mb">
+      <div class="filters">
+        <el-date-picker v-model="f.range" type="daterange" value-format="x" start-placeholder="开始" end-placeholder="结束" size="small" style="width: 230px" @change="applyFilter" />
+        <el-input v-model="f.symbol" placeholder="品种" size="small" style="width: 110px" @input="applyFilter" />
+        <el-select v-model="f.market" size="small" style="width: 110px" clearable placeholder="市场" @change="applyFilter">
+          <el-option v-for="m in ['现货','U本位合约','币本位合约','全仓杠杆','逐仓杠杆']" :key="m" :value="m" :label="m" />
+        </el-select>
+        <el-select v-model="f.direction" size="small" style="width: 90px" clearable placeholder="方向" @change="applyFilter">
+          <el-option value="LONG" label="做多" /><el-option value="SHORT" label="做空" />
+        </el-select>
+        <el-select v-model="f.strategy" size="small" style="width: 140px" clearable placeholder="策略版本" @change="applyFilter">
+          <el-option v-for="s in strategyOptions" :key="s" :value="s" :label="s" />
+        </el-select>
+        <el-select v-model="f.tags" size="small" style="width: 160px" multiple collapse-tags placeholder="标签" @change="applyFilter">
+          <el-option v-for="t in TAG_OPTIONS" :key="t" :value="t" :label="t" />
+        </el-select>
+        <el-select v-model="f.result" size="small" style="width: 100px" clearable placeholder="结果" @change="applyFilter">
+          <el-option value="win" label="盈利" /><el-option value="loss" label="亏损" />
+        </el-select>
+        <el-input v-model="f.keyword" placeholder="搜索备注/理由" size="small" style="width: 150px" @input="applyFilter" />
+        <el-button size="small" type="primary" @click="openNew">+ 新建</el-button>
+      </div>
+      <!-- 统计摘要条 -->
+      <div class="statstrip">
+        <span v-for="c in summary" :key="c.label" class="ss"><b class="ss-label">{{ c.label }}</b><span class="ss-val mono" :class="c.cls">{{ c.text }}</span></span>
+      </div>
+    </el-card>
+
+    <!-- 列表 -->
+    <el-card shadow="never">
+      <el-table :data="filtered" size="small" @row-click="openDetail" :default-sort="{ prop: 'closeTime', order: 'descending' }">
+        <el-table-column prop="tradeNo" label="编号" width="105" sortable />
+        <el-table-column label="日期" width="95" sortable :sort-by="(r:any) => r.closeTime ?? 0"><template #default="{ row }">{{ fmtDate(row.closeTime) }}</template></el-table-column>
+        <el-table-column prop="symbol" label="品种" width="100" sortable />
+        <el-table-column label="市场" width="95"><template #default="{ row }">{{ row.market }}</template></el-table-column>
+        <el-table-column label="方向" width="55"><template #default="{ row }"><span :class="row.direction === 'LONG' ? 'up' : 'down'">{{ row.direction === 'LONG' ? '多' : '空' }}</span></template></el-table-column>
+        <el-table-column label="开仓价" width="85"><template #default="{ row }">{{ row.actualEntry ?? '-' }}</template></el-table-column>
+        <el-table-column label="平仓价" width="85"><template #default="{ row }">{{ row.actualExit ?? '-' }}</template></el-table-column>
+        <el-table-column label="R" width="55" sortable><template #default="{ row }">{{ row.rMultiple?.toFixed(2) ?? '-' }}</template></el-table-column>
+        <el-table-column label="净盈亏" width="90" sortable><template #default="{ row }"><span :class="(row.netPnl ?? 0) >= 0 ? 'up' : 'down'">{{ row.netPnl?.toFixed(2) ?? '-' }}</span></template></el-table-column>
+        <el-table-column label="符合度" width="70" sortable><template #default="{ row }">{{ row.disciplineScore ?? '-' }}</template></el-table-column>
+        <el-table-column label="标签" min-width="130"><template #default="{ row }"><el-tag v-for="t in (row.tags ?? []).slice(0, 2)" :key="t" size="small" effect="plain" class="mr">{{ t }}</el-tag></template></el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 详情抽屉 -->
+    <el-drawer v-model="detailVisible" size="560px" :title="'交易详情 ' + (detail?.tradeNo ?? '')">
+      <template v-if="detail">
+        <h4>基本信息</h4>
+        <el-descriptions :column="2" size="small" border>
+          <el-descriptions-item label="品种">{{ detail.symbol }}</el-descriptions-item>
+          <el-descriptions-item label="方向">{{ detail.direction === 'LONG' ? '做多' : '做空' }}</el-descriptions-item>
+          <el-descriptions-item label="市场">{{ detail.market }}</el-descriptions-item>
+          <el-descriptions-item label="时间框架">{{ detail.timeframe ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="策略版本">{{ detail.strategyVersion ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="持仓时长">{{ detail.holdingDuration ?? '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <h4>计划 vs 实际</h4>
+        <el-table :data="planCompare" size="small" border>
+          <el-table-column prop="k" label="" width="90" />
+          <el-table-column prop="plan" label="计划" />
+          <el-table-column prop="actual" label="实际" />
+        </el-table>
+        <div v-if="detail.deviationReason" class="dim mt-sm">偏差原因：{{ detail.deviationReason }}</div>
+        <h4>市场条件</h4>
+        <el-descriptions :column="1" size="small">
+          <el-descriptions-item label="趋势">{{ detail.marketTrend ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="波动率">{{ detail.volatility ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="量能">{{ detail.volumeLiquidity ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="支撑阻力">{{ detail.supportResistance ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="指标状态">{{ detail.indicatorState ?? '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <div v-if="detail.indicators" class="mt-sm">
+          <el-tag v-for="(v, k) in detail.indicators" :key="k" size="small" effect="plain" class="mr">{{ k }}: {{ v }}</el-tag>
+        </div>
+        <h4>情绪与决策</h4>
+        <el-descriptions :column="1" size="small">
+          <el-descriptions-item label="入场理由">{{ detail.entryReason ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="出场理由">{{ detail.exitReason ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="情绪/信心">{{ detail.emotionScore ?? '-' }} / {{ detail.confidenceScore ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="心理变化">{{ detail.psychologicalNote ?? '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <h4>结果分析</h4>
+        <el-descriptions :column="2" size="small">
+          <el-descriptions-item label="净收益">{{ detail.netPnl ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="R 倍数">{{ detail.rMultiple ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="MFE / MAE">{{ detail.mfe ?? '-' }} / {{ detail.mae ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="归因">{{ detail.attribution ?? '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <h4>复盘总结</h4>
+        <div class="dim" v-if="detail.strengths">✅ {{ detail.strengths }}</div>
+        <div class="dim" v-if="detail.improvements">🔧 {{ detail.improvements }}</div>
+        <div class="dim" v-if="detail.nextPlan">📋 {{ detail.nextPlan }}</div>
+        <div class="dim mt-sm">规则符合度：{{ detail.disciplineScore ?? '-' }} · 信号正确：{{ detail.signalCorrect === undefined ? '-' : (detail.signalCorrect ? '是' : '否') }}</div>
+        <div class="mt">
+          <el-button size="small" type="primary" @click="openEdit">编辑</el-button>
+          <el-button size="small" @click="copyAsNew">复制为新模板</el-button>
+          <el-button size="small" @click="exportOne">导出</el-button>
+          <el-button size="small" type="danger" @click="remove(detail.id!)">删除</el-button>
+        </div>
+      </template>
+    </el-drawer>
+
+    <!-- 新建/编辑表单弹窗 -->
+    <el-dialog v-model="formVisible" :title="editingId ? '编辑交易' : '新建交易日志'" width="720px" top="4vh">
+      <el-collapse v-model="openSections">
+        <el-collapse-item name="A" title="A. 基本信息">
+          <el-form label-width="80px" size="small">
+            <el-form-item label="交易编号"><el-input v-model="form.tradeNo" placeholder="如 20260821-001" /></el-form-item>
+            <el-form-item label="品种"><el-input v-model="form.symbol" placeholder="如 BTCUSDT" /></el-form-item>
+            <el-form-item label="市场"><el-select v-model="form.market" style="width: 100%"><el-option v-for="m in ['现货','U本位合约','币本位合约','全仓杠杆','逐仓杠杆','外汇','期货']" :key="m" :value="m" :label="m" /></el-select></el-form-item>
+            <el-form-item label="方向"><el-radio-group v-model="form.direction"><el-radio-button value="LONG">做多</el-radio-button><el-radio-button value="SHORT">做空</el-radio-button></el-radio-group></el-form-item>
+            <el-form-item label="策略版本"><el-input v-model="form.strategyVersion" placeholder="如 趋势跟踪 v2.3" /></el-form-item>
+            <el-form-item label="开仓/平仓"><el-date-picker v-model="form.openTime" type="datetime" value-format="x" style="width: 48%" /> <el-date-picker v-model="form.closeTime" type="datetime" value-format="x" style="width: 48%" /></el-form-item>
+          </el-form>
+        </el-collapse-item>
+        <el-collapse-item name="B" title="B. 交易前计划">
+          <el-form label-width="90px" size="small">
+            <el-form-item label="计划入场"><el-input-number v-model="form.plannedEntry" :precision="4" style="width: 100%" /></el-form-item>
+            <el-form-item label="计划止损"><el-input-number v-model="form.plannedStop" :precision="4" style="width: 100%" /></el-form-item>
+            <el-form-item label="止盈目标"><el-input v-model="targetsText" placeholder="逗号分隔，如 71000,72000" /></el-form-item>
+            <el-form-item label="风险回报比"><el-input v-model="form.plannedRR" placeholder="如 1:3" /></el-form-item>
+            <el-form-item label="风险金额"><el-input-number v-model="form.plannedRiskAmount" :precision="2" style="width: 100%" /></el-form-item>
+            <el-form-item label="失效条件"><el-input v-model="form.invalidation" type="textarea" :rows="2" /></el-form-item>
+          </el-form>
+        </el-collapse-item>
+        <el-collapse-item name="C" title="C. 实际执行">
+          <el-form label-width="90px" size="small">
+            <el-form-item label="开/平仓价"><el-input-number v-model="form.actualEntry" :precision="4" style="width: 48%" /> <el-input-number v-model="form.actualExit" :precision="4" style="width: 48%" /></el-form-item>
+            <el-form-item label="数量/杠杆"><el-input-number v-model="form.actualQty" :precision="6" style="width: 48%" /> <el-input-number v-model="form.leverage" :min="1" style="width: 48%" /></el-form-item>
+            <el-form-item label="按计划执行"><el-select v-model="form.planExecution" style="width: 100%"><el-option value="complete" label="完全执行" /><el-option value="partial" label="部分执行" /><el-option value="none" label="未执行" /></el-select></el-form-item>
+            <el-form-item label="偏差原因"><el-input v-model="form.deviationReason" type="textarea" :rows="2" /></el-form-item>
+          </el-form>
+        </el-collapse-item>
+        <el-collapse-item name="E" title="E. 情绪与决策">
+          <el-form label-width="90px" size="small">
+            <el-form-item label="入场理由"><el-input v-model="form.entryReason" type="textarea" :rows="2" /></el-form-item>
+            <el-form-item label="出场理由"><el-input v-model="form.exitReason" placeholder="止盈/止损/手动/时间" /></el-form-item>
+            <el-form-item label="情绪评分"><el-rate v-model="form.emotionScore" :max="10" /></el-form-item>
+            <el-form-item label="信心评分"><el-rate v-model="form.confidenceScore" :max="10" /></el-form-item>
+          </el-form>
+        </el-collapse-item>
+        <el-collapse-item name="D" title="D. 市场条件">
+          <el-form label-width="90px" size="small">
+            <el-form-item label="趋势"><el-input v-model="form.marketTrend" placeholder="看涨/看跌/震荡" /></el-form-item>
+            <el-form-item label="量能"><el-input v-model="form.volumeLiquidity" placeholder="放量/缩量" /></el-form-item>
+            <el-form-item label="事件"><el-input v-model="form.economicEvents" placeholder="非农/CPI" /></el-form-item>
+          </el-form>
+        </el-collapse-item>
+        <el-collapse-item name="G" title="G. 复盘总结">
+          <el-form label-width="90px" size="small">
+            <el-form-item label="规则符合度"><el-rate v-model="form.disciplineScore" :max="10" /></el-form-item>
+            <el-form-item label="成功/改进"><el-input v-model="form.strengths" placeholder="成功的方面" class="mb" /><el-input v-model="form.improvements" placeholder="需要改进的方面" /></el-form-item>
+            <el-form-item label="后续计划"><el-input v-model="form.nextPlan" type="textarea" :rows="2" /></el-form-item>
+            <el-form-item label="标签"><el-checkbox-group v-model="form.tags"><el-checkbox v-for="t in TAG_OPTIONS" :key="t" :value="t" size="small">{{ t }}</el-checkbox></el-checkbox-group></el-form-item>
+          </el-form>
+        </el-collapse-item>
+      </el-collapse>
+      <div class="row mt">
+        <el-button type="primary" :loading="saving" @click="save">{{ editingId ? '保存修改' : '保存' }}</el-button>
+        <el-button :loading="filling" @click="autofill">自动计算</el-button>
+      </div>
+      <el-alert v-if="notes.length" type="success" :closable="false" class="mt"><div v-for="(n, i) in notes" :key="i">· {{ n }}</div></el-alert>
+    </el-dialog>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { api } from '../api.ts';
 
-interface TradeJournalView {
-  id?: string; tradeNo?: string; symbol: string; market: string; direction: 'LONG' | 'SHORT';
-  timeframe?: string; strategyVersion?: string; openTime?: number; closeTime?: number;
-  plannedEntry?: number; plannedStop?: number; plannedTargets?: number[]; plannedRR?: string;
-  plannedSize?: string; plannedRiskAmount?: number; plannedRiskPct?: number; plannedHolding?: string; invalidation?: string;
-  actualEntry?: number; actualExit?: number; actualQty?: number; leverage?: number; orderType?: string; slippage?: number;
-  planExecution: string; deviationReason?: string;
-  marketTrend?: string; volatility?: string; volumeLiquidity?: string; supportResistance?: string; economicEvents?: string;
-  indicatorState?: string; relatedSymbols?: string; session?: string;
-  entryReason?: string; exitReason?: string; emotionScore?: number; confidenceScore?: number; psychologicalNote?: string; emotionAffected?: boolean;
-  pnl?: number; pnlPct?: number; fees?: number; netPnl?: number; rMultiple?: number; mfe?: number; mae?: number; attribution?: string;
-  disciplineScore?: number; signalCorrect?: boolean; strengths?: string; improvements?: string; nextPlan?: string;
-  tags: string[]; postCloseVerification?: string; indicators?: Record<string, number | string | boolean | null>;
-}
-
 const TAG_OPTIONS = ['情绪化交易', '执行错误', '系统缺陷', '正常亏损', '正常盈利', '运气成分'];
+const route = useRoute();
+const router = useRouter();
 
-const tab = ref('trades');
-const openSections = ref(['A']);
+interface Rec { id?: string; tradeNo?: string; symbol: string; market: string; direction: string; closeTime?: number; openTime?: number; createdAt?: number; netPnl?: number; rMultiple?: number; disciplineScore?: number; tags?: string[]; planExecution?: string; strategyVersion?: string; actualEntry?: number; actualExit?: number; actualQty?: number; [k: string]: unknown }
+
+const all = ref<Rec[]>([]);
+const filtered = ref<Rec[]>([]);
+const detail = ref<Rec | null>(null);
+const detailVisible = ref(false);
+const formVisible = ref(false);
 const editingId = ref('');
 const saving = ref(false);
 const filling = ref(false);
 const notes = ref<string[]>([]);
-const records = ref<TradeJournalView[]>([]);
-const stats = ref<Record<string, unknown> | null>(null);
-const filterSymbol = ref('');
-const filterMarket = ref('');
 const targetsText = ref('');
+const openSections = ref(['A']);
 
-const emptyForm = (): TradeJournalView => ({ symbol: '', market: 'U本位合约', direction: 'LONG', planExecution: 'complete', tags: [], plannedTargets: [] });
-const form = reactive<TradeJournalView>(emptyForm());
+const f = reactive<{ range: [number, number] | null; symbol: string; market: string; direction: string; strategy: string; tags: string[]; result: string; keyword: string }>({
+  range: null, symbol: '', market: '', direction: '', strategy: '', tags: [], result: '', keyword: '',
+});
 
-const statCards = computed(() => {
-  const s = (stats.value ?? {}) as Record<string, number | string>;
-  const pf = s.profitFactor === Infinity ? '∞' : (Number(s.profitFactor ?? 0)).toFixed(2);
+const emptyForm = () => ({ symbol: '', market: 'U本位合约', direction: 'LONG', planExecution: 'complete', tags: [], plannedTargets: [] as number[] });
+const form = reactive<any>(emptyForm());
+
+const strategyOptions = computed(() => [...new Set(all.value.map((r) => r.strategyVersion).filter(Boolean))] as string[]);
+
+const summary = computed(() => {
+  const rs = filtered.value.filter((r) => r.netPnl !== undefined);
+  const wins = rs.filter((r) => r.netPnl! > 0);
+  const losses = rs.filter((r) => r.netPnl! < 0);
+  const net = rs.reduce((a, r) => a + r.netPnl!, 0);
+  const gp = wins.reduce((a, r) => a + r.netPnl!, 0);
+  const gl = Math.abs(losses.reduce((a, r) => a + r.netPnl!, 0));
+  const rVals = rs.map((r) => r.rMultiple).filter((v): v is number => v !== undefined && Number.isFinite(v));
+  const disc = filtered.value.map((r) => r.disciplineScore).filter((v): v is number => v !== undefined && Number.isFinite(v));
   return [
-    { label: '胜率', text: (Number(s.winRate ?? 0) * 100).toFixed(1) + '%' },
-    { label: '盈亏比', text: pf },
-    { label: '平均R', text: Number(s.avgR ?? 0).toFixed(2) },
-    { label: '期望值', text: Number(s.expectancy ?? 0).toFixed(2) },
-    { label: '净盈亏', text: Number(s.netPnl ?? 0).toFixed(2) },
-    { label: '符合度', text: Number(s.avgDiscipline ?? 0).toFixed(1) },
-    { label: '情绪', text: Number(s.avgEmotion ?? 0).toFixed(1) },
-    { label: '交易数', text: String(s.total ?? 0) },
+    { label: '笔数', text: String(filtered.value.length), cls: '' },
+    { label: '净收益', text: net.toFixed(0), cls: net >= 0 ? 'up' : 'down' },
+    { label: '胜率', text: (rs.length ? wins.length / rs.length : 0).toFixed(1), cls: '' },
+    { label: '平均R', text: (rVals.length ? rVals.reduce((a, b) => a + b, 0) / rVals.length : 0).toFixed(2), cls: '' },
+    { label: '盈亏比', text: (gl > 0 ? gp / gl : (gp > 0 ? 99 : 0)).toFixed(2), cls: '' },
+    { label: '符合度', text: (disc.length ? disc.reduce((a, b) => a + b, 0) / disc.length : 0).toFixed(1), cls: '' },
   ];
 });
 
-function resetForm() {
+function fmtDate(ts?: number) { return ts ? new Date(ts).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : '-'; }
+
+const planCompare = computed(() => {
+  const d = detail.value;
+  if (!d) return [];
+  return [
+    { k: '入场', plan: d.plannedEntry ?? '-', actual: d.actualEntry ?? '-' },
+    { k: '止损', plan: d.plannedStop ?? '-', actual: '-' },
+    { k: '止盈', plan: ((d.plannedTargets ?? []) as number[]).join('/') || '-', actual: d.actualExit ?? '-' },
+  ];
+});
+
+function applyFilter() {
+  let out = all.value;
+  if (f.range?.[0] && f.range?.[1]) out = out.filter((r) => (r.closeTime ?? r.createdAt ?? 0) >= f.range![0] && (r.closeTime ?? r.createdAt ?? 0) <= f.range![1]);
+  if (f.symbol) out = out.filter((r) => r.symbol.toUpperCase().includes(f.symbol.toUpperCase()));
+  if (f.market) out = out.filter((r) => r.market === f.market);
+  if (f.direction) out = out.filter((r) => r.direction === f.direction);
+  if (f.strategy) out = out.filter((r) => r.strategyVersion === f.strategy);
+  if (f.tags.length) out = out.filter((r) => f.tags.every((t) => (r.tags ?? []).includes(t)));
+  if (f.result === 'win') out = out.filter((r) => (r.netPnl ?? 0) > 0);
+  if (f.result === 'loss') out = out.filter((r) => (r.netPnl ?? 0) < 0);
+  if (f.keyword) {
+    const kw = f.keyword.toLowerCase();
+    out = out.filter((r) => JSON.stringify({ e: r.entryReason, x: r.exitReason, n: r.nextPlan, i: r.improvements, s: r.strengths }).toLowerCase().includes(kw));
+  }
+  filtered.value = out;
+}
+
+async function loadList() {
+  all.value = (await api.get<{ records: Rec[] }>('/journal/trades?limit=500')).records;
+  applyFilter();
+}
+
+function openDetail(row: Rec) { detail.value = row; detailVisible.value = true; }
+
+function openNew() {
   Object.assign(form, emptyForm());
   editingId.value = '';
-  notes.value = [];
   targetsText.value = '';
+  notes.value = [];
   openSections.value = ['A'];
+  formVisible.value = true;
+}
+
+function openEdit() {
+  if (!detail.value) return;
+  editingId.value = detail.value.id ?? '';
+  Object.assign(form, detail.value);
+  targetsText.value = ((detail.value.plannedTargets as number[]) ?? []).join(',');
+  notes.value = [];
+  openSections.value = ['A', 'C'];
+  formVisible.value = true;
+}
+
+function copyAsNew() {
+  if (!detail.value) return;
+  openNew();
+  const { id, tradeNo, closeTime, createdAt, ...rest } = detail.value;
+  Object.assign(form, rest);
+  targetsText.value = ((detail.value.plannedTargets as number[]) ?? []).join(',');
 }
 
 function formPayload() {
@@ -264,10 +291,9 @@ function formPayload() {
 async function autofill() {
   filling.value = true;
   try {
-    const res = await api.post<{ record: TradeJournalView; notes: string[] }>('/journal/trades/autofill', { record: formPayload() });
+    const res = await api.post<{ record: Rec; notes: string[] }>('/journal/trades/autofill', { record: formPayload() });
     Object.assign(form, res.record);
     notes.value = res.notes;
-    if (res.record.plannedTargets?.length) targetsText.value = res.record.plannedTargets.join(',');
     ElMessage.success('已自动计算');
   } catch (e) {
     ElMessage.error((e as Error).message);
@@ -284,10 +310,10 @@ async function save() {
       ElMessage.success('已保存修改');
     } else {
       await api.post('/journal/trades', { record: formPayload() });
-      ElMessage.success('已记录交易');
+      ElMessage.success('已记录');
     }
-    resetForm();
-    await Promise.all([loadList(), loadStats()]);
+    formVisible.value = false;
+    await loadList();
   } catch (e) {
     ElMessage.error((e as Error).message);
   } finally {
@@ -295,61 +321,54 @@ async function save() {
   }
 }
 
-function editRow(row: TradeJournalView) {
-  editingId.value = row.id ?? '';
-  Object.assign(form, row);
-  targetsText.value = (row.plannedTargets ?? []).join(',');
-  notes.value = [];
-  openSections.value = ['A', 'C', 'F', 'G'];
-}
-
 async function remove(id: string) {
   await ElMessageBox.confirm('确认删除这笔交易日志？', '提示', { type: 'warning' });
   await api.del('/journal/trades/' + id);
   ElMessage.success('已删除');
-  await Promise.all([loadList(), loadStats()]);
+  detailVisible.value = false;
+  await loadList();
 }
 
-async function loadList() {
-  const params = new URLSearchParams();
-  if (filterSymbol.value) params.set('symbol', filterSymbol.value);
-  if (filterMarket.value) params.set('market', filterMarket.value);
-  const res = await api.get<{ records: TradeJournalView[] }>('/journal/trades?' + params.toString());
-  records.value = res.records;
-}
-
-async function loadStats() {
-  stats.value = await api.get('/journal/trades/stats');
-}
-
-const noteForm = reactive({ kind: 'note', title: '', body: '' });
-const tagsText = ref('');
-const notesList = ref<{ id: string; kind: string; title: string; body: string; createdAt: number }[]>([]);
-async function saveNote() {
-  await api.post('/journal', { kind: noteForm.kind, title: noteForm.title, body: noteForm.body, tags: tagsText.value.split(',').map((s) => s.trim()).filter(Boolean) });
-  ElMessage.success('已保存');
-  noteForm.kind = 'note'; noteForm.title = ''; noteForm.body = ''; tagsText.value = '';
-  await loadNotes();
-}
-async function loadNotes() {
-  notesList.value = (await api.get<{ entries: typeof notesList.value }>('/journal?limit=50')).entries;
+function exportOne() {
+  if (!detail.value) return;
+  const blob = new Blob([JSON.stringify(detail.value, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (detail.value.tradeNo ?? detail.value.id) + '.json';
+  a.click();
 }
 
 onMounted(async () => {
-  await Promise.all([loadList(), loadStats(), loadNotes()]);
+  await loadList();
+  const q = route.query;
+  if (q['new']) openNew();
+  else if (q['id']) {
+    const rec = all.value.find((r) => r.id === q['id']);
+    if (rec) openDetail(rec);
+  } else if (q['quick']) {
+    try {
+      const pre = JSON.parse(String(q['quick']));
+      openNew();
+      Object.assign(form, pre);
+    } catch { /* ignore */ }
+  }
 });
 </script>
 
 <style scoped>
-.row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
-.mt { margin-top: 12px; }
 .mb { margin-bottom: 12px; }
+.mt { margin-top: 10px; }
 .mt-sm { margin-top: 8px; }
-.mr-sm { margin-right: 6px; }
-.dim { color: #999; font-size: 12px; }
-.stat { text-align: center; }
-.slabel { color: #999; font-size: 12px; }
-.svalue { font-size: 16px; font-weight: 700; }
-.up { color: #f56c6c; }
-.down { color: #67c23a; }
+.mr { margin-right: 4px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.statstrip { display: flex; gap: 22px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.ss { display: flex; flex-direction: column; }
+.ss-label { color: var(--text-dim); font-size: 11px; }
+.ss-val { font-size: 15px; font-weight: 700; }
+.mono { font-family: var(--mono); }
+.up { color: var(--up); }
+.down { color: var(--down); }
+.dim { color: var(--text-dim); font-size: 12px; }
+.row { display: flex; align-items: center; gap: 10px; }
+h4 { margin: 14px 0 8px; color: var(--text-dim); font-size: 12px; letter-spacing: 1px; }
 </style>
