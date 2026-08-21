@@ -184,9 +184,7 @@ function render() {
   if (!cs.length) return;
 
   const closes = cs.map((c) => c.close);
-  const PAD = 2; // 两端各补 2 个空位，K 线不贴左右边框
-  const times = ['', '', ...cs.map((c) => fmtAxisTime(c.openTime, interval.value)), '', ''];
-  const padArr = <T,>(a: T[]): (T | null)[] => [null, null, ...a, null, null];
+  const times = cs.map((c) => fmtAxisTime(c.openTime, interval.value));
 
   // 可见范围（VPVR 只统计可见 K 线）
   const from = Math.max(0, Math.floor((cs.length * zoomStart) / 100));
@@ -239,7 +237,7 @@ function render() {
     type: 'category',
     gridIndex: gi,
     data: times,
-    boundaryGap: true,
+    boundaryGap: ['1', '1'], // 首尾各留一个带宽，K 线不贴左右边框
     axisLine: { lineStyle: { color: 'rgba(128,140,155,0.25)' } },
     axisTick: { show: false },
     axisLabel: showLabel ? { color: '#8a94a3', hideOverlap: true } : { show: false },
@@ -306,7 +304,7 @@ function render() {
     type: 'candlestick',
     xAxisIndex: 0,
     yAxisIndex: 0,
-    data: padArr(cs.map((c) => [c.open, c.close, c.low, c.high])),
+    data: cs.map((c) => [c.open, c.close, c.low, c.high]),
     itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
     valueFormatter: (v: unknown) =>
       Array.isArray(v)
@@ -325,7 +323,7 @@ function render() {
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: padArr(sma(closes, row.value)),
+        data: sma(closes, row.value),
         symbol: 'none',
         connectNulls: false,
         z: 2,
@@ -340,7 +338,7 @@ function render() {
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: padArr(ema(closes, row.value)),
+        data: ema(closes, row.value),
         symbol: 'none',
         connectNulls: false,
         z: 2,
@@ -396,7 +394,7 @@ function render() {
       type: 'bar',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: padArr(cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } }))),
+      data: cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } })),
       barMaxWidth: 8,
       valueFormatter: (v: unknown) => fmtVol(v as number),
     });
@@ -405,7 +403,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: padArr(volMa),
+      data: volMa,
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1, color: '#409eff' },
@@ -421,7 +419,7 @@ function render() {
       type: 'bar',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: padArr(macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } }))),
+      data: macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } })),
       barMaxWidth: 6,
       valueFormatter: (v: unknown) => fmtPrice(v as number),
     });
@@ -430,7 +428,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: padArr(macdRes.dif),
+      data: macdRes.dif,
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1, color: '#f0a35e' },
@@ -442,7 +440,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: padArr(macdRes.dea),
+      data: macdRes.dea,
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1, color: '#4da3ff' },
@@ -458,7 +456,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: padArr(rsiRes),
+      data: rsiRes,
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1.2, color: '#4da3ff' },
