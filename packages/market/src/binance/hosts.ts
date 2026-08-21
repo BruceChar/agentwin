@@ -16,7 +16,10 @@ export interface HostOptions {
 /** 市场数据不可达（所有候选主机均失败） */
 export class MarketDataUnavailableError extends Error {
   constructor(market: Market, detail: string) {
-    super('Binance ' + market + ' 行情不可达：' + detail + ' — 请检查网络，或设置 BINANCE_*_BASE_URL / 使用 AGENTWIN_USE_MOCK=1');
+    const proxyHint = process.env.BINANCE_PROXY === 'on' || process.env.BINANCE_PROXY_URL
+      ? '（已开启代理：请确认代理在运行、地址端口正确、出口不在受限地区）'
+      : '（可尝试开启本地代理后重试，或使用 AGENTWIN_USE_MOCK=1 离线模式）';
+    super('Binance ' + market + ' 行情不可达：' + detail + ' — ' + proxyHint);
     this.name = 'MarketDataUnavailableError';
   }
 }
@@ -68,14 +71,13 @@ export async function probeBase(base: string, market: Market, fetchImpl: typeof 
   }
 }
 
-/** 依次探测候选主机，返回第一个可用者；全部失败抛 MarketDataUnavailableError */
+/** 并行探测候选主机，返回第一个可用者；全部失败抛 MarketDataUnavailableError（4s 上限，多主机并行不排队） */
 export async function pickReachableBase(market: Market, opts: HostOptions = {}, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis), dispatcher?: unknown): Promise<string> {
-  let lastError = 'all hosts unreachable';
-  for (const url of restCandidatesFor(market, opts)) {
-    if (await probeBase(url, market, fetchImpl, dispatcher)) return url;
-    lastError = 'failed: ' + url;
-  }
-  throw new MarketDataUnavailableError(market, lastError);
+  const candidates = restCandidatesFor(market, opts);
+  const results = await Promise.all(candidates.map(async (url) => (await probeBase(url, market, fetchImpl, dispatcher) ? url : null)));
+  const hit = results.find((r): r is string => r !== null);
+  if (hit) return hit;
+  throw new MarketDataUnavailableError(market, 'failed: ' + candidates.join(', '));
 }
 
 // 合约备用主机（官方国内直连域名，公开行情与签名请求都可用）
@@ -111,12 +113,11 @@ export function signedCandidatesFor(market: Market, opts: HostOptions = {}): str
   ]);
 }
 
-/** 选择签名请求可用主机（api.binance.com 被 DNS 污染时自动尝试 api1-4） */
+/** 选择签名请求可用主机（api.binance.com 被 DNS 污染时自动尝试 api1-4；并行探测） */
 export async function pickSignedBase(market: Market, opts: HostOptions = {}, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis), dispatcher?: unknown): Promise<string> {
-  let lastError = 'all signed hosts unreachable';
-  for (const url of signedCandidatesFor(market, opts)) {
-    if (await probeBase(url, market, fetchImpl, dispatcher)) return url;
-    lastError = 'failed: ' + url;
-  }
-  throw new MarketDataUnavailableError(market, lastError);
+  const candidates = signedCandidatesFor(market, opts);
+  const results = await Promise.all(candidates.map(async (url) => (await probeBase(url, market, fetchImpl, dispatcher) ? url : null)));
+  const hit = results.find((r): r is string => r !== null);
+  if (hit) return hit;
+  throw new MarketDataUnavailableError(market, 'failed: ' + candidates.join(', '));
 }

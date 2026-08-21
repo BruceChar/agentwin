@@ -2,7 +2,7 @@ import type { AggTrade, Candle, Interval, Market, MarkPrice, SymbolInfo, Ticker 
 import { buildQueryString, buildSignedQuery } from './sign.ts';
 import type { RawAggTrade, RawExchangeInfo, RawKlineRow, RawMarkPrice, RawSymbolFilter, RawTicker } from './types.ts';
 import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, pickReachableBase, pickSignedBase as pickSignedBaseHost, probeBase, type HostOptions } from './hosts.ts';
-import { createProxiedFetch, getProxyDispatcher, isGeoRestricted, geoRestrictedHint, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
+import { createProxiedFetch, getProxyDispatcher, isDirectHost, isGeoRestricted, geoRestrictedHint, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
 
 // 常量与错误类型由 hosts.ts 提供，这里统一再导出（兼容既有引用）
 export { SPOT_BASE, SPOT_TESTNET_BASE, SPOT_DATA_API_BASE, FUTURES_BASE, MarketDataUnavailableError, restCandidatesFor } from './hosts.ts';
@@ -67,9 +67,11 @@ export class BinanceRest {
     this.proxiedFetch = createProxiedFetch(this.proxyConfig);
   }
 
-  /** 统一请求入口：代理开启时用 undici fetch + dispatcher，否则用注入/全局 fetch */
+  /** 统一请求入口：公共行情主机（data-api/data-stream）永远直连；其余按代理配置走 */
   private doFetch(input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
-    return this.proxiedFetch ? this.proxiedFetch(input, init) : this.fetchImpl(input, init);
+    const url = String(input);
+    if (isDirectHost(url)) return this.fetchImpl(url, init ?? {});
+    return this.proxiedFetch ? this.proxiedFetch(url, init) : this.fetchImpl(url, init ?? {});
   }
 
   /** 当前代理配置（诊断/状态展示用） */

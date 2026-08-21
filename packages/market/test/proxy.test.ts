@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clearProxyAgents, createProxiedFetch, getProxyDispatcher, isGeoRestricted, resolveProxyConfig, proxyToBinanceConnector, type ProxyConfig } from '../src/binance/proxy.ts';
+import { clearProxyAgents, createProxiedFetch, getProxyDispatcher, isDirectHost, isGeoRestricted, resolveProxyConfig, proxyToBinanceConnector, type ProxyConfig } from '../src/binance/proxy.ts';
 import { BinanceRest } from '../src/binance/rest.ts';
 import { SPOT_DATA_API_BASE } from '../src/binance/hosts.ts';
 
@@ -76,6 +76,33 @@ describe('proxied fetch & dispatcher', () => {
     clearProxyAgents();
     expect(getProxyDispatcher(cfg)).not.toBe(d1); // 清空后重建
     clearProxyAgents();
+  });
+});
+
+describe('direct-only hosts bypass proxy', () => {
+  it('isDirectHost matches public data hosts', () => {
+    expect(isDirectHost('https://data-api.binance.vision/api/v3/ping')).toBe(true);
+    expect(isDirectHost('wss://data-stream.binance.vision/ws/btc@kline_1m')).toBe(true);
+    expect(isDirectHost('https://api.binance.com/api/v3/ping')).toBe(false);
+    expect(isDirectHost('https://fapi.binance.com/fapi/v1/ping')).toBe(false);
+  });
+
+  it('with proxy ON, direct hosts still use injected fetchImpl', async () => {
+    const captured: RequestInit[] = [];
+    const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      captured.push(init ?? {});
+      const url = String(input);
+      if (url.includes('/ping')) return new Response('{}', { status: 200 });
+      return new Response('[[1700000000000,"100","110","90","105","10",1700000059999,"1000",50,"5","500"]]', { status: 200 });
+    }) as typeof fetch;
+    const rest = new BinanceRest({
+      fetchImpl,
+      proxyConfig: { mode: 'on', url: 'http://127.0.0.1:7897', enabled: true, source: 'explicit' },
+      spotBaseUrl: 'https://data-api.binance.vision', // 公共行情主机
+    });
+    const candles = await rest.klines('SPOT', 'BTCUSDT', '1h', { limit: 1 });
+    expect(candles).toHaveLength(1);
+    expect(captured.length).toBeGreaterThan(0); // 走了 fetchImpl（直连）而非 undici 代理
   });
 });
 

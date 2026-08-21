@@ -2,6 +2,25 @@ import { ProxyAgent, fetch as undiciFetch } from 'undici';
 
 export type ProxyMode = 'off' | 'on' | 'auto';
 
+/**
+ * 永远直连的主机（公共行情端点，国内网络通常可直连）：
+ * 即使 BINANCE_PROXY=on 也强制不走代理——避免公共行情被代理出口的地区限制误伤。
+ */
+export const DIRECT_ONLY_HOSTS = [
+  'data-api.binance.vision',
+  'data-stream.binance.vision',
+];
+
+/** 判断 URL 是否属于「永远直连」主机 */
+export function isDirectHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return DIRECT_ONLY_HOSTS.some((h) => host === h || host.endsWith('.' + h));
+  } catch {
+    return false;
+  }
+}
+
 export interface ProxyConfig {
   mode: ProxyMode;
   /** 实际使用的代理地址（来自 BINANCE_PROXY_URL 或 HTTPS_PROXY） */

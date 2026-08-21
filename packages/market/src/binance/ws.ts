@@ -1,7 +1,7 @@
 import type { Market } from '@agentwin/shared';
 import WS from 'ws';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { resolveProxyConfig, type ProxyConfig } from './proxy.ts';
+import { isDirectHost, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
 
 export const SPOT_WS_BASE = 'wss://stream.binance.com:9443';
 export const SPOT_DATA_STREAM_BASE = 'wss://data-stream.binance.vision';
@@ -84,9 +84,9 @@ export class BinanceWs {
     const base = candidates[idx]!;
     return new Promise<void>((resolve, reject) => {
       let settled = false;
-      // 走代理时用 ws 包 + HttpsProxyAgent（CONNECT 隧道）；直连用全局 WebSocket
+      // 公共行情主机（data-stream.binance.vision）永远直连；其余走代理时用 ws 包 + HttpsProxyAgent（CONNECT 隧道）
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ws: any = this.proxyConfig.enabled && this.proxyConfig.url
+      const ws: any = this.proxyConfig.enabled && this.proxyConfig.url && !isDirectHost(this.buildUrl(base))
         ? new WS(this.buildUrl(base), { agent: new HttpsProxyAgent(this.proxyConfig.url) })
         : new WebSocket(this.buildUrl(base));
       this.ws = ws;
