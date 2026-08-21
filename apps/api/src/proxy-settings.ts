@@ -26,8 +26,8 @@ export class ProxySettings {
       this.config.mode = patch.mode;
     }
     if (patch.url !== undefined) {
-      const url = String(patch.url).trim();
-      this.config.url = url || undefined;
+      const raw = String(patch.url).trim();
+      this.config.url = raw && !/^https?:\/\//i.test(raw) ? 'http://' + raw : (raw || undefined);
     }
     // 运行时切换：直接以配置为准（不自动回读环境变量）
     this.config.enabled = this.config.mode !== 'off' && Boolean(this.config.url);

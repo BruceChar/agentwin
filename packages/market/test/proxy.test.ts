@@ -35,6 +35,13 @@ describe('resolveProxyConfig', () => {
     expect(c.enabled).toBe(true);
     expect(c.source).toBe('env');
   });
+
+  it('auto-prepends http:// when scheme missing', () => {
+    const c = resolveProxyConfig(env({ BINANCE_PROXY: 'on', BINANCE_PROXY_URL: '127.0.0.1:7897' }));
+    expect(c.url).toBe('http://127.0.0.1:7897');
+    const keep = resolveProxyConfig(env({ BINANCE_PROXY: 'on', BINANCE_PROXY_URL: 'socks5://127.0.0.1:1080' }));
+    expect(keep.url).toBe('socks5://127.0.0.1:1080');
+  });
 });
 
 describe('proxyToBinanceConnector', () => {

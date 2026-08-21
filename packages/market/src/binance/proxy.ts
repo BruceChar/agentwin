@@ -18,12 +18,21 @@ export interface ProxyConfig {
  * - BINANCE_PROXY=auto（默认）→ HTTPS_PROXY 存在则走，否则直连
  * - BINANCE_PROXY_URL   → 显式代理地址（如 http://127.0.0.1:7890）
  */
+/** 代理 URL 规范化：缺协议头时自动补 http://（避免用户漏写导致代理不可用） */
+export function normalizeProxyUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const t = url.trim();
+  if (!t) return undefined;
+  if (!/^https?:\/\//i.test(t) && !/^socks5?:\/\//i.test(t)) return 'http://' + t;
+  return t;
+}
+
 export function resolveProxyConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const mode = (env.BINANCE_PROXY ?? 'auto') as ProxyMode;
-  const explicit = env.BINANCE_PROXY_URL?.trim();
+  const explicit = normalizeProxyUrl(env.BINANCE_PROXY_URL);
   if (mode === 'off' || explicit === 'off') return { mode: 'off', enabled: false, source: 'off' };
   if (explicit) return { mode: mode === 'on' ? 'on' : 'on', url: explicit, enabled: true, source: 'explicit' };
-  const fromEnv = env.HTTPS_PROXY ?? env.https_proxy ?? env.HTTP_PROXY ?? env.http_proxy;
+  const fromEnv = normalizeProxyUrl(env.HTTPS_PROXY ?? env.https_proxy ?? env.HTTP_PROXY ?? env.http_proxy);
   if (mode === 'on' || mode === 'auto') {
     return fromEnv
       ? { mode, url: fromEnv, enabled: true, source: 'env' }
