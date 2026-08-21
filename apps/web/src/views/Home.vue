@@ -251,7 +251,7 @@ async function loadAll() {
     list = l;
     fills = fl;
     records.value = l.records;
-    recentFills.value = fl.trades.slice(-8).reverse();
+    recentFills.value = fl.trades.slice(0, 8); // listTrades 已按时间倒序（最新在前）
     eqPoints.value = detail.equityCurve ?? [];
     discData.value = l.records
       .filter((r) => r.disciplineScore !== undefined)

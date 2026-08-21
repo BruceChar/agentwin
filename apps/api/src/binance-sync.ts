@@ -179,7 +179,10 @@ export class BinanceAccountSync {
           report.futuresPositions++;
         }
         equityParts.push({ usdt: futures.totalWalletBalance + futures.totalUnrealizedProfit, note: 'U本位合约' });
-        await this.syncSymbolTrades(account.id, this.symbolsForSync([], futures.positions.map((p) => p.symbol), opts.symbols ?? []), limit, 'USDT_M', report, skipTrades);
+        // U本位合约：默认品种 + 当前持仓 + 通过资金流水枚举的已交易品种（覆盖未持仓的历史品种）
+        const usdtmSymbols = new Set<string>(this.symbolsForSync([], futures.positions.map((p) => p.symbol), opts.symbols ?? []));
+        for (const s of await this.futuresSymbolsFromIncome('USDT_M')) usdtmSymbols.add(s);
+        await this.syncSymbolTrades(account.id, [...usdtmSymbols], limit, 'USDT_M', report, skipTrades);
       } catch (e) {
         console.warn('[sync] usdt-m futures failed:', e instanceof Error ? e.message : String(e));
       }
@@ -198,12 +201,13 @@ export class BinanceAccountSync {
           report.futuresPositions++;
         }
         equityParts.push({ usdt: coinm.totalWalletBalance + coinm.totalUnrealizedProfit, note: '币本位合约(按计价币计)' });
-        // 币本位（COIN_M）只同步真实币本位持仓 symbol（BTCUSD_PERP 等）。
+        // 币本位（COIN_M）只同步真实币本位 symbol（持仓 + income 枚举的币本位品种）。
         // 注意：不能复用 symbolsForSync（会带入 USDT 本位品种如 SOLUSDT）——
         // dapi 对被污染/不可达的 symbol 可能返回异常数据，造成假成交。
-        const coinmSymbols = coinm.positions.map((p) => p.symbol);
-        if (Array.isArray(opts.symbols) && opts.symbols.length) coinmSymbols.push(...opts.symbols);
-        await this.syncSymbolTrades(account.id, coinmSymbols, limit, 'COIN_M', report, skipTrades);
+        const coinmSymbols = new Set<string>(coinm.positions.map((p) => p.symbol));
+        for (const s of await this.futuresSymbolsFromIncome('COIN_M')) coinmSymbols.add(s);
+        if (Array.isArray(opts.symbols) && opts.symbols.length) for (const s of opts.symbols) coinmSymbols.add(s);
+        await this.syncSymbolTrades(account.id, [...coinmSymbols], limit, 'COIN_M', report, skipTrades);
       } catch (e) {
         console.warn('[sync] coin-m futures failed:', e instanceof Error ? e.message : String(e));
       }
@@ -237,6 +241,24 @@ export class BinanceAccountSync {
   }
 
   /** 单个币种在指定市场的成交落库（幂等：id 冲突视为已同步） */
+  /** 通过合约资金流水（income）枚举账户交易过的合约品种（覆盖已平仓、未持仓的历史品种） */
+  private async futuresSymbolsFromIncome(market: 'USDT_M' | 'COIN_M'): Promise<string[]> {
+    const symbols = new Set<string>();
+    let from = 0;
+    try {
+      for (;;) {
+        const rows = await this.rest.income(market, { startTime: from, limit: 1000 });
+        if (!rows.length) break;
+        for (const r of rows) if (r.symbol) symbols.add(r.symbol);
+        if (rows.length < 1000) break;
+        from = Number(rows[rows.length - 1]!.time) + 1;
+      }
+    } catch (e) {
+      console.warn('[sync] income discovery failed (' + market + '):', e instanceof Error ? e.message : String(e));
+    }
+    return [...symbols];
+  }
+
   /** 同步一组品种的成交；skip=true 时跳过（清除过成交数据后暂停自动回灌） */
   private async syncSymbolTrades(accountId: string, symbols: string[], limit: number, market: Market, report: SyncReport, skip: boolean): Promise<void> {
     if (skip) return;

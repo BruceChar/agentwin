@@ -255,6 +255,16 @@ export class BinanceRest {
     };
   }
 
+  /** 合约资金流水（income）：不带 symbol，返回该账户全部合约收入/手续费/已实现盈亏记录（含 symbol 字段），用于枚举用户交易过的合约品种 */
+  async income(market: 'USDT_M' | 'COIN_M', opts: { startTime?: number; endTime?: number; limit?: number } = {}): Promise<{ symbol: string; income: number; incomeType: string; time: number }[]> {
+    const path = market === 'USDT_M' ? '/fapi/v1/income' : '/dapi/v1/income';
+    const params: Record<string, string | number | undefined> = {
+      startTime: opts.startTime, endTime: opts.endTime, limit: opts.limit ?? 1000,
+    };
+    return this.request<{ symbol: string; income: string; incomeType: string; time: number }[]>(market, 'GET', path, params, true)
+      .then((rows) => rows.map((r) => ({ symbol: r.symbol, income: parseFloat(r.income), incomeType: r.incomeType, time: r.time })));
+  }
+
   /** 我的成交（现货 /api/v3/myTrades；合约 /fapi/v1/userTrades / dapi/v1/userTrades；杠杆 /sapi/v1/margin/myTrades），按 symbol 查询 */
   async myTrades(market: Market, symbol: string, opts: { limit?: number; fromId?: number; startTime?: number; endTime?: number; isIsolated?: boolean } = {}): Promise<MyTradeRow[]> {
     let path: string;

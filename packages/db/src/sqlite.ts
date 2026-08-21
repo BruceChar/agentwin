@@ -267,7 +267,7 @@ export class SqliteStorage implements StorageAdapter {
     if (f.from !== undefined) { conds.push('traded_at >= ?'); params.push(f.from); }
     if (f.to !== undefined) { conds.push('traded_at <= ?'); params.push(f.to); }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-    let sql = `SELECT * FROM trades ${where} ORDER BY traded_at ASC`;
+    let sql = `SELECT * FROM trades ${where} ORDER BY traded_at DESC`;
     if (f.limit !== undefined) { sql += ' LIMIT ?'; params.push(f.limit); }
     const rows = this.db.prepare(sql).all(...params) as Row[];
     return rows.map((r) => ({

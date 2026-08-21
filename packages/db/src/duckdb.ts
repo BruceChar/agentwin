@@ -293,7 +293,7 @@ export class DuckdbStorage implements StorageAdapter {
     if (f.from !== undefined) { conds.push('traded_at >= ?'); params.push(f.from); }
     if (f.to !== undefined) { conds.push('traded_at <= ?'); params.push(f.to); }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-    let sql = `SELECT * FROM trades ${where} ORDER BY traded_at ASC`;
+    let sql = `SELECT * FROM trades ${where} ORDER BY traded_at DESC`;
     if (f.limit !== undefined) { sql += ' LIMIT ?'; params.push(f.limit); }
     const rows = await this.all(sql, ...params);
     return rows.map((r) => ({
