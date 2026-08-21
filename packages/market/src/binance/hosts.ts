@@ -5,6 +5,12 @@ export const SPOT_BASE = 'https://api.binance.com';
 export const SPOT_TESTNET_BASE = 'https://testnet.binance.vision';
 export const SPOT_DATA_API_BASE = 'https://data-api.binance.vision';
 export const FUTURES_BASE = 'https://fapi.binance.com';
+export const COINM_BASE = 'https://dapi.binance.com';
+
+/** 现货组：现货 / 全仓杠杆 / 逐仓杠杆 都走 api.binance.com（sapi/margin 接口） */
+export function isSpotGroup(market: Market): boolean {
+  return market === 'SPOT' || market === 'MARGIN' || market === 'MARGIN_ISOLATED';
+}
 
 export interface HostOptions {
   spotBaseUrl?: string;
@@ -30,7 +36,7 @@ export function dedupe(list: (string | undefined)[]): string[] {
 
 /** REST 候选主机：显式配置优先，随后官方主端点 + 备用公共行情端点 */
 export function restCandidatesFor(market: Market, opts: HostOptions = {}): string[] {
-  if (market === 'SPOT') {
+  if (isSpotGroup(market)) {
     return dedupe([
       opts.spotBaseUrl,
       process.env.BINANCE_SPOT_BASE_URL,
@@ -39,6 +45,9 @@ export function restCandidatesFor(market: Market, opts: HostOptions = {}): strin
       process.env.BINANCE_DATA_API_BASE_URL,
       SPOT_DATA_API_BASE,
     ]);
+  }
+  if (market === 'COIN_M') {
+    return dedupe([process.env.BINANCE_COINM_BASE_URL, COINM_BASE]);
   }
   return dedupe([
     opts.futuresBaseUrl,
@@ -51,7 +60,7 @@ export function restCandidatesFor(market: Market, opts: HostOptions = {}): strin
 /** 探测主机可用性（ping，4s 超时；要求 200 且响应为合法 JSON——202/空响应视为不可用） */
 export async function probeBase(base: string, market: Market, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis), dispatcher?: unknown): Promise<boolean> {
   try {
-    const path = market === 'SPOT' ? '/api/v3/ping' : '/fapi/v1/ping';
+    const path = isSpotGroup(market) ? '/api/v3/ping' : market === 'USDT_M' ? '/fapi/v1/ping' : '/dapi/v1/ping';
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 4000);
     try {
@@ -95,15 +104,18 @@ export const SIGNED_SPOT_CANDIDATES = [
   'https://api4.binance.com',
 ];
 
-/** 签名请求候选：显式配置的主端点优先，随后官方主域名 + api1-4 备用 */
+/** 签名请求候选：显式配置的主端点优先，随后官方主域名 + 备用域名 */
 export function signedCandidatesFor(market: Market, opts: HostOptions = {}): string[] {
-  if (market === 'SPOT') {
+  if (isSpotGroup(market)) {
     return dedupe([
       opts.spotBaseUrl,
       process.env.BINANCE_SPOT_BASE_URL,
       opts.testnet ? SPOT_TESTNET_BASE : SPOT_BASE,
       ...SIGNED_SPOT_CANDIDATES,
     ]);
+  }
+  if (market === 'COIN_M') {
+    return dedupe([process.env.BINANCE_COINM_BASE_URL, COINM_BASE]);
   }
   return dedupe([
     opts.futuresBaseUrl,

@@ -1,7 +1,19 @@
 // ================= 领域模型 =================
 // 全部使用 erasable TS（无 enum），与 Node 原生 type-stripping 兼容。
 
-export type Market = 'SPOT' | 'USDT_M';
+export type Market = 'SPOT' | 'USDT_M' | 'COIN_M' | 'MARGIN' | 'MARGIN_ISOLATED';
+
+/** 市场展示名（中文） */
+export const MARKET_LABELS: Record<Market, string> = {
+  SPOT: '现货',
+  USDT_M: 'U本位合约',
+  COIN_M: '币本位合约',
+  MARGIN: '全仓杠杆',
+  MARGIN_ISOLATED: '逐仓杠杆',
+};
+
+/** 真实账户对账涉及的市场列表 */
+export const REAL_ACCOUNT_MARKETS: Market[] = ['SPOT', 'MARGIN', 'MARGIN_ISOLATED', 'USDT_M', 'COIN_M'];
 export type OrderSide = 'BUY' | 'SELL';
 export type PositionSide = 'LONG' | 'SHORT';
 export type OrderType = 'MARKET' | 'LIMIT' | 'STOP_LOSS' | 'STOP_LOSS_LIMIT' | 'TAKE_PROFIT' | 'TAKE_PROFIT_LIMIT';
@@ -88,6 +100,7 @@ export interface MarkPrice {
 // ---------- 账户 / 持仓 ----------
 export interface Balance {
   accountId: string;
+  market: Market;
   asset: string;
   free: number;
   locked: number;

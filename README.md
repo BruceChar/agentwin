@@ -65,7 +65,7 @@ pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）
 ## 真实账户（只读对账）
 
 在 `.env` 配置 `BINANCE_API_KEY` / `BINANCE_API_SECRET` 后，系统会：
-- 启动时自动创建「真实」账户（`binance-real`）并**自动同步一次**：现货余额 + 合约钱包/持仓 + 最近成交（按余额币种 + 默认列表，每币种 100 条，幂等去重）；
+- 启动时自动创建「真实」账户（`binance-real`）并**自动同步一次**，覆盖 **5 个市场**：现货（SPOT）、全仓杠杆（MARGIN）、逐仓杠杆（MARGIN_ISOLATED，按交易对展示持仓）、U本位合约（USDT_M）、币本位合约（COIN_M）——余额/持仓/成交分别落库，幂等去重（每币种 200 条）；
 - 提供 `POST /api/binance/sync`（手动全量同步）、`GET /api/binance/account`（实时快照）、`GET /api/binance/trades?symbol=`（实时成交）、`GET /api/binance/orders`（当前挂单）、`GET /api/binance/status`（Key 配置与官方接口连通性）；
 - 看板「总览」可切换真实/模拟账户并点击「从币安同步」，「交易与盈亏」页可切换账户查看。
 

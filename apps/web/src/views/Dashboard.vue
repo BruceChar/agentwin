@@ -40,25 +40,34 @@
       </el-col>
       <el-col :span="8">
         <el-card shadow="never">
-          <template #header>资产余额</template>
-          <el-table :data="balances" size="small" max-height="300">
-            <el-table-column prop="asset" label="资产" width="90" />
-            <el-table-column prop="free" label="可用" />
-            <el-table-column prop="locked" label="锁定" width="90" />
+          <template #header>各市场概览</template>
+          <el-table :data="marketSummary" size="small" max-height="300">
+            <el-table-column label="市场"><template #default="{ row }">{{ row.label }}</template></el-table-column>
+            <el-table-column label="余额项" width="70"><template #default="{ row }">{{ row.balanceCount }}</template></el-table-column>
+            <el-table-column label="持仓" width="70"><template #default="{ row }">{{ row.positionCount }}</template></el-table-column>
           </el-table>
         </el-card>
       </el-col>
     </el-row>
     <el-card shadow="never" class="mt">
-      <template #header>当前持仓</template>
-      <el-table :data="positions" size="small">
-        <el-table-column prop="symbol" label="币种" />
-        <el-table-column prop="side" label="方向"><template #default="{ row }"><el-tag :type="row.side === 'LONG' ? 'danger' : 'success'" size="small">{{ row.side }}</el-tag></template></el-table-column>
-        <el-table-column prop="quantity" label="数量" />
-        <el-table-column prop="avgEntryPrice" label="均价" />
-        <el-table-column label="浮动盈亏"><template #default="{ row }"><span :class="row.unrealizedPnl >= 0 ? 'up' : 'down'">{{ fmt(row.unrealizedPnl) }}</span></template></el-table-column>
-      </el-table>
-      <el-empty v-if="!positions.length" description="暂无持仓" :image-size="60" />
+      <template #header>持仓与余额（按市场）</template>
+      <el-tabs v-model="activeMarket">
+        <el-tab-pane v-for="m in marketKeys" :key="m" :label="MARKET_LABELS[m]" :name="m">
+          <el-table :data="markets[m]?.positions ?? []" size="small" class="mb-sm">
+            <el-table-column prop="symbol" label="币种" />
+            <el-table-column prop="side" label="方向" width="80"><template #default="{ row }"><el-tag :type="row.side === 'LONG' ? 'danger' : 'success'" size="small">{{ row.side }}</el-tag></template></el-table-column>
+            <el-table-column prop="quantity" label="数量" />
+            <el-table-column prop="avgEntryPrice" label="均价" />
+            <el-table-column label="浮动盈亏"><template #default="{ row }"><span :class="row.unrealizedPnl >= 0 ? 'up' : 'down'">{{ fmt(row.unrealizedPnl) }}</span></template></el-table-column>
+          </el-table>
+          <el-table :data="markets[m]?.balances ?? []" size="small">
+            <el-table-column prop="asset" label="资产" width="110" />
+            <el-table-column prop="free" label="可用" />
+            <el-table-column prop="locked" label="锁定" width="100" />
+          </el-table>
+          <el-empty v-if="!markets[m]?.positions?.length && !markets[m]?.balances?.length" description="该市场无数据" :image-size="50" />
+        </el-tab-pane>
+      </el-tabs>
     </el-card>
   </div>
 </template>
@@ -67,7 +76,7 @@
 import { computed, onMounted, ref } from 'vue';
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
-import { api, type AccountSummary, type EquityPoint, type TradeAgg } from '../api.ts';
+import { api, MARKET_LABELS, type AccountSummary, type EquityPoint, type TradeAgg } from '../api.ts';
 
 const accounts = ref<AccountSummary[]>([]);
 const accountId = ref('');
@@ -76,7 +85,16 @@ const netPnl = ref(0);
 const winRate = ref(0);
 const totalTrades = ref(0);
 const positions = ref<AccountSummary['positions']>([]);
-const balances = ref<{ asset: string; free: number; locked: number }[]>([]);
+const balances = ref<{ market: string; asset: string; free: number; locked: number }[]>([]);
+const markets = ref<AccountSummary['markets']>({});
+const activeMarket = ref('SPOT');
+
+const marketKeys = ['SPOT', 'MARGIN', 'MARGIN_ISOLATED', 'USDT_M', 'COIN_M'];
+const marketSummary = computed(() => marketKeys.map((m) => ({
+  label: MARKET_LABELS[m] ?? m,
+  balanceCount: markets.value[m]?.balances?.length ?? 0,
+  positionCount: markets.value[m]?.positions?.length ?? 0,
+})));
 const curvePoints = ref<EquityPoint[]>([]);
 const syncing = ref(false);
 const proxyEnabled = ref(false);
@@ -153,6 +171,12 @@ async function load() {
   totalTrades.value = cur.totalTrades;
   positions.value = cur.positions;
   balances.value = cur.balances;
+  markets.value = cur.markets ?? {};
+  if (cur.markets?.['USDT_M']?.positions?.length) activeMarket.value = 'USDT_M';
+  else if (cur.markets?.['MARGIN_ISOLATED']?.positions?.length) activeMarket.value = 'MARGIN_ISOLATED';
+  else if (cur.markets?.['COIN_M']?.positions?.length) activeMarket.value = 'COIN_M';
+  else if (cur.markets?.['MARGIN']?.balances?.length) activeMarket.value = 'MARGIN';
+  else activeMarket.value = 'SPOT';
   const detail = await api.get<{ equityCurve: EquityPoint[] }>('/accounts/' + accountId.value);
   curvePoints.value = detail.equityCurve;
   renderCurve(detail.equityCurve);

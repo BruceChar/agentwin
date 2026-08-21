@@ -7,6 +7,7 @@ export interface Migration {
 }
 
 export const MIGRATIONS: Migration[] = [
+  
   {
     version: 1,
     sql: `
@@ -191,6 +192,26 @@ CREATE TABLE IF NOT EXISTS _migrations (
   version BIGINT PRIMARY KEY,
   applied_at BIGINT NOT NULL
 );
+`,
+  },
+{
+    version: 2,
+    sql: `
+-- 余额按市场区分（现货/杠杆/合约的钱包是分开的）
+CREATE TABLE IF NOT EXISTS balances_new (
+  account_id TEXT NOT NULL,
+  market TEXT NOT NULL DEFAULT 'SPOT',
+  asset TEXT NOT NULL,
+  free DOUBLE NOT NULL,
+  locked DOUBLE NOT NULL DEFAULT 0,
+  updated_at BIGINT NOT NULL,
+  PRIMARY KEY (account_id, market, asset)
+);
+INSERT OR IGNORE INTO balances_new (account_id, market, asset, free, locked, updated_at)
+  SELECT account_id, 'SPOT', asset, free, locked, updated_at FROM balances;
+DROP TABLE balances;
+ALTER TABLE balances_new RENAME TO balances;
+CREATE INDEX IF NOT EXISTS idx_balances_account ON balances(account_id, market);
 `,
   },
 ];

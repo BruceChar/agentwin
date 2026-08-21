@@ -86,57 +86,120 @@ export class BinanceAccountSync {
     return { configured, hasKey, hasSecret, missing, reachable, message, spotHost: 'api.binance.com', futuresHost: 'fapi.binance.com', proxy: this.rest.proxy, lastSync };
   }
 
-  /** 全量同步：余额 → 合约持仓 → 成交 → 权益快照 */
+  /** 全量同步：现货 + 全仓杠杆 + 逐仓杠杆 + U本位 + 币本位（余额/持仓/成交/权益） */
   async syncAll(opts: { symbols?: string[]; limitPerSymbol?: number } = {}): Promise<SyncReport> {
     const account = await this.ensureRealAccount();
     const report: SyncReport = {
       ok: false, accountId: account.id, balancesUpserted: 0, futuresPositions: 0,
       tradesSynced: 0, tradesSkipped: 0, equityAppended: false, at: Date.now(),
     };
+    const limit = opts.limitPerSymbol ?? 200;
+    const equityParts: { usdt: number; note: string }[] = [];
     try {
+      // ---------- 1) 现货 ----------
       const spot = await this.rest.spotAccount();
-      // 合并现货 + 合约钱包余额（同一资产两市场合并展示，如 USDT）
-      const merged = new Map<string, { free: number; locked: number }>();
       for (const b of spot.balances) {
-        if (b.free > 0 || b.locked > 0) merged.set(b.asset, { free: b.free, locked: b.locked });
+        if (b.free > 0 || b.locked > 0) {
+          await this.storage.setBalance(account.id, b.asset, b.free, b.locked, 'SPOT');
+          report.balancesUpserted++;
+        }
+      }
+      for (const symbol of this.symbolsForSync(spot.balances.map((b) => b.asset), [], opts.symbols ?? [])) {
+        const { synced, skipped } = await this.syncTradesForSymbol(account.id, symbol, limit, 'SPOT');
+        report.tradesSynced += synced;
+        report.tradesSkipped += skipped;
       }
 
+      // ---------- 2) 全仓杠杆 ----------
+      try {
+        const margin = await this.rest.marginAccount();
+        for (const a of margin.assets) {
+          if (a.netAsset > 0 || a.free > 0) {
+            await this.storage.setBalance(account.id, a.asset, a.free, a.locked, 'MARGIN');
+            report.balancesUpserted++;
+          }
+        }
+        equityParts.push({ usdt: margin.totalNetAssetOfQuoteAsset, note: '全仓杠杆' });
+        for (const symbol of this.symbolsForSync(margin.assets.map((a) => a.asset), [], opts.symbols ?? [])) {
+          const { synced, skipped } = await this.syncTradesForSymbol(account.id, symbol, limit, 'MARGIN');
+          report.tradesSynced += synced;
+          report.tradesSkipped += skipped;
+        }
+      } catch (e) {
+        console.warn('[sync] margin account failed:', e instanceof Error ? e.message : String(e));
+      }
+
+      // ---------- 3) 逐仓杠杆（按交易对） ----------
+      try {
+        const isolated = await this.rest.marginIsolatedAccount();
+        for (const p of isolated) {
+          const base = p.baseAsset;
+          if (base.netAsset > 0 || base.free > 0) {
+            await this.storage.upsertPosition({
+              accountId: account.id, symbol: p.symbol, market: 'MARGIN_ISOLATED', side: 'LONG',
+              quantity: base.free + base.locked, avgEntryPrice: 0,
+              unrealizedPnl: 0, realizedPnl: 0, updatedAt: Date.now(),
+            });
+            report.futuresPositions++;
+          }
+        }
+        for (const pair of isolated.map((p) => p.symbol)) {
+          const { synced, skipped } = await this.syncTradesForSymbol(account.id, pair, limit, 'MARGIN_ISOLATED');
+          report.tradesSynced += synced;
+          report.tradesSkipped += skipped;
+        }
+      } catch (e) {
+        console.warn('[sync] isolated margin failed:', e instanceof Error ? e.message : String(e));
+      }
+
+      // ---------- 4) U本位合约 ----------
       let futures: FuturesAccountInfo | null = null;
       try {
         futures = await this.rest.futuresAccount();
         for (const b of futures.balances) {
           if (b.walletBalance > 0) {
-            const cur = merged.get(b.asset) ?? { free: 0, locked: 0 };
-            merged.set(b.asset, { free: cur.free + b.walletBalance, locked: cur.locked });
+            await this.storage.setBalance(account.id, b.asset, b.walletBalance, 0, 'USDT_M');
+            report.balancesUpserted++;
           }
         }
         for (const p of futures.positions) {
-          const side = p.positionAmt >= 0 ? 'LONG' : 'SHORT';
-          await this.storage.upsertPosition({
-            accountId: account.id, symbol: p.symbol, market: 'USDT_M', side,
-            quantity: Math.abs(p.positionAmt), avgEntryPrice: p.entryPrice,
-            unrealizedPnl: p.unrealizedProfit, realizedPnl: p.realizedProfit, updatedAt: Date.now(),
-          });
+          await this.upsertFuturesPosition(account.id, p, 'USDT_M');
           report.futuresPositions++;
         }
+        equityParts.push({ usdt: futures.totalWalletBalance + futures.totalUnrealizedProfit, note: 'U本位合约' });
+        for (const symbol of this.symbolsForSync([], futures.positions.map((p) => p.symbol), opts.symbols ?? [])) {
+          const { synced, skipped } = await this.syncTradesForSymbol(account.id, symbol, limit, 'USDT_M');
+          report.tradesSynced += synced;
+          report.tradesSkipped += skipped;
+        }
       } catch (e) {
-        // 合约接口不可达不影响现货同步
-        console.warn('[sync] futures account failed:', e instanceof Error ? e.message : String(e));
+        console.warn('[sync] usdt-m futures failed:', e instanceof Error ? e.message : String(e));
       }
 
-      for (const [asset, b] of merged) {
-        await this.storage.setBalance(account.id, asset, b.free, b.locked);
-        report.balancesUpserted++;
+      // ---------- 5) 币本位合约 ----------
+      try {
+        const coinm = await this.rest.coinmAccount();
+        for (const b of coinm.assets) {
+          if (b.walletBalance > 0) {
+            await this.storage.setBalance(account.id, b.asset, b.walletBalance, 0, 'COIN_M');
+            report.balancesUpserted++;
+          }
+        }
+        for (const p of coinm.positions) {
+          await this.upsertFuturesPosition(account.id, p, 'COIN_M');
+          report.futuresPositions++;
+        }
+        equityParts.push({ usdt: coinm.totalWalletBalance + coinm.totalUnrealizedProfit, note: '币本位合约(按计价币计)' });
+        for (const symbol of this.symbolsForSync(coinm.assets.map((a) => a.asset), coinm.positions.map((p) => p.symbol), opts.symbols ?? [])) {
+          const { synced, skipped } = await this.syncTradesForSymbol(account.id, symbol, limit, 'COIN_M');
+          report.tradesSynced += synced;
+          report.tradesSkipped += skipped;
+        }
+      } catch (e) {
+        console.warn('[sync] coin-m futures failed:', e instanceof Error ? e.message : String(e));
       }
 
-      const symbols = this.symbolsForSync(spot.balances.map((b) => b.asset), futures?.positions.map((p) => p.symbol) ?? [], opts.symbols ?? []);
-      for (const symbol of symbols) {
-        const { synced, skipped } = await this.syncTradesForSymbol(account.id, symbol, opts.limitPerSymbol ?? 100);
-        report.tradesSynced += synced;
-        report.tradesSkipped += skipped;
-      }
-
-      await this.appendEquity(account.id, spot.balances, futures);
+      await this.appendEquity(account.id, spot.balances, futures, equityParts);
       report.equityAppended = true;
       report.ok = true;
     } catch (e) {
@@ -144,6 +207,15 @@ export class BinanceAccountSync {
     }
     this.lastReport = report;
     return report;
+  }
+
+  private async upsertFuturesPosition(accountId: string, p: { symbol: string; positionAmt: number; entryPrice: number; markPrice: number; unrealizedProfit: number; realizedProfit: number }, market: 'USDT_M' | 'COIN_M'): Promise<void> {
+    const side = p.positionAmt >= 0 ? 'LONG' : 'SHORT';
+    await this.storage.upsertPosition({
+      accountId, symbol: p.symbol, market, side,
+      quantity: Math.abs(p.positionAmt), avgEntryPrice: p.entryPrice,
+      unrealizedPnl: p.unrealizedProfit, realizedPnl: p.realizedProfit, updatedAt: Date.now(),
+    });
   }
 
   /** 同步用币种列表：默认 + 余额币种 + 合约持仓币种 + 显式指定（最多 30 个，避免请求过多） */
@@ -155,61 +227,60 @@ export class BinanceAccountSync {
     return [...set].slice(0, 30);
   }
 
-  /** 单个币种：现货 + 合约两市场的成交都拉取，落库（幂等：id 冲突视为已同步） */
-  private async syncTradesForSymbol(accountId: string, symbol: string, limit: number): Promise<{ synced: number; skipped: number }> {
+  /** 单个币种在指定市场的成交落库（幂等：id 冲突视为已同步） */
+  private async syncTradesForSymbol(accountId: string, symbol: string, limit: number, market: Market): Promise<{ synced: number; skipped: number }> {
     let synced = 0, skipped = 0;
-    for (const market of ['SPOT', 'USDT_M'] as Market[]) {
-      let rows: MyTradeRow[] = [];
+    let rows: MyTradeRow[] = [];
+    try {
+      rows = await this.rest.myTrades(market, symbol, { limit });
+    } catch {
+      return { synced, skipped }; // 该市场无此币种或无权限
+    }
+    for (const t of rows) {
+      const trade: Trade = {
+        id: 'real-' + symbol + '-' + market + '-' + t.id,
+        orderId: String(t.orderId), accountId,
+        symbol, market, side: t.side, qty: t.qty, price: t.price,
+        fee: t.commission, feeAsset: t.commissionAsset, tradedAt: t.time,
+        pnl: t.realizedPnl, realizedPnl: t.realizedPnl,
+        meta: t.positionSide ? { positionSide: t.positionSide } : undefined,
+      };
       try {
-        rows = await this.rest.myTrades(market, symbol, { limit });
+        await this.storage.createTrade(trade);
+        synced++;
       } catch {
-        continue; // 该市场无此币种或无权限
-      }
-      for (const t of rows) {
-        const trade: Trade = {
-          id: 'real-' + symbol + '-' + market + '-' + t.id,
-          orderId: String(t.orderId), accountId,
-          symbol, market, side: t.side, qty: t.qty, price: t.price,
-          fee: t.commission, feeAsset: t.commissionAsset, tradedAt: t.time,
-          pnl: t.realizedPnl, realizedPnl: t.realizedPnl,
-          meta: t.positionSide ? { positionSide: t.positionSide } : undefined,
-        };
-        try {
-          await this.storage.createTrade(trade);
-          synced++;
-        } catch {
-          skipped++; // 主键冲突 = 已同步过
-        }
+        skipped++; // 主键冲突 = 已同步过
       }
     }
     return { synced, skipped };
   }
 
-  /** 权益快照：现货 = Σ余额×最新价；合约 = 账户字段（totalWalletBalance + 未实现盈亏） */
-  private async appendEquity(accountId: string, spotBalances: SpotAccountInfo['balances'], futures: FuturesAccountInfo | null): Promise<void> {
+  /** 权益快照：现货 = Σ余额×最新价；杠杆/合约取账户字段；币本位按计价币估算 */
+  private async appendEquity(
+    accountId: string,
+    spotBalances: SpotAccountInfo['balances'],
+    futures: FuturesAccountInfo | null,
+    equityParts: { usdt: number; note: string }[] = [],
+  ): Promise<void> {
     let spotEquity = 0;
     const usdt = spotBalances.find((b) => b.asset === 'USDT');
     if (usdt) spotEquity += usdt.free;
     const priced = spotBalances.filter((b) => b.free > 0 && b.asset !== 'USDT');
-    if (priced.length > 0) {
-      try {
-        const tickers = await this.marketData.getTickers('SPOT');
-        const priceMap = new Map(tickers.map((t) => [t.symbol, t.lastPrice]));
-        for (const b of priced) {
-          const px = priceMap.get(b.asset + 'USDT');
-          if (px) spotEquity += b.free * px;
-        }
-      } catch {
-        // 取不到价格时只按 USDT 计
-      }
+    const tickers = priced.length > 0 ? await this.marketData.getTickers('SPOT').catch(() => []) : [];
+    const priceMap = new Map(tickers.map((t) => [t.symbol, t.lastPrice]));
+    for (const b of priced) {
+      const px = priceMap.get(b.asset + 'USDT');
+      if (px) spotEquity += b.free * px;
     }
-    const futuresWallet = futures?.totalWalletBalance ?? 0;
-    const futuresUnrealized = futures?.totalUnrealizedProfit ?? 0;
+    const futuresEquity = futures ? futures.totalWalletBalance + futures.totalUnrealizedProfit : 0;
+    const unrealized = (futures?.totalUnrealizedProfit ?? 0) + equityParts.reduce((a, p) => a + (p.usdt > 0 ? 0 : 0), 0);
+    let total = spotEquity + futuresEquity;
+    for (const p of equityParts) total += p.usdt;
     await this.storage.appendEquity({
       accountId, timestamp: Date.now(),
-      equity: spotEquity + futuresWallet + futuresUnrealized,
-      cash: spotEquity + futuresWallet,
-      unrealizedPnl: futuresUnrealized,
+      equity: total,
+      cash: spotEquity + (futures?.totalWalletBalance ?? 0),
+      unrealizedPnl: futures?.totalUnrealizedProfit ?? 0,
     });
   }
 }

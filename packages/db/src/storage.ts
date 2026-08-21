@@ -66,8 +66,9 @@ export interface StorageAdapter {
   createAccount(a: NewAccount): Promise<Account>;
   getAccount(id: string): Promise<Account | null>;
   listAccounts(): Promise<Account[]>;
-  setBalance(accountId: string, asset: string, free: number, locked?: number): Promise<void>;
-  getBalances(accountId: string): Promise<Balance[]>;
+  /** market 缺省为 SPOT（兼容旧调用） */
+  setBalance(accountId: string, asset: string, free: number, locked?: number, market?: Market): Promise<void>;
+  getBalances(accountId: string, market?: Market): Promise<Balance[]>;
 
   // ---------- K 线 ----------
   upsertKlines(rows: (Candle & CandleKey)[]): Promise<number>;

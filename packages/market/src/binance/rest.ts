@@ -1,7 +1,7 @@
 import type { AggTrade, Candle, Interval, Market, MarkPrice, SymbolInfo, Ticker } from '@agentwin/shared';
 import { buildQueryString, buildSignedQuery } from './sign.ts';
 import type { RawAggTrade, RawExchangeInfo, RawKlineRow, RawMarkPrice, RawSymbolFilter, RawTicker } from './types.ts';
-import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, pickReachableBase, pickSignedBase as pickSignedBaseHost, probeBase, type HostOptions } from './hosts.ts';
+import { FUTURES_BASE, SPOT_BASE, SPOT_TESTNET_BASE, isSpotGroup, pickReachableBase, pickSignedBase as pickSignedBaseHost, probeBase, type HostOptions } from './hosts.ts';
 import { createProxiedFetch, getProxyDispatcher, isDirectHost, isGeoRestricted, geoRestrictedHint, resolveProxyConfig, type ProxyConfig } from './proxy.ts';
 
 // 常量与错误类型由 hosts.ts 提供，这里统一再导出（兼容既有引用）
@@ -255,12 +255,19 @@ export class BinanceRest {
     };
   }
 
-  /** 我的成交（现货 /api/v3/myTrades；合约 /fapi/v1/userTrades），按 symbol 查询 */
-  async myTrades(market: Market, symbol: string, opts: { limit?: number; fromId?: number } = {}): Promise<MyTradeRow[]> {
-    const raw = await this.request<RawMyTrade[]>(
-      market, 'GET', market === 'SPOT' ? '/api/v3/myTrades' : '/fapi/v1/userTrades',
-      { symbol, limit: opts.limit ?? 100, fromId: opts.fromId }, true,
-    );
+  /** 我的成交（现货 /api/v3/myTrades；合约 /fapi/v1/userTrades / dapi/v1/userTrades；杠杆 /sapi/v1/margin/myTrades），按 symbol 查询 */
+  async myTrades(market: Market, symbol: string, opts: { limit?: number; fromId?: number; isIsolated?: boolean } = {}): Promise<MyTradeRow[]> {
+    let path: string;
+    const params: Record<string, string | number | boolean | undefined> = { symbol, limit: opts.limit ?? 100, fromId: opts.fromId };
+    if (market === 'MARGIN' || market === 'MARGIN_ISOLATED') {
+      path = '/sapi/v1/margin/myTrades';
+      if (market === 'MARGIN_ISOLATED' || opts.isIsolated) params['isIsolated'] = 'TRUE';
+    } else if (market === 'COIN_M') {
+      path = '/dapi/v1/userTrades';
+    } else {
+      path = market === 'SPOT' ? '/api/v3/myTrades' : '/fapi/v1/userTrades';
+    }
+    const raw = await this.request<RawMyTrade[]>(market, 'GET', path, params, true);
     return raw.map((t) => ({
       id: t.id, orderId: t.orderId, symbol: t.symbol, side: t.side as 'BUY' | 'SELL',
       price: parseFloat(t.price), qty: parseFloat(t.qty),
@@ -268,6 +275,53 @@ export class BinanceRest {
       realizedPnl: t.realizedPnl !== undefined ? parseFloat(t.realizedPnl) : undefined,
       positionSide: t.positionSide,
     }));
+  }
+
+  /** 全仓杠杆账户（sapi /margin/account） */
+  async marginAccount(): Promise<MarginAccountInfo> {
+    const raw = await this.request<{
+      totalNetAssetOfQuoteAsset?: string;
+      userAssets?: { asset: string; free: string; locked: string; netAsset: string }[];
+    }>('MARGIN', 'GET', '/sapi/v1/margin/account', { recvWindow: 10000 }, true);
+    return {
+      totalNetAssetOfQuoteAsset: parseFloat(raw.totalNetAssetOfQuoteAsset ?? '0'),
+      assets: (raw.userAssets ?? []).map((a) => ({
+        asset: a.asset, free: parseFloat(a.free), locked: parseFloat(a.locked), netAsset: parseFloat(a.netAsset),
+      })),
+    };
+  }
+
+  /** 逐仓杠杆账户（sapi /margin/isolated/account）：每对 base/quote 资产 */
+  async marginIsolatedAccount(): Promise<MarginIsolatedAsset[]> {
+    const raw = await this.request<{ assets?: MarginIsolatedAssetRaw[] }>('MARGIN_ISOLATED', 'GET', '/sapi/v1/margin/isolated/account', { recvWindow: 10000 }, true);
+    return (raw.assets ?? []).map((a) => ({
+      symbol: a.symbol,
+      baseAsset: { asset: a.baseAsset.asset, free: parseFloat(a.baseAsset.free), locked: parseFloat(a.baseAsset.locked), netAsset: parseFloat(a.baseAsset.netAsset) },
+      quoteAsset: { asset: a.quoteAsset.asset, free: parseFloat(a.quoteAsset.free), locked: parseFloat(a.quoteAsset.locked), netAsset: parseFloat(a.quoteAsset.netAsset) },
+    }));
+  }
+
+  /** 币本位合约账户（dapi /account） */
+  async coinmAccount(): Promise<CoinmAccountInfo> {
+    const raw = await this.request<{
+      assets?: { asset: string; walletBalance: string; unrealizedProfit: string; availableBalance: string }[];
+      positions?: { symbol: string; positionAmt: string; entryPrice: string; markPrice: string; unrealizedProfit: string; realizedProfit: string }[];
+      totalWalletBalance?: string;
+      totalUnrealizedProfit?: string;
+    }>('COIN_M', 'GET', '/dapi/v1/account', { recvWindow: 10000 }, true);
+    return {
+      assets: (raw.assets ?? []).map((a) => ({
+        asset: a.asset, walletBalance: parseFloat(a.walletBalance), unrealizedProfit: parseFloat(a.unrealizedProfit), availableBalance: parseFloat(a.availableBalance),
+      })),
+      positions: (raw.positions ?? [])
+        .filter((p) => parseFloat(p.positionAmt) !== 0)
+        .map((p) => ({
+          symbol: p.symbol, positionAmt: parseFloat(p.positionAmt), entryPrice: parseFloat(p.entryPrice),
+          markPrice: parseFloat(p.markPrice), unrealizedProfit: parseFloat(p.unrealizedProfit), realizedProfit: parseFloat(p.realizedProfit),
+        })),
+      totalWalletBalance: parseFloat(raw.totalWalletBalance ?? '0'),
+      totalUnrealizedProfit: parseFloat(raw.totalUnrealizedProfit ?? '0'),
+    };
   }
 
   /** 当前挂单（现货 /api/v3/openOrders；合约 /fapi/v1/openOrders） */
@@ -301,6 +355,29 @@ export class BinanceRest {
 // ---------- 私有接口类型 ----------
 export interface SpotAccountInfo {
   balances: { asset: string; free: number; locked: number }[];
+}
+export interface MarginAccountInfo {
+  totalNetAssetOfQuoteAsset: number;
+  assets: { asset: string; free: number; locked: number; netAsset: number }[];
+}
+export interface MarginIsolatedAsset {
+  symbol: string;
+  baseAsset: { asset: string; free: number; locked: number; netAsset: number };
+  quoteAsset: { asset: string; free: number; locked: number; netAsset: number };
+}
+interface MarginIsolatedAssetRaw {
+  symbol: string;
+  baseAsset: { asset: string; free: string; locked: string; netAsset: string };
+  quoteAsset: { asset: string; free: string; locked: string; netAsset: string };
+}
+export interface CoinmAccountInfo {
+  assets: { asset: string; walletBalance: number; unrealizedProfit: number; availableBalance: number }[];
+  positions: {
+    symbol: string; positionAmt: number; entryPrice: number; markPrice: number;
+    unrealizedProfit: number; realizedProfit: number;
+  }[];
+  totalWalletBalance: number;
+  totalUnrealizedProfit: number;
 }
 export interface FuturesAccountInfo {
   balances: { asset: string; walletBalance: number; availableBalance: number }[];

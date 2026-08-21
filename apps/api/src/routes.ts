@@ -13,6 +13,17 @@ interface Body {
   [key: string]: unknown;
 }
 
+function groupByMarket(balances: { market: string; asset: string; free: number; locked: number }[], positions: { market: string; symbol: string; side: string; quantity: number; avgEntryPrice: number; unrealizedPnl: number }[]): Record<string, object> {
+  const out: Record<string, object> = {};
+  for (const m of ['SPOT', 'MARGIN', 'MARGIN_ISOLATED', 'USDT_M', 'COIN_M']) {
+    out[m] = {
+      balances: balances.filter((b) => b.market === m),
+      positions: positions.filter((p) => p.market === m),
+    };
+  }
+  return out;
+}
+
 function num(v: unknown, dflt: number): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : dflt;
@@ -75,7 +86,6 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   // ---------------- 账户 ----------------
   app.get('/api/accounts', async () => {
     const accounts = await storage.listAccounts();
-    console.log('accounts:', accounts)
     const out = [];
     for (const a of accounts) {
       const balances = await storage.getBalances(a.id);
@@ -84,6 +94,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
       const agg = await storage.tradeAggregates({ accountId: a.id });
       out.push({
         ...a, balances, positions,
+        markets: groupByMarket(balances, positions),
         equity: curve.length > 0 ? curve[curve.length - 1]!.equity : null,
         totalTrades: agg.totalTrades, netPnl: agg.netPnl, winRate: agg.winRate,
       });
@@ -104,14 +115,15 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
 
   app.get('/api/accounts/:id', async (req) => {
     const id = str((req.params as Body)['id']);
+    const q = req.query as Body;
     const account = await storage.getAccount(id);
     if (!account) return app.httpErrors.notFound('account not found');
     const balances = await storage.getBalances(id);
     const positions = await storage.getPositions(id);
     const curve = await storage.getEquityCurve(id);
     const agg = await storage.tradeAggregates({ accountId: id });
-    const trades = await storage.listTrades({ accountId: id, limit: 50 });
-    return { account, balances, positions, equityCurve: curve, aggregates: agg, recentTrades: trades };
+    const trades = await storage.listTrades({ accountId: id, market: q['market'] !== undefined ? str(q['market']) as Market : undefined, limit: num(q['limit'], 50) });
+    return { account, balances, positions, markets: groupByMarket(balances, positions), equityCurve: curve, aggregates: agg, recentTrades: trades };
   });
 
   // ---------------- 策略 ----------------
@@ -303,12 +315,18 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   // ---------------- 交易 & 盈亏 ----------------
   app.get('/api/trades', async (req) => {
     const q = req.query as Body;
-    return { trades: await storage.listTrades({ limit: num(q['limit'], 100) }) };
+    return { trades: await storage.listTrades({
+      limit: num(q['limit'], 200),
+      market: q['market'] !== undefined ? str(q['market']) as Market : undefined,
+    }) };
   });
 
   app.get('/api/pnl', async (req) => {
     const q = req.query as Body;
-    const agg = await storage.tradeAggregates({ accountId: q['accountId'] !== undefined ? str(q['accountId']) : undefined });
+    const agg = await storage.tradeAggregates({
+      accountId: q['accountId'] !== undefined ? str(q['accountId']) : undefined,
+      market: q['market'] !== undefined ? str(q['market']) as Market : undefined,
+    });
     return agg;
   });
 

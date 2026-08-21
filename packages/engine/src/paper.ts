@@ -102,7 +102,7 @@ export class PaperTradingEngine {
     if (config) this.params = normalizeParams(this.strategy, config.parameters);
 
     // 恢复组合：现金 + 持仓
-    const bals = await storage.getBalances(o.accountId);
+    const bals = await storage.getBalances(o.accountId, o.market);
     const usdt = bals.find((b) => b.asset === 'USDT');
     const cash = usdt?.free ?? this.opts.initialCapital ?? 10_000;
     this.portfolio = new SimulatedPortfolio(cash, o.market, this.opts.feeRate, this.opts.slippageBps);
@@ -286,7 +286,7 @@ export class PaperTradingEngine {
     } else {
       await storage.deletePosition(o.accountId, o.symbol, o.market);
     }
-    await storage.setBalance(o.accountId, 'USDT', this.portfolio.cash, 0);
+    await storage.setBalance(o.accountId, 'USDT', this.portfolio.cash, 0, o.market);
   }
 
   private sizing(sizePct: number, price: number, _side: 'LONG' | 'SHORT'): number {
@@ -328,7 +328,7 @@ export class PaperTradingEngine {
     const amount = pos.side === 'LONG' ? -notional * rate : notional * rate;
     const { storage } = this.deps;
     this.portfolio.cashDelta(amount);
-    await storage.setBalance(this.opts.accountId, 'USDT', this.portfolio.cash, 0);
+    await storage.setBalance(this.opts.accountId, 'USDT', this.portfolio.cash, 0, this.opts.market);
     this.deps.onEvent?.({
       type: 'funding', symbol: this.opts.symbol, fundingRate: rate,
       amount, nextFundingTime: mp.nextFundingTime,
@@ -347,7 +347,7 @@ export class PaperTradingEngine {
     for (const p of this.portfolio.positions) {
       await storage.upsertPosition({ ...p, accountId: this.opts.accountId });
     }
-    await storage.setBalance(this.opts.accountId, 'USDT', this.portfolio.cash, 0);
+    await storage.setBalance(this.opts.accountId, 'USDT', this.portfolio.cash, 0, this.opts.market);
     this.deps.onEvent?.({ type: 'equity', equity: this.portfolio.equity, cash: this.portfolio.cash, timestamp: Date.now() });
   }
 

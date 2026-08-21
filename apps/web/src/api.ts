@@ -32,10 +32,18 @@ export interface TradeAgg {
   netPnl: number; grossProfit: number; grossLoss: number; profitFactor: number; feesPaid: number;
 }
 export interface AccountSummary {
-  id: string; name: string; type: string; balances: { asset: string; free: number; locked: number }[];
-  positions: { symbol: string; side: string; quantity: number; avgEntryPrice: number; unrealizedPnl: number }[];
+  id: string; name: string; type: string; balances: { market: string; asset: string; free: number; locked: number }[];
+  positions: { symbol: string; market: string; side: string; quantity: number; avgEntryPrice: number; unrealizedPnl: number }[];
+  markets: Record<string, {
+    balances: { asset: string; free: number; locked: number }[];
+    positions: { symbol: string; side: string; quantity: number; avgEntryPrice: number; unrealizedPnl: number }[];
+  }>;
   equity: number | null; totalTrades: number; netPnl: number; winRate: number;
 }
+
+export const MARKET_LABELS: Record<string, string> = {
+  SPOT: '现货', MARGIN: '全仓杠杆', MARGIN_ISOLATED: '逐仓杠杆', USDT_M: 'U本位合约', COIN_M: '币本位合约',
+};
 export interface StrategyMeta { id: string; name: string; description: string; paramSpecs: { name: string; default: number | string | boolean; min?: number; max?: number; step?: number }[] }
 export interface StrategyConfig {
   id: string; name: string; description?: string; market: string; symbol: string; interval: string;

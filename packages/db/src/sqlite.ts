@@ -97,17 +97,19 @@ export class SqliteStorage implements StorageAdapter {
     }));
   }
 
-  async setBalance(accountId: string, asset: string, free: number, locked = 0): Promise<void> {
+  async setBalance(accountId: string, asset: string, free: number, locked = 0, market: Market = 'SPOT'): Promise<void> {
     this.db.prepare(
-      `INSERT INTO balances (account_id, asset, free, locked, updated_at) VALUES (?,?,?,?,?)
-       ON CONFLICT(account_id, asset) DO UPDATE SET free=excluded.free, locked=excluded.locked, updated_at=excluded.updated_at`,
-    ).run(accountId, asset, free, locked, Date.now());
+      `INSERT INTO balances (account_id, market, asset, free, locked, updated_at) VALUES (?,?,?,?,?,?)
+       ON CONFLICT(account_id, market, asset) DO UPDATE SET free=excluded.free, locked=excluded.locked, updated_at=excluded.updated_at`,
+    ).run(accountId, market, asset, free, locked, Date.now());
   }
 
-  async getBalances(accountId: string): Promise<Balance[]> {
-    const rows = this.db.prepare('SELECT * FROM balances WHERE account_id = ? ORDER BY asset').all(accountId) as Row[];
+  async getBalances(accountId: string, market?: Market): Promise<Balance[]> {
+    const rows = market
+      ? this.db.prepare('SELECT * FROM balances WHERE account_id = ? AND market = ? ORDER BY asset').all(accountId, market) as Row[]
+      : this.db.prepare('SELECT * FROM balances WHERE account_id = ? ORDER BY market, asset').all(accountId) as Row[];
     return rows.map((r) => ({
-      accountId, asset: String(r.asset), free: Number(r.free), locked: Number(r.locked),
+      accountId, market: String(r.market) as Market, asset: String(r.asset), free: Number(r.free), locked: Number(r.locked),
       total: Number(r.free) + Number(r.locked),
     }));
   }
