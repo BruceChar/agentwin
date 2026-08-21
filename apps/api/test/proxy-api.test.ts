@@ -12,6 +12,7 @@ describe('runtime proxy endpoints', () => {
     handle = await buildApp({
       host: '127.0.0.1', port: 0, dbEngine: 'sqlite', dbPath: ':memory:',
       llmProvider: 'deepseek', llmModel: 'deepseek-v4-flash',
+      paperEnabled: true,
       paperInitialCapital: 10_000, paperTakerFeeRate: 0.001, paperSlippageBps: 2,
     });
   });

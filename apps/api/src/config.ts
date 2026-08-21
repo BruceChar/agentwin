@@ -5,6 +5,8 @@ export interface AppConfig {
   dbPath: string;
   llmProvider: string;
   llmModel: string;
+  /** 是否启用模拟（paper/mock）账户；PAPER_ENABLED=0 关闭 */
+  paperEnabled: boolean;
   paperInitialCapital: number;
   paperTakerFeeRate: number;
   paperSlippageBps: number;
@@ -20,6 +22,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     dbPath: env.DB_PATH ?? './data/agentwin.db',
     llmProvider: env.LLM_PROVIDER ?? 'deepseek',
     llmModel: env.LLM_MODEL ?? 'deepseek-v4-flash',
+    paperEnabled: env.PAPER_ENABLED !== '0',
     paperInitialCapital: Number(env.PAPER_INITIAL_BALANCE_USDT ?? 10_000),
     paperTakerFeeRate: Number(env.PAPER_TAKER_FEE_RATE ?? 0.001),
     paperSlippageBps: Number(env.PAPER_SLIPPAGE_BPS ?? 2),

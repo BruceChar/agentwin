@@ -256,9 +256,12 @@ export class BinanceRest {
   }
 
   /** 我的成交（现货 /api/v3/myTrades；合约 /fapi/v1/userTrades / dapi/v1/userTrades；杠杆 /sapi/v1/margin/myTrades），按 symbol 查询 */
-  async myTrades(market: Market, symbol: string, opts: { limit?: number; fromId?: number; isIsolated?: boolean } = {}): Promise<MyTradeRow[]> {
+  async myTrades(market: Market, symbol: string, opts: { limit?: number; fromId?: number; startTime?: number; endTime?: number; isIsolated?: boolean } = {}): Promise<MyTradeRow[]> {
     let path: string;
-    const params: Record<string, string | number | boolean | undefined> = { symbol, limit: opts.limit ?? 100, fromId: opts.fromId };
+    const params: Record<string, string | number | boolean | undefined> = {
+      symbol, limit: opts.limit ?? 100, fromId: opts.fromId,
+      startTime: opts.startTime, endTime: opts.endTime,
+    };
     if (market === 'MARGIN' || market === 'MARGIN_ISOLATED') {
       path = '/sapi/v1/margin/myTrades';
       if (market === 'MARGIN_ISOLATED' || opts.isIsolated) params['isIsolated'] = 'TRUE';
@@ -269,7 +272,9 @@ export class BinanceRest {
     }
     const raw = await this.request<RawMyTrade[]>(market, 'GET', path, params, true);
     return raw.map((t) => ({
-      id: t.id, orderId: t.orderId, symbol: t.symbol, side: t.side as 'BUY' | 'SELL',
+      id: t.id, orderId: t.orderId, symbol: t.symbol,
+      // 现货/杠杆 myTrades 返回 isBuyer（无 side 字段），需推导
+      side: (t.side ?? (t.isBuyer ? 'BUY' : 'SELL')) as 'BUY' | 'SELL',
       price: parseFloat(t.price), qty: parseFloat(t.qty),
       commission: parseFloat(t.commission), commissionAsset: t.commissionAsset, time: t.time,
       realizedPnl: t.realizedPnl !== undefined ? parseFloat(t.realizedPnl) : undefined,
@@ -416,7 +421,7 @@ export interface OpenOrderRow {
 }
 
 interface RawMyTrade {
-  id: number; orderId: number; symbol: string; side: string; price: string; qty: string;
+  id: number; orderId: number; symbol: string; side?: string; isBuyer?: boolean; price: string; qty: string;
   commission: string; commissionAsset: string; time: number;
   realizedPnl?: string; positionSide?: string;
 }

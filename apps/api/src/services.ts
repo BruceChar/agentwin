@@ -57,16 +57,19 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
 
   const llm = new LLMService({ provider: config.llmProvider, model: config.llmModel });
 
-  // 默认 paper 账户
-  const accounts = await storage.listAccounts();
-  if (!accounts.some((a) => a.type === 'paper')) {
-    await storage.createAccount({ name: 'paper-main', type: 'paper' });
+  // 模拟（paper/mock）账户：PAPER_ENABLED=0 时关闭，不自动创建
+  let paperAccount: Awaited<ReturnType<StorageAdapter['listAccounts']>>[number] | null = null;
+  if (config.paperEnabled) {
+    const accounts = await storage.listAccounts();
+    if (!accounts.some((a) => a.type === 'paper')) {
+      await storage.createAccount({ name: 'paper-main', type: 'paper' });
+    }
+    paperAccount = (await storage.listAccounts()).find((a) => a.type === 'paper') ?? null;
+    if (paperAccount) await storage.setBalance(paperAccount.id, 'USDT', config.paperInitialCapital, 0);
   }
-  const paperAccount = (await storage.listAccounts()).find((a) => a.type === 'paper')!;
-  await storage.setBalance(paperAccount.id, 'USDT', config.paperInitialCapital, 0);
 
   const toolkit = new TradingToolkit({
-    storage, marketData, strategyRegistry: builtinRegistry, accountId: paperAccount.id,
+    storage, marketData, strategyRegistry: builtinRegistry, accountId: paperAccount?.id,
   });
   const sentiment = new SentimentService({
     storage,

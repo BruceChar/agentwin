@@ -118,6 +118,15 @@ export class DuckdbStorage implements StorageAdapter {
     };
   }
 
+  async updateAccount(id: string, patch: Partial<Pick<Account, 'name' | 'meta'>>): Promise<Account | null> {
+    const cur = await this.getAccount(id);
+    if (!cur) return null;
+    const name = patch.name ?? cur.name;
+    const meta = patch.meta !== undefined ? patch.meta : cur.meta;
+    await this.run('UPDATE accounts SET name = ?, meta = ?, updated_at = ? WHERE id = ?', name, meta ? JSON.stringify(meta) : null, Date.now(), id);
+    return { ...cur, name, meta, updatedAt: Date.now() };
+  }
+
   async listAccounts(): Promise<Account[]> {
     const rows = await this.all('SELECT * FROM accounts ORDER BY created_at ASC');
     return rows.map((r) => ({
@@ -253,6 +262,25 @@ export class DuckdbStorage implements StorageAdapter {
       t.id, t.orderId, t.accountId, t.strategyId ?? null, t.symbol, t.market, t.side, t.qty, t.price, t.fee, t.feeAsset ?? null, t.pnl ?? null, t.realizedPnl ?? null, t.meta ? JSON.stringify(t.meta) : null, t.tradedAt,
     );
     return t;
+  }
+
+  async deleteTradesByAccount(accountId: string): Promise<number> {
+    const rows = await this.all('SELECT COUNT(*) AS c FROM trades WHERE account_id = ?', accountId);
+    await this.run('DELETE FROM trades WHERE account_id = ?', accountId);
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  async latestTradeTime(accountId: string, symbol: string, market: Market): Promise<number | null> {
+    const rows = await this.all('SELECT MAX(traded_at) AS t FROM trades WHERE account_id = ? AND symbol = ? AND market = ?', accountId, symbol, market);
+    const t = rows[0]?.t;
+    return t != null ? Number(t) : null;
+  }
+
+  async wipeAll(): Promise<void> {
+    const tables = ['trades', 'orders', 'balances', 'positions', 'equity_snapshots', 'accounts', 'strategies', 'journal', 'trade_journal', 'llm_messages', 'llm_sessions', 'sentiment', 'backtests', 'klines'];
+    for (const t of tables) {
+      await this.run('DELETE FROM ' + t);
+    }
   }
 
   async listTrades(f: TradeFilter = {}): Promise<Trade[]> {
@@ -413,6 +441,12 @@ export class DuckdbStorage implements StorageAdapter {
     return rows.map((r) => ({
       accountId, timestamp: Number(r.ts), equity: Number(r.equity), cash: Number(r.cash), unrealizedPnl: Number(r.unrealized_pnl),
     }));
+  }
+
+  async clearEquityCurve(accountId: string): Promise<number> {
+    const rows = await this.all('SELECT COUNT(*) AS c FROM equity_snapshots WHERE account_id = ?', accountId);
+    await this.run('DELETE FROM equity_snapshots WHERE account_id = ?', accountId);
+    return Number(rows[0]?.c ?? 0);
   }
 
   // ---------- LLM ----------

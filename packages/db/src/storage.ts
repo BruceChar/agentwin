@@ -83,6 +83,12 @@ export interface StorageAdapter {
   createTrade(t: Trade): Promise<Trade>;
   listTrades(f?: TradeFilter): Promise<Trade[]>;
   tradeAggregates(f?: TradeFilter): Promise<TradeAggregates>;
+  /** 删除某账户的全部成交记录（清理脏数据用），返回删除条数 */
+  deleteTradesByAccount(accountId: string): Promise<number>;
+  /** 某账户某品种某市场的最新一笔成交时间（增量同步起点），无则 null */
+  latestTradeTime(accountId: string, symbol: string, market: Market): Promise<number | null>;
+  /** 清空全部业务数据（保留表结构）——工厂重置用 */
+  wipeAll(): Promise<void>;
 
   // ---------- 持仓 ----------
   upsertPosition(p: Position): Promise<void>;
@@ -99,6 +105,10 @@ export interface StorageAdapter {
   // ---------- 权益曲线 ----------
   appendEquity(p: EquityPoint): Promise<void>;
   getEquityCurve(accountId: string, from?: number, to?: number): Promise<EquityPoint[]>;
+  /** 清空某账户权益曲线（清理脏数据用），返回删除条数 */
+  clearEquityCurve(accountId: string): Promise<number>;
+  /** 更新账户（名称/元信息），返回更新后的账户 */
+  updateAccount(id: string, patch: Partial<Pick<Account, 'name' | 'meta'>>): Promise<Account | null>;
 
   // ---------- LLM 会话 ----------
   createSession(s: { id?: string; kind: LLMSessionKind; title: string; meta?: Record<string, unknown> }): Promise<LLMSession>;

@@ -86,14 +86,38 @@ export class BinanceAccountSync {
     return { configured, hasKey, hasSecret, missing, reachable, message, spotHost: 'api.binance.com', futuresHost: 'fapi.binance.com', proxy: this.rest.proxy, lastSync };
   }
 
+  /** 串行化同步：启动自动同步与手动/重置同步不并发，避免写入竞态 */
+  private syncTail: Promise<void> = Promise.resolve();
+
+  /** 在同步锁内执行任意操作（排队串行） */
+  exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.syncTail.then(fn);
+    this.syncTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  async syncAll(opts: { symbols?: string[]; limitPerSymbol?: number; forceTrades?: boolean } = {}): Promise<SyncReport> {
+    return this.exclusive(() => this.syncAllInternal(opts));
+  }
+
+  /** 原子重置并全量重同步：清库 + 拉取历史在同一把锁内完成，杜绝与启动同步并发 */
+  async resetAndFullSync(opts: { symbols?: string[]; limitPerSymbol?: number; forceTrades?: boolean } = {}): Promise<SyncReport> {
+    return this.exclusive(async () => {
+      await this.storage.wipeAll();
+      return this.syncAllInternal(opts);
+    });
+  }
+
   /** 全量同步：现货 + 全仓杠杆 + 逐仓杠杆 + U本位 + 币本位（余额/持仓/成交/权益） */
-  async syncAll(opts: { symbols?: string[]; limitPerSymbol?: number } = {}): Promise<SyncReport> {
+  private async syncAllInternal(opts: { symbols?: string[]; limitPerSymbol?: number; forceTrades?: boolean } = {}): Promise<SyncReport> {
     const account = await this.ensureRealAccount();
     const report: SyncReport = {
       ok: false, accountId: account.id, balancesUpserted: 0, futuresPositions: 0,
       tradesSynced: 0, tradesSkipped: 0, equityAppended: false, at: Date.now(),
     };
     const limit = opts.limitPerSymbol ?? 200;
+    // 清除过成交数据后暂停自动同步成交，防止脏数据回灌（手动同步 forceTrades 可强制）
+    const skipTrades = !opts.forceTrades && (account.meta?.syncTrades === false);
     const equityParts: { usdt: number; note: string }[] = [];
     try {
       // ---------- 1) 现货 ----------
@@ -104,11 +128,7 @@ export class BinanceAccountSync {
           report.balancesUpserted++;
         }
       }
-      for (const symbol of this.symbolsForSync(spot.balances.map((b) => b.asset), [], opts.symbols ?? [])) {
-        const { synced, skipped } = await this.syncTradesForSymbol(account.id, symbol, limit, 'SPOT');
-        report.tradesSynced += synced;
-        report.tradesSkipped += skipped;
-      }
+      await this.syncSymbolTrades(account.id, this.symbolsForSync(spot.balances.map((b) => b.asset), [], opts.symbols ?? []), limit, 'SPOT', report, skipTrades);
 
       // ---------- 2) 全仓杠杆 ----------
       try {
@@ -120,11 +140,7 @@ export class BinanceAccountSync {
           }
         }
         equityParts.push({ usdt: margin.totalNetAssetOfQuoteAsset, note: '全仓杠杆' });
-        for (const symbol of this.symbolsForSync(margin.assets.map((a) => a.asset), [], opts.symbols ?? [])) {
-          const { synced, skipped } = await this.syncTradesForSymbol(account.id, symbol, limit, 'MARGIN');
-          report.tradesSynced += synced;
-          report.tradesSkipped += skipped;
-        }
+        await this.syncSymbolTrades(account.id, this.symbolsForSync(margin.assets.map((a) => a.asset), [], opts.symbols ?? []), limit, 'MARGIN', report, skipTrades);
       } catch (e) {
         console.warn('[sync] margin account failed:', e instanceof Error ? e.message : String(e));
       }
@@ -143,11 +159,7 @@ export class BinanceAccountSync {
             report.futuresPositions++;
           }
         }
-        for (const pair of isolated.map((p) => p.symbol)) {
-          const { synced, skipped } = await this.syncTradesForSymbol(account.id, pair, limit, 'MARGIN_ISOLATED');
-          report.tradesSynced += synced;
-          report.tradesSkipped += skipped;
-        }
+        await this.syncSymbolTrades(account.id, isolated.map((p) => p.symbol), limit, 'MARGIN_ISOLATED', report, skipTrades);
       } catch (e) {
         console.warn('[sync] isolated margin failed:', e instanceof Error ? e.message : String(e));
       }
@@ -167,11 +179,7 @@ export class BinanceAccountSync {
           report.futuresPositions++;
         }
         equityParts.push({ usdt: futures.totalWalletBalance + futures.totalUnrealizedProfit, note: 'U本位合约' });
-        for (const symbol of this.symbolsForSync([], futures.positions.map((p) => p.symbol), opts.symbols ?? [])) {
-          const { synced, skipped } = await this.syncTradesForSymbol(account.id, symbol, limit, 'USDT_M');
-          report.tradesSynced += synced;
-          report.tradesSkipped += skipped;
-        }
+        await this.syncSymbolTrades(account.id, this.symbolsForSync([], futures.positions.map((p) => p.symbol), opts.symbols ?? []), limit, 'USDT_M', report, skipTrades);
       } catch (e) {
         console.warn('[sync] usdt-m futures failed:', e instanceof Error ? e.message : String(e));
       }
@@ -190,11 +198,7 @@ export class BinanceAccountSync {
           report.futuresPositions++;
         }
         equityParts.push({ usdt: coinm.totalWalletBalance + coinm.totalUnrealizedProfit, note: '币本位合约(按计价币计)' });
-        for (const symbol of this.symbolsForSync(coinm.assets.map((a) => a.asset), coinm.positions.map((p) => p.symbol), opts.symbols ?? [])) {
-          const { synced, skipped } = await this.syncTradesForSymbol(account.id, symbol, limit, 'COIN_M');
-          report.tradesSynced += synced;
-          report.tradesSkipped += skipped;
-        }
+        await this.syncSymbolTrades(account.id, this.symbolsForSync(coinm.assets.map((a) => a.asset), coinm.positions.map((p) => p.symbol), opts.symbols ?? []), limit, 'COIN_M', report, skipTrades);
       } catch (e) {
         console.warn('[sync] coin-m futures failed:', e instanceof Error ? e.message : String(e));
       }
@@ -228,29 +232,54 @@ export class BinanceAccountSync {
   }
 
   /** 单个币种在指定市场的成交落库（幂等：id 冲突视为已同步） */
+  /** 同步一组品种的成交；skip=true 时跳过（清除过成交数据后暂停自动回灌） */
+  private async syncSymbolTrades(accountId: string, symbols: string[], limit: number, market: Market, report: SyncReport, skip: boolean): Promise<void> {
+    if (skip) return;
+    for (const symbol of symbols) {
+      const { synced, skipped } = await this.syncTradesForSymbol(accountId, symbol, limit, market);
+      report.tradesSynced += synced;
+      report.tradesSkipped += skipped;
+    }
+  }
+
+  /**
+   * 增量同步单个品种成交：从本地该品种最新成交时间的下一条开始拉取。
+   * - 本地无记录 → 全量拉取（startTime 缺省）；
+   * - 超过单次 limit → 用 fromId 翻页继续，直到取完。
+   */
   private async syncTradesForSymbol(accountId: string, symbol: string, limit: number, market: Market): Promise<{ synced: number; skipped: number }> {
     let synced = 0, skipped = 0;
-    let rows: MyTradeRow[] = [];
-    try {
-      rows = await this.rest.myTrades(market, symbol, { limit });
-    } catch {
-      return { synced, skipped }; // 该市场无此币种或无权限
-    }
-    for (const t of rows) {
-      const trade: Trade = {
-        id: 'real-' + symbol + '-' + market + '-' + t.id,
-        orderId: String(t.orderId), accountId,
-        symbol, market, side: t.side, qty: t.qty, price: t.price,
-        fee: t.commission, feeAsset: t.commissionAsset, tradedAt: t.time,
-        pnl: t.realizedPnl, realizedPnl: t.realizedPnl,
-        meta: t.positionSide ? { positionSide: t.positionSide } : undefined,
-      };
+    const latest = await this.storage.latestTradeTime(accountId, symbol, market);
+    let fromId: number | undefined;
+    let startTime: number | undefined = latest != null ? latest + 1 : undefined;
+    for (;;) {
+      let rows: MyTradeRow[] = [];
       try {
-        await this.storage.createTrade(trade);
-        synced++;
+        rows = await this.rest.myTrades(market, symbol, { limit, fromId, startTime });
       } catch {
-        skipped++; // 主键冲突 = 已同步过
+        return { synced, skipped }; // 该市场无此币种或无权限
       }
+      if (!rows.length) break;
+      for (const t of rows) {
+        const trade: Trade = {
+          id: 'real-' + symbol + '-' + market + '-' + t.id,
+          orderId: String(t.orderId), accountId,
+          symbol, market, side: t.side, qty: t.qty, price: t.price,
+          fee: t.commission, feeAsset: t.commissionAsset, tradedAt: t.time,
+          pnl: t.realizedPnl, realizedPnl: t.realizedPnl,
+          meta: t.positionSide ? { positionSide: t.positionSide } : undefined,
+        };
+        try {
+          await this.storage.createTrade(trade);
+          synced++;
+        } catch {
+          skipped++; // 主键冲突 = 已同步过
+        }
+      }
+      if (rows.length < limit) break; // 已取完
+      const lastId = Number(rows[rows.length - 1]!.id);
+      fromId = lastId + 1; // fromId 优先于 startTime（翻页）
+      startTime = undefined;
     }
     return { synced, skipped };
   }

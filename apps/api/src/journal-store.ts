@@ -5,6 +5,7 @@ import type { StorageAdapter } from '@agentwin/db';
 import type { NewTradeJournal, TradeJournal, TradeJournalStats } from '@agentwin/shared';
 
 export interface TradeJournalFilter {
+  accountId?: string;
   symbol?: string;
   market?: string;
   tag?: string;
@@ -88,12 +89,20 @@ export class TradeJournalStore {
     return true;
   }
 
+  /** 清空全部交易日志（内存 + JSONL 文件 + SQLite 镜像） */
+  async clear(): Promise<void> {
+    this.records.clear();
+    this.persistJsonl();
+    // SQLite 镜像由 wipeAll 一并清空
+  }
+
   get(id: string): TradeJournal | null {
     return this.records.get(id) ?? null;
   }
 
   list(filter: TradeJournalFilter = {}): TradeJournal[] {
     let out = [...this.records.values()];
+    if (filter.accountId) out = out.filter((j) => j.accountId === filter.accountId);
     if (filter.symbol) out = out.filter((j) => j.symbol.toUpperCase().includes(filter.symbol!.toUpperCase()));
     if (filter.market) out = out.filter((j) => j.market === filter.market);
     if (filter.tag) out = out.filter((j) => j.tags.includes(filter.tag!));

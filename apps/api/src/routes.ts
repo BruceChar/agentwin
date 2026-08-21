@@ -126,6 +126,60 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     return { account, balances, positions, markets: groupByMarket(balances, positions), equityCurve: curve, aggregates: agg, recentTrades: trades };
   });
 
+  /**
+   * 清除账户脏数据：trades=删除成交记录，equity=清空权益曲线。
+   * 清除成交后自动把该账户的自动同步成交暂停（meta.syncTrades=false），防止脏数据回灌；
+   * 传 syncTrades=true 可恢复自动同步成交。
+   */
+  app.post('/api/accounts/:id/reset', async (req) => {
+    const id = str((req.params as Body)['id']);
+    const account = await storage.getAccount(id);
+    if (!account) return app.httpErrors.notFound('account not found');
+    const b = (req.body ?? {}) as Body;
+    const cleared = { trades: 0, equity: 0 };
+    if (b['trades'] === true) cleared.trades = await storage.deleteTradesByAccount(id);
+    if (b['equity'] === true) cleared.equity = await storage.clearEquityCurve(id);
+    let syncTrades: boolean | undefined;
+    if (b['syncTrades'] !== undefined) {
+      syncTrades = b['syncTrades'] === true;
+    } else if (b['trades'] === true) {
+      syncTrades = false; // 清除成交后暂停自动同步成交
+    }
+    if (syncTrades !== undefined) {
+      await storage.updateAccount(id, { meta: { ...(account.meta ?? {}), syncTrades } });
+    }
+    return { ok: true, accountId: id, cleared, syncTrades: syncTrades ?? (account.meta?.syncTrades === true) };
+  });
+
+  /**
+   * 工厂重置：关闭模拟交易引擎 → 清空全部本地数据（账户/成交/权益/日志/策略等）
+   * → 重新创建真实账户 → 从币安全量拉取历史成交（增量同步起点自动为最新记录）。
+   * 之后每次启动/手动同步都只从最新本地记录时间往后增量拉取。
+   */
+  app.post('/api/admin/reset', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    await paper.stop();
+    await services.journalStore.clear();
+    // 清库 + 全量重同步在同一把同步锁内原子完成（避免与启动自动同步并发产生脏数据）
+    const report = await sync.resetAndFullSync({
+      limitPerSymbol: num(b['limit'], 1000),
+      forceTrades: true,
+    });
+    const accounts = await storage.listAccounts();
+    return {
+      ok: true,
+      accounts: accounts.map((a) => ({ id: a.id, name: a.name, type: a.type })),
+      sync: {
+        ok: report.ok,
+        tradesSynced: report.tradesSynced,
+        tradesSkipped: report.tradesSkipped,
+        balancesUpserted: report.balancesUpserted,
+        futuresPositions: report.futuresPositions,
+        message: report.message,
+      },
+    };
+  });
+
   // ---------------- 策略 ----------------
   app.get('/api/strategies/builtin', async () => ({ strategies: builtinRegistry.list() }));
 
@@ -248,9 +302,11 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
 
   app.post('/api/binance/sync', async (req) => {
     const b = (req.body ?? {}) as Body;
+    // 手动同步始终强制同步成交（绕过暂停标记）
     return sync.syncAll({
       symbols: Array.isArray(b['symbols']) ? (b['symbols'] as string[]) : [],
       limitPerSymbol: num(b['limit'], 100),
+      forceTrades: true,
     });
   });
 
@@ -318,6 +374,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     return { trades: await storage.listTrades({
       limit: num(q['limit'], 200),
       market: q['market'] !== undefined ? str(q['market']) as Market : undefined,
+      accountId: q['accountId'] !== undefined ? str(q['accountId']) : undefined,
     }) };
   });
 
@@ -326,6 +383,8 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     const agg = await storage.tradeAggregates({
       accountId: q['accountId'] !== undefined ? str(q['accountId']) : undefined,
       market: q['market'] !== undefined ? str(q['market']) as Market : undefined,
+      from: q['from'] !== undefined ? num(q['from'], 0) : undefined,
+      to: q['to'] !== undefined ? num(q['to'], 0) : undefined,
     });
     return agg;
   });
@@ -474,6 +533,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
       symbol: q['symbol'] !== undefined ? str(q['symbol']) : undefined,
       market: q['market'] !== undefined ? str(q['market']) : undefined,
       tag: q['tag'] !== undefined ? str(q['tag']) : undefined,
+      accountId: q['accountId'] !== undefined ? str(q['accountId']) : undefined,
       from: q['from'] !== undefined ? num(q['from'], 0) : undefined,
       to: q['to'] !== undefined ? num(q['to'], 0) : undefined,
     });
@@ -485,6 +545,7 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
       symbol: q['symbol'] !== undefined ? str(q['symbol']) : undefined,
       market: q['market'] !== undefined ? str(q['market']) : undefined,
       tag: q['tag'] !== undefined ? str(q['tag']) : undefined,
+      accountId: q['accountId'] !== undefined ? str(q['accountId']) : undefined,
       from: q['from'] !== undefined ? num(q['from'], 0) : undefined,
       to: q['to'] !== undefined ? num(q['to'], 0) : undefined,
       limit: num(q['limit'], 100),
