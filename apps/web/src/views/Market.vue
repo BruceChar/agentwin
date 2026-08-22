@@ -1,5 +1,5 @@
 <!-- ================= 行情页：K线图 + 技术指标 =================
-  周期选择：默认展示最常用的 4 个（1h/4h/1d/1w），其余在“更多”下拉；支持自定义“数字+时间单位”（如 45m/3h/2d，前端聚合）。
+  周期选择：默认展示最常用的 4 个（1h/4h/1d/1w），其余在“更多”下拉；当前周期始终显示（含自定义）；支持自定义“数字+单位下拉”（如 45m/3h/2d，前端聚合）。
   指标菜单：下拉面板（指标按钮），EMA/MA 两组开关；每条均线单独编辑（周期/颜色/线宽），勾选 ≥2 条可联动编辑。
   指标设置按账户持久化（localStorage，key=aw-chart-ind-<accountId>），刷新/切换账户不丢失。
   VPVR：火焰图配色（低量深蓝 → 高量黄/红）。 -->
@@ -26,14 +26,26 @@
           @click="changeInterval(i.value)"
         >{{ i.short }}</button>
         <el-dropdown trigger="click" @command="onMoreInterval">
-          <button class="tv-tab" :class="{ active: moreActive }">更多<span class="caret">▾</span></button>
+          <button class="tv-tab" :class="{ active: moreActive }">{{ moreLabel }}<span class="caret">▾</span></button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item v-for="i in moreIntervals" :key="i.value" :command="i.value" :class="{ 'iv-active': interval === i.value }">{{ i.label }}</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <input v-model="customIv" class="cust-iv" size="7" placeholder="自定义 45m" title="输入数字+时间单位（m/h/d/w/M）后回车，如 45m / 3h / 2d / 1w；不支持的周期自动按最小可整除周期聚合" @keyup.enter="applyCustomInterval" />
+        <!-- 自定义周期：数字 + 单位下拉（回车或改单位即生效），如 45 + m = 45m -->
+        <div class="cust-iv" :class="{ active: customActive }">
+          <input v-model="customIvNum" class="cust-num" size="4" placeholder="自定义" title="输入数字（如 45 / 3 / 2），右侧选时间单位（m/h/d/w/M）后回车生效；不支持的周期自动按最小可整除周期聚合" @keyup.enter="applyCustomInterval" />
+          <select v-model="customIvUnit" class="cust-unit" @change="applyCustomInterval">
+            <option value="m">m</option>
+            <option value="h">h</option>
+            <option value="d">d</option>
+            <option value="w">w</option>
+            <option value="M">M</option>
+          </select>
+        </div>
+        <!-- 当前周期：始终显示（标准用中文标签，自定义按数字+单位转中文） -->
+        <span class="cur-iv mono" :title="'当前周期：' + intervalLabel">{{ intervalLabel }}</span>
       </div>
       <div class="tv-actions">
         <!-- 指标菜单（抽屉下拉）：EMA/MA 组开关、各指标开关、均线逐条编辑与联动编辑 -->
@@ -106,15 +118,20 @@
         class="legend"
         :style="{ top: g.top + 'px', left: g.left + 'px' }"
       >
-        <!-- 价格面板图例：EMA / MA 分两列（组关闭或全隐藏时不渲染该列，不留灰色框） -->
+        <!-- 价格面板图例：EMA / MA 分两列（组关闭或全隐藏时不渲染该列，不留灰色框）；列右上角 × 关闭整组 -->
         <template v-if="g.cols && g.cols.length">
           <div v-for="col in g.cols" :key="col.key" class="lg-col">
-            <span class="lg-head" :style="{ color: col.key === 'ema' ? '#f0a35e' : '#4da3ff' }">{{ col.label }}</span>
+            <div class="lg-head-row">
+              <span class="lg-head" :style="{ color: col.key === 'ema' ? '#f0a35e' : '#4da3ff' }">{{ col.label }}</span>
+              <span class="lg-x" :title="'关闭全部 ' + col.label + ' 均线'" @click="hideGroup(col.key)">×</span>
+            </div>
             <span v-for="(it, idx) in col.items" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
           </div>
         </template>
+        <!-- 其它面板（VOL/MACD/RSI）：× 在数值右边，点击关闭该指标 -->
         <template v-else>
           <span v-for="(it, idx) in g.items" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
+          <span class="lg-x" :title="'关闭 ' + (g.label ?? g.key)" @click="hideIndicator(g.key)">×</span>
         </template>
       </div>
 
@@ -126,15 +143,20 @@
       >
         <div class="ht-time">{{ hoverTip.time }}</div>
         <div class="ht-row"><span class="ht-k">开</span><span>{{ hoverTip.open }}</span></div>
-        <div class="ht-row"><span class="ht-k">高</span><span class="up">{{ hoverTip.high }}</span></div>
-        <div class="ht-row"><span class="ht-k">低</span><span class="down">{{ hoverTip.low }}</span></div>
+        <div class="ht-row"><span class="ht-k">高</span><span class="up">{{ hoverTip.high }} <b class="ht-pct">{{ hoverTip.highPct }}</b></span></div>
+        <div class="ht-row"><span class="ht-k">低</span><span class="down">{{ hoverTip.low }} <b class="ht-pct">{{ hoverTip.lowPct }}</b></span></div>
         <div class="ht-row"><span class="ht-k">收</span><span :class="hoverTip.cls">{{ hoverTip.close }}</span></div>
+        <div class="ht-row"><span class="ht-k">振幅</span><span>{{ hoverTip.amp }}</span></div>
+        <div class="ht-row"><span class="ht-k">差值</span><span>{{ hoverTip.diff }}</span></div>
         <div class="ht-row"><span class="ht-k">涨跌</span><span :class="hoverTip.cls">{{ hoverTip.change }} · {{ hoverTip.changePct }}</span></div>
       </div>
 
       <!-- 可见区间最高/最低点：标在所在 K 线上（价格标签 + 连接线指向该 K 线的高/低点） -->
-      <div v-if="hlMarkers.high" class="hl-mark hl-high" :style="{ left: hlMarkers.high.x + 'px', top: hlMarkers.high.y + 'px' }">{{ hlMarkers.high.price }}(H)</div>
-      <div v-if="hlMarkers.low" class="hl-mark hl-low" :style="{ left: hlMarkers.low.x + 'px', top: hlMarkers.low.y + 'px' }">{{ hlMarkers.low.price }}(L)</div>
+      <div v-if="hlMarkers.high" class="hl-mark hl-high" :style="{ left: hlMarkers.high.x + 'px', top: hlMarkers.high.y + 'px' }">{{ hlMarkers.high.price }}</div>
+      <div v-if="hlMarkers.low" class="hl-mark hl-low" :style="{ left: hlMarkers.low.x + 'px', top: hlMarkers.low.y + 'px' }">{{ hlMarkers.low.price }}</div>
+      <!-- 右侧价格列：可见区间最高/最低（与 POC 同一列），格式 88888(H) / 88888(L) -->
+      <div v-if="hlRight.high" class="poc-mark hl-r-h mono" :style="{ top: hlRight.high.y + 'px' }">{{ hlRight.high.text }}</div>
+      <div v-if="hlRight.low" class="poc-mark hl-r-l mono" :style="{ top: hlRight.low.y + 'px' }">{{ hlRight.low.text }}</div>
       <!-- POC 价格：显示在右侧价格列（与价格标签一起），格式 88888.9(poc) -->
       <div v-if="pocMark" class="poc-mark mono" :style="{ top: pocMark.y + 'px' }">{{ pocMark.text }}</div>
     </div>
@@ -254,12 +276,15 @@ function setLinePeriod(ln: MaLineCfg, raw: string | number) {
 const UP = '#67c23a';
 const DOWN = '#f56c6c';
 const GRID_GAP = 14;
+/** 默认视图左侧预热 K 线数：用于 MA/EMA 等指标左侧值计算（不参与默认可见窗口） */
+const WARMUP = 250;
 
 // ---------- 状态 ----------
 const symbol = ref('BTCUSDT');
 const market = ref('SPOT');
 const interval = ref('1h');
-const customIv = ref('');
+const customIvNum = ref('');
+const customIvUnit = ref('m');
 const limit = ref(300);
 const autoRefresh = ref(false);
 /** EMA / MA 两组开关：按组显示/隐藏全部均线 */
@@ -284,7 +309,23 @@ const lastChangePct = ref('');
 const chartEl = ref<HTMLDivElement | null>(null);
 
 const moreActive = computed(() => !quickIntervals.some((i) => i.value === interval.value));
-const intervalLabel = computed(() => ALL_INTERVALS.find((i) => i.value === interval.value)?.label ?? interval.value);
+/** 当前周期是否为自定义（不在标准周期列表中，由数字+单位确定） */
+const customActive = computed(() => !ALL_INTERVALS.some((i) => i.value === interval.value));
+/** “更多”按钮文案：选中非快捷标准周期时回显其短标签（下拉后选中展示），其余保持“更多” */
+const moreLabel = computed(() => {
+  if (quickIntervals.some((i) => i.value === interval.value)) return '更多';
+  return ALL_INTERVALS.find((i) => i.value === interval.value)?.short ?? '更多';
+});
+/** 周期显示文案：标准周期用中文标签；自定义按“数字+单位”转中文（45m→45分钟、2d→2天） */
+const UNIT_CN: Record<string, string> = { m: '分钟', h: '小时', d: '天', w: '周', M: '月' };
+function fmtIntervalLabel(v: string): string {
+  const std = ALL_INTERVALS.find((i) => i.value === v);
+  if (std) return std.label;
+  const m = /^(\d+(?:\.\d+)?)\s*(m|h|d|w|M)$/.exec(v);
+  if (m) return fmtPeriod(Number(m[1])) + (UNIT_CN[m[2]!] ?? m[2]!);
+  return v;
+}
+const intervalLabel = computed(() => fmtIntervalLabel(interval.value));
 
 /** 解析周期（含自定义“数字+时间单位”），返回取数基础周期与聚合倍数；2w→1w×2，45m→15m×3 */
 function resolveInterval(raw: string): { base: string; factor: number } | null {
@@ -311,8 +352,9 @@ function intervalFetch(): { base: string; factor: number } {
   return resolveInterval(interval.value) ?? { base: interval.value, factor: 1 };
 }
 function applyCustomInterval() {
-  const v = customIv.value.trim();
-  if (!v) return;
+  const num = customIvNum.value.trim();
+  if (!num) return;
+  const v = num + customIvUnit.value;
   if (!resolveInterval(v)) {
     ElMessage.warning('周期格式：数字+时间单位，如 45m / 3h / 2d / 1w / 1M');
     return;
@@ -326,19 +368,21 @@ function onMoreInterval(v: string) {
 // TradingView 风格：各面板独立图例（默认最新值，悬停联动）+ 状态栏
 interface LegendItem { name: string; color: string; value: string }
 interface LegendCol { key: 'ema' | 'ma'; label: string; items: LegendItem[] }
-interface LegendGroup { key: string; top: number; left: number; items?: LegendItem[]; cols?: LegendCol[] }
+interface LegendGroup { key: string; top: number; left: number; items?: LegendItem[]; cols?: LegendCol[]; label?: string }
 const legends = ref<LegendGroup[]>([]);
 const status = ref<{ time: string; open: string; high: string; low: string; close: string; change: string; changePct: string; cls: string; volume: string }>({
   time: '-', open: '-', high: '-', low: '-', close: '-', change: '-', changePct: '-', cls: '', volume: '-',
 });
 
-// 悬停 OHLC 浮窗
-const hoverTip = ref<{ visible: boolean; x: number; y: number; time: string; open: string; high: string; low: string; close: string; change: string; changePct: string; cls: string }>({
-  visible: false, x: 0, y: 0, time: '', open: '-', high: '-', low: '-', close: '-', change: '-', changePct: '-', cls: '',
+// 悬停 OHLC 浮窗（含振幅/差值/高低相对收盘价百分比：高用+，低用-）
+const hoverTip = ref<{ visible: boolean; x: number; y: number; time: string; open: string; high: string; low: string; close: string; highPct: string; lowPct: string; amp: string; diff: string; change: string; changePct: string; cls: string }>({
+  visible: false, x: 0, y: 0, time: '', open: '-', high: '-', low: '-', close: '-', highPct: '', lowPct: '', amp: '-', diff: '-', change: '-', changePct: '-', cls: '',
 });
 // 可见区间最高/最低点：标在所在 K 线上（价格标签 + 连接线指向该 K 线的高/低点）
 interface HlMarker { x: number; y: number; price: string }
 const hlMarkers = ref<{ high: HlMarker | null; low: HlMarker | null }>({ high: null, low: null });
+// 右侧价格列：可见区间最高/最低标记（与 POC 同一列），格式 88888(H) / 88888(L)
+const hlRight = ref<{ high: { y: number; text: string } | null; low: { y: number; text: string } | null }>({ high: null, low: null });
 // POC 价格标记：显示在右侧价格列（与 y 轴价格标签一起），格式 88888.9(poc)
 const pocMark = ref<{ y: number; text: string } | null>(null);
 
@@ -361,6 +405,7 @@ function updatePocMark(pocPrice: number | null) {
 function updateHlMarkers(visibleCandles: CandleView[], startIdx: number) {
   if (!chart || !visibleCandles.length) {
     hlMarkers.value = { high: null, low: null };
+    hlRight.value = { high: null, low: null };
     return;
   }
   let hi = -Infinity, lo = Infinity;
@@ -380,8 +425,14 @@ function updateHlMarkers(visibleCandles: CandleView[], startIdx: number) {
       high: { x: clamp(pxHi, 36, w - 36), y: clamp(pyHi - 24, 4, h - 22), price: fmtPrice(hi) },
       low: { x: clamp(pxLo, 36, w - 36), y: clamp(pyLo + 8, 22, h - 18), price: fmtPrice(lo) },
     };
+    // 右侧价格列（与 POC 同一列）：格式 88888(H) / 88888(L)，锚定在价格高度
+    hlRight.value = {
+      high: { y: Math.max(4, Math.min(h - 16, pyHi)), text: fmtPrice(hi) + '(H)' },
+      low: { y: Math.max(4, Math.min(h - 16, pyLo)), text: fmtPrice(lo) + '(L)' },
+    };
   } catch {
     hlMarkers.value = { high: null, low: null };
+    hlRight.value = { high: null, low: null };
   }
 }
 
@@ -408,8 +459,17 @@ function onMarket(v: string) { market.value = v; load(true); }
 function changeInterval(v: string) {
   if (interval.value === v) return;
   interval.value = v;
-  // 标准周期清空自定义输入；自定义周期回显到输入框
-  customIv.value = (quickIntervals.some((i) => i.value === v) || moreIntervals.some((i) => i.value === v)) ? '' : v;
+  // 标准周期清空自定义输入；自定义周期回显到“数字+单位”
+  if (ALL_INTERVALS.some((i) => i.value === v)) {
+    customIvNum.value = '';
+    customIvUnit.value = 'm';
+  } else {
+    const m = /^(\d+(?:\.\d+)?)\s*(m|h|d|w|M)$/.exec(v);
+    if (m) {
+      customIvNum.value = m[1]!;
+      customIvUnit.value = m[2]!;
+    }
+  }
   load(true);
 }
 
@@ -483,7 +543,7 @@ function updateLegends(idx: number, maLines: MaLine[], macdRes: { dif: (number |
     if (v != null) volItems.push({ name: 'VOL', color: '#8a94a3', value: fmtVol(v) });
     const vm = volMa[idx];
     if (vm != null) volItems.push({ name: 'VOL MA5', color: '#409eff', value: fmtVol(vm) });
-    groups.push({ key: 'vol', top: legendTops.vol ?? 0, left: 70, items: volItems });
+    groups.push({ key: 'vol', label: '成交量', top: legendTops.vol ?? 0, left: 70, items: volItems });
   }
   // MACD
   if (macdOn.value) {
@@ -494,16 +554,31 @@ function updateLegends(idx: number, maLines: MaLine[], macdRes: { dif: (number |
     if (d != null) macdItems.push({ name: 'DIF', color: '#f0a35e', value: fmtPrice(d) });
     const de = macdRes.dea[idx];
     if (de != null) macdItems.push({ name: 'DEA', color: '#4da3ff', value: fmtPrice(de) });
-    groups.push({ key: 'macd', top: legendTops.macd ?? 0, left: 70, items: macdItems });
+    groups.push({ key: 'macd', label: 'MACD', top: legendTops.macd ?? 0, left: 70, items: macdItems });
   }
   // RSI
   if (rsiOn.value) {
     const rsiItems: LegendItem[] = [];
     const r = rsiVals[idx];
     if (r != null) rsiItems.push({ name: 'RSI(14)', color: '#4da3ff', value: Number(r).toFixed(2) });
-    groups.push({ key: 'rsi', top: legendTops.rsi ?? 0, left: 70, items: rsiItems });
+    groups.push({ key: 'rsi', label: 'RSI', top: legendTops.rsi ?? 0, left: 70, items: rsiItems });
   }
   legends.value = groups;
+}
+
+/** 图例 ×（EMA/MA 列右上角）：关闭整组均线（重新开启在指标菜单） */
+function hideGroup(key: 'ema' | 'ma') {
+  if (key === 'ema') emaOn.value = false;
+  else maOn.value = false;
+  render();
+}
+
+/** 图例 ×（VOL/MACD/RSI 数值右边）：关闭该指标（重新开启在指标菜单） */
+function hideIndicator(key: string) {
+  if (key === 'vol') volOn.value = false;
+  else if (key === 'macd') macdOn.value = false;
+  else if (key === 'rsi') rsiOn.value = false;
+  render();
 }
 
 /** 状态栏：最新可见 K 线 OHLC + 涨跌幅 */
@@ -535,6 +610,17 @@ let resizeHandler: (() => void) | null = null;
 let zoomStart = 0;
 let zoomEnd = 100;
 let mainGridH = 300;
+// 视图平移（上下拖拽价格轴）与历史分页状态
+let yPan = 0;                          // 价格轴上下平移量（相对可见区间基准范围）
+let yDrag: { startY: number; startPan: number } | null = null;
+let yPanRaf = 0;
+let baseCandles: CandleView[] = [];    // 基础周期连续 K 线（历史页向左追加，含左侧预热数据）
+let loadingHistory = false;            // 历史页加载中（防重入）
+let reachedStart = false;              // 已到数据起点（无法再往前翻）
+// 最近一次渲染的可见区间/价格信息（供拖拽平移时同步右侧价格标记）
+let lastPocPrice: number | null = null;
+let lastVisible: CandleView[] = [];
+let lastRealFrom = 0;
 // 增量刷新用：最近一次渲染的面板网格索引（series 按 id 合并更新）
 let lastGridIdx: Record<string, number> = {};
 
@@ -605,24 +691,30 @@ function updateDragHandles(gridTop: { top: number }[]) {
 }
 
 // ---------- 数据加载 ----------
-async function load(resetZoom = false) {
-  if (resetZoom) zoomStart = 0;
+async function load(resetZoom = true) {
+  if (resetZoom) {
+    zoomStart = 0;
+    zoomEnd = 100;
+  }
   loading.value = true;
   try {
-    // 自定义周期（如 45m / 2w）：拉基础周期数据后前端聚合
+    // 自定义周期（如 45m / 2w）：拉基础周期数据后前端聚合；
+    // 额外多拉 WARMUP 根作为左侧预热（MA/EMA 左侧值用，不参与默认可见窗口）
     const { base, factor } = intervalFetch();
-    const n = Math.min(limit.value * factor, 1000);
+    const total = Math.min((limit.value + WARMUP) * factor, Math.floor(1000 / factor) * factor);
     const res = await api.get<{ candles: CandleView[] }>(
-      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + base + '&limit=' + n,
+      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + base + '&limit=' + total,
     );
-    let cs = res.candles;
-    if (factor > 1) cs = aggregateCandles(cs, factor);
-    cs = cs.slice(-limit.value);
-    candles.value = cs;
-    if (resetZoom && cs.length) {
-      // 默认视图：真实数据铺满左侧，右侧留空（VPVR 区），可自由往右拖拽
-      zoomEnd = (cs.length / (cs.length + rightPadFor(cs.length))) * 100;
+    baseCandles = res.candles;
+    candles.value = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
+    reachedStart = false;
+    yPan = 0;
+    if (resetZoom && candles.value.length) {
+      // 默认视图：最近 limit 根可见，左侧预热数据隐藏（用于 MA/EMA 左侧值），右侧留空可自由平移
+      const warmup = Math.max(0, candles.value.length - limit.value);
+      anchorZoom(warmup, candles.value.length);
     }
+    const cs = candles.value;
     if (cs.length) {
       const last = cs[cs.length - 1]!;
       const prev = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
@@ -646,20 +738,43 @@ async function refreshLatest() {
   if (!chart || !candles.value.length) return load();
   try {
     const { base, factor } = intervalFetch();
-    const n = Math.min(limit.value * factor, 1000);
+    const n = Math.min(limit.value * factor, Math.floor(1000 / factor) * factor);
     const res = await api.get<{ candles: CandleView[] }>(
       '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + base + '&limit=' + n,
     );
-    let cs = res.candles;
-    if (factor > 1) cs = aggregateCandles(cs, factor);
-    cs = cs.slice(-limit.value);
+    const latestBase = res.candles;
+    if (!latestBase.length) return;
     const prevArr = candles.value;
     const lastPrev = prevArr[prevArr.length - 1];
-    const lastNew = cs[cs.length - 1];
-    if (!cs.length || !lastNew) return;
+    const lastNew = latestBase[latestBase.length - 1];
+    if (!lastNew) return;
     // 无变化（最新 K 线时间与收盘价一致）则跳过
     if (lastPrev && lastPrev.closeTime === lastNew.closeTime && lastPrev.close === lastNew.close) return;
+    // 记录当前可见时间窗口（合并后按时间重新锚定，防聚合分组平移导致视图跳动）
+    const oldPadded = prevArr.length + rightPadFor(prevArr.length);
+    const oldFrom = Math.max(0, Math.floor((oldPadded * zoomStart) / 100));
+    const oldTo = Math.min(prevArr.length, Math.max(oldFrom + 1, Math.ceil((oldPadded * zoomEnd) / 100)));
+    const t0 = prevArr[Math.min(prevArr.length - 1, oldFrom)]!.openTime;
+    const t1 = prevArr[Math.min(prevArr.length - 1, oldTo - 1)]!.openTime;
+    // 与已加载缓冲合并（保留左侧历史/预热页）：丢弃与新页重叠的旧尾部，避免缺口
+    if (baseCandles.length) {
+      const firstFresh = latestBase[0]!.openTime;
+      let cut = baseCandles.length;
+      while (cut > 0 && baseCandles[cut - 1]!.openTime >= firstFresh) cut--;
+      baseCandles = [...baseCandles.slice(0, cut), ...latestBase];
+    } else {
+      baseCandles = latestBase;
+    }
+    const cs = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
+    if (!cs.length) return;
     candles.value = cs;
+    // 按时间重新定位新缓冲中的可见窗口
+    let nf = 0;
+    while (nf < cs.length && cs[nf]!.openTime < t0) nf++;
+    let nt = nf;
+    while (nt < cs.length && cs[nt]!.openTime <= t1) nt++;
+    if (nt <= nf) nt = Math.min(cs.length, nf + 1);
+    anchorZoom(nf, nt);
 
     // 重算指标（含右侧填充）
     const RIGHT_PAD = rightPadFor(cs.length);
@@ -682,8 +797,8 @@ async function refreshLatest() {
       if (c.high > yHi) yHi = c.high;
     }
     const yPad = (yHi - yLo) * 0.06;
-    const priceMin = yLo - yPad;
-    const priceMax = yHi + yPad;
+    const priceMin = yLo - yPad + yPan;
+    const priceMax = yHi + yPad + yPan;
     const buckets = Math.max(16, Math.min(48, Math.round(visible.length / 4)));
     const profile = volumeProfile(visible, buckets);
     const maxVol = Math.max(1e-9, profile.reduce((m, b) => (b.volume > m ? b.volume : m), 0));
@@ -728,6 +843,7 @@ async function refreshLatest() {
     if (rsiOn.value && lastGridIdx.rsi !== undefined) catAxisUpdate.push({ id: 'x-cat-' + lastGridIdx.rsi, data: times });
 
     chart.setOption({
+      dataZoom: [{ start: zoomStart, end: zoomEnd }],
       yAxis: [{ gridIndex: 0, min: priceMin, max: priceMax }],
       xAxis: catAxisUpdate,
       series: seriesUpdate,
@@ -745,6 +861,9 @@ async function refreshLatest() {
     updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
     updateHlMarkers(visible, realFrom);
     updatePocMark(vpvrOn.value ? pocPrice : null);
+    lastPocPrice = vpvrOn.value ? pocPrice : null;
+    lastVisible = visible;
+    lastRealFrom = realFrom;
     const last = cs[cs.length - 1]!;
     const prevC = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
     lastPrice.value = last.close;
@@ -814,17 +933,26 @@ function render() {
           const chg = c.close - prevC;
           const pct = prevC > 0 ? (chg / prevC) * 100 : 0;
           const up = c.close >= prevC;
+          // 振幅=(高-低)/昨收、差值=高-低；高/低相对本 K 线收盘价的百分比（高恒+、低恒-）
+          const amp = prevC > 0 ? ((c.high - c.low) / prevC) * 100 : 0;
+          const diff = c.high - c.low;
+          const highPct = c.close > 0 ? ((c.high - c.close) / c.close) * 100 : 0;
+          const lowPct = c.close > 0 ? ((c.low - c.close) / c.close) * 100 : 0;
           const tw = chartEl.value?.clientWidth ?? 0;
           const th = chartEl.value?.clientHeight ?? 0;
           hoverTip.value = {
             visible: true,
-            x: Math.min(x + 14, tw - 148),
-            y: Math.min(y + 14, th - 140),
+            x: Math.min(x + 14, tw - 175),
+            y: Math.min(y + 14, th - 195),
             time: new Date(c.openTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
             open: fmtPrice(c.open),
             high: fmtPrice(c.high),
             low: fmtPrice(c.low),
             close: fmtPrice(c.close),
+            highPct: (highPct >= 0 ? '+' : '') + highPct.toFixed(2) + '%',
+            lowPct: lowPct.toFixed(2) + '%',
+            amp: amp.toFixed(2) + '%',
+            diff: fmtPrice(diff),
             change: (chg >= 0 ? '+' : '') + fmtPrice(chg),
             changePct: (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
             cls: up ? 'up' : 'down',
@@ -843,6 +971,12 @@ function render() {
     chartEl.value.addEventListener('mousemove', onChartMove);
     chartEl.value.addEventListener('mouseleave', onChartLeave);
     chart.on('globalout', () => resetHoverLegends());
+    // 视图上下拖拽：拖拽平移价格轴（左右平移由 dataZoom 内置处理，互不冲突）
+    chartEl.value.addEventListener('mousedown', onYDown);
+    chartEl.value.addEventListener('dblclick', () => {
+      yPan = 0; // 双击重置价格轴平移
+      render();
+    });
   }
   const cs = candles.value;
   if (!cs.length) return;
@@ -862,15 +996,15 @@ function render() {
   const realTo = Math.min(cs.length, Math.max(realFrom + 1, to));
   const visible = cs.slice(realFrom, realTo);
 
-  // 价格轴范围：可见 K 线高低 + 6% 边距（K 线不贴上下边框），VPVR 轴同步
+  // 价格轴范围：可见 K 线高低 + 6% 边距（K 线不贴上下边框），VPVR 轴同步；上下拖拽平移量 yPan 叠加
   let yLo = Infinity, yHi = -Infinity;
   for (const c of visible) {
     if (c.low < yLo) yLo = c.low;
     if (c.high > yHi) yHi = c.high;
   }
   const yPad = (yHi - yLo) * 0.06;
-  const priceMin = yLo - yPad;
-  const priceMax = yHi + yPad;
+  const priceMin = yLo - yPad + yPan;
+  const priceMax = yHi + yPad + yPan;
 
   // 指标
   const macdRes = macd(closes);
@@ -1031,7 +1165,9 @@ function render() {
         const yLo = api.coord([0, lo])[1];
         const yTop = Math.min(yHi, yLo);
         const h = Math.max(1, Math.abs(yHi - yLo));
-        const w = Math.max(1, frac * params.coordSys.width * 0.5); // 重叠展示，柱宽限半
+        // VPVR 归一化限宽：最大量柱映射到目标宽度（网格 14%，上限 110px），其余按量等比缩放，不截断
+        const maxBarW = Math.min(110, params.coordSys.width * 0.14);
+        const w = Math.max(1, frac * maxBarW);
         return {
           type: 'rect',
           shape: { x: right - w, y: yTop, width: w, height: h },
@@ -1179,6 +1315,110 @@ function render() {
   updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
   updateHlMarkers(visible, realFrom);
   updatePocMark(vpvrOn.value ? pocPrice : null);
+  lastPocPrice = vpvrOn.value ? pocPrice : null;
+  lastVisible = visible;
+  lastRealFrom = realFrom;
+}
+
+// ---------- 视图上下拖拽：拖拽平移价格轴（左右平移由 dataZoom 内置处理） ----------
+/** 当前可见区间的价格范围（不含 yPan 偏移），用于拖拽平移换算 */
+function currentPriceRange(): { lo: number; hi: number } | null {
+  const cs = candles.value;
+  if (!cs.length) return null;
+  const RIGHT_PAD = rightPadFor(cs.length);
+  const paddedLen = cs.length + RIGHT_PAD;
+  const from = Math.max(0, Math.floor((paddedLen * zoomStart) / 100));
+  const to = Math.min(paddedLen, Math.max(from + 1, Math.ceil((paddedLen * zoomEnd) / 100)));
+  const realFrom = Math.min(cs.length, from);
+  const realTo = Math.min(cs.length, Math.max(realFrom + 1, to));
+  let lo = Infinity, hi = -Infinity;
+  for (let i = realFrom; i < realTo; i++) {
+    const c = cs[i]!;
+    if (c.low < lo) lo = c.low;
+    if (c.high > hi) hi = c.high;
+  }
+  const yPad = (hi - lo) * 0.06;
+  return { lo: lo - yPad, hi: hi + yPad };
+}
+
+/** 应用价格轴平移（上下拖拽）：只改主图 y 轴范围，并同步右侧价格标记 */
+function applyYPan() {
+  if (!chart) return;
+  const range = currentPriceRange();
+  if (range == null) return;
+  chart.setOption({ yAxis: [{ gridIndex: 0, min: range.lo + yPan, max: range.hi + yPan }] });
+  updatePocMark(lastPocPrice);
+  updateHlMarkers(lastVisible, lastRealFrom);
+}
+
+function onYDown(e: MouseEvent) {
+  if (e.button !== 0) return;
+  yDrag = { startY: e.clientY, startPan: yPan };
+  window.addEventListener('mousemove', onYMove);
+  window.addEventListener('mouseup', onYUp);
+}
+function onYMove(e: MouseEvent) {
+  if (!yDrag) return;
+  const dy = e.clientY - yDrag.startY;
+  if (Math.abs(dy) < 2) return; // 死区：忽略轻微抖动
+  const range = currentPriceRange();
+  if (range == null) return;
+  // 往下拖 = 视图下移 = 看到更高价格区间（与 TradingView 一致）
+  const delta = (dy / Math.max(50, mainGridH)) * (range.hi - range.lo);
+  yPan = yDrag.startPan + delta;
+  if (yPanRaf) return;
+  yPanRaf = requestAnimationFrame(() => {
+    yPanRaf = 0;
+    applyYPan();
+  });
+}
+function onYUp() {
+  yDrag = null;
+  window.removeEventListener('mousemove', onYMove);
+  window.removeEventListener('mouseup', onYUp);
+}
+
+// ---------- 历史分页：往右拖拽（向更早数据）到已加载边界时按页加载 ----------
+/** 将视图窗口锚定到绝对 K 线区间 [fromIdx, toIdx)，历史页追加后保持窗口不跳动 */
+function anchorZoom(fromIdx: number, toIdx: number) {
+  const paddedLen = candles.value.length + rightPadFor(candles.value.length);
+  zoomStart = Math.max(0, Math.min(100, (fromIdx / paddedLen) * 100));
+  zoomEnd = Math.max(zoomStart + 1e-3, Math.min(100, (toIdx / paddedLen) * 100));
+}
+
+/** 加载更早一页历史（endTime 取当前最旧 K 线之前），追加后保持当前可见窗口不变 */
+async function loadOlderPage() {
+  if (loadingHistory || reachedStart || !baseCandles.length) return;
+  loadingHistory = true;
+  try {
+    const { base, factor } = intervalFetch();
+    const baseMs = INTERVAL_MS[base];
+    if (!baseMs) return;
+    const n = Math.min(limit.value * factor, Math.floor(1000 / factor) * factor);
+    const endTime = baseCandles[0]!.openTime - baseMs;
+    const res = await api.get<{ candles: CandleView[] }>(
+      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + base + '&limit=' + n + '&endTime=' + endTime,
+    );
+    const page = res.candles;
+    if (!page.length) {
+      reachedStart = true; // 已到数据起点，无法再往前翻
+      return;
+    }
+    // 记录当前可见的绝对 K 线区间（追加后按平移量重新锚定）
+    const oldLen = candles.value.length;
+    const oldPaddedLen = oldLen + rightPadFor(oldLen);
+    const realFrom = Math.max(0, Math.floor((oldPaddedLen * zoomStart) / 100));
+    const realTo = Math.min(oldLen, Math.max(realFrom + 1, Math.ceil((oldPaddedLen * zoomEnd) / 100)));
+    baseCandles = [...page, ...baseCandles];
+    candles.value = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
+    const shift = candles.value.length - oldLen;
+    anchorZoom(realFrom + shift, realTo + shift);
+    render();
+  } catch {
+    /* 历史加载失败静默，下次拖拽再试 */
+  } finally {
+    loadingHistory = false;
+  }
 }
 
 // ---------- 缩放：仅重算 VPVR（可见区间） ----------
@@ -1200,6 +1440,10 @@ function onZoom() {
   const realFrom = Math.min(cs.length, from);
   const realTo = Math.min(cs.length, Math.max(realFrom + 1, to));
   const visible = cs.slice(realFrom, realTo);
+  // 历史分页：视图左缘到达已加载数据起点（拖动/缩放到最左）时，按页加载更早数据
+  if (from <= 0 && !loadingHistory && !reachedStart && baseCandles.length) {
+    void loadOlderPage();
+  }
   // 缩放后价格轴范围随可见 K 线重算（K 线不贴上下边框）
   let yLo = Infinity, yHi = -Infinity;
   for (const c of visible) {
@@ -1207,8 +1451,8 @@ function onZoom() {
     if (c.high > yHi) yHi = c.high;
   }
   const yPad = (yHi - yLo) * 0.06;
-  const priceMin = yLo - yPad;
-  const priceMax = yHi + yPad;
+  const priceMin = yLo - yPad + yPan;
+  const priceMax = yHi + yPad + yPan;
   const opts: Record<string, unknown> = {
     yAxis: [{ gridIndex: 0, min: priceMin, max: priceMax }],
   };
@@ -1248,6 +1492,9 @@ function onZoom() {
   updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
   updateHlMarkers(visible, realFrom);
   updatePocMark(vpvrOn.value ? pocPrice : null);
+  lastPocPrice = vpvrOn.value ? pocPrice : null;
+  lastVisible = visible;
+  lastRealFrom = realFrom;
 }
 
 // ---------- 指标设置持久化（按账户保存，刷新不丢失） ----------
@@ -1337,6 +1584,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
   if (resizeHandler) window.removeEventListener('resize', resizeHandler);
+  window.removeEventListener('mousemove', onYMove);
+  window.removeEventListener('mouseup', onYUp);
   chart?.dispose();
   chart = null;
 });
@@ -1359,8 +1608,14 @@ onBeforeUnmount(() => {
 .tv-tab:hover { color: var(--text); }
 .tv-tab.active { background: var(--accent); color: #fff; font-weight: 600; }
 .caret { font-size: 9px; opacity: 0.7; margin-left: 2px; }
-.cust-iv { width: 92px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; font-family: var(--mono); padding: 2px 5px; text-align: center; }
-.cust-iv:focus { outline: none; border-color: var(--accent); }
+.cust-iv { display: inline-flex; align-items: center; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.cust-iv.active { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(64,158,255,0.35); }
+.cust-num { width: 54px; background: none; border: none; color: var(--text); font-size: 11px; font-family: var(--mono); padding: 2px 5px; text-align: center; }
+.cust-num:focus { outline: none; }
+.cust-unit { border: none; border-left: 1px solid var(--border); background: var(--bg-elev); color: var(--text); font-size: 11px; font-family: var(--mono); padding: 2px 2px; cursor: pointer; }
+.cust-unit:focus { outline: none; }
+/* 当前周期：始终显示（标准中文标签 / 自定义如 45分钟） */
+.cur-iv { font-size: 11px; font-weight: 600; color: var(--accent); padding: 2px 7px; border: 1px solid rgba(64,158,255,0.45); border-radius: 4px; background: rgba(64,158,255,0.08); white-space: nowrap; margin-left: 4px; }
 .iv-active { font-weight: 700; color: var(--accent) !important; }
 .tv-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
@@ -1391,11 +1646,16 @@ onBeforeUnmount(() => {
 /* EMA / MA 图例分两列（组关闭时不渲染，不留灰色框） */
 .lg-col { display: flex; flex-direction: column; gap: 2px; background: rgba(17,22,29,0.6); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px 4px; }
 .lg-col .lg { line-height: 1.5; }
+.lg-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .lg-head { font-weight: 700; line-height: 1.6; }
+/* 图例关闭 ×：EMA/MA 在列右上角，VOL/MACD/RSI 在数值右边 */
+.lg-x { pointer-events: auto; cursor: pointer; color: var(--text-dim); font-size: 12px; line-height: 1; padding: 0 2px; border-radius: 3px; }
+.lg-x:hover { color: #f56c6c; background: rgba(245,108,108,0.15); }
 .drag-handle { position: absolute; left: 60px; right: 10px; height: 7px; cursor: row-resize; z-index: 6; border-top: 1px dashed transparent; }
 .drag-handle:hover { border-top: 1px dashed var(--accent); }
 /* 悬停 OHLC 浮窗 */
-.hover-tip { position: absolute; z-index: 7; background: rgba(17,22,29,0.92); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 11px; pointer-events: none; min-width: 132px; }
+.hover-tip { position: absolute; z-index: 7; background: rgba(17,22,29,0.92); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 11px; pointer-events: none; min-width: 152px; }
+.ht-pct { font-weight: 600; margin-left: 4px; }
 .ht-time { color: var(--text-dim); margin-bottom: 4px; }
 .ht-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.6; }
 .ht-k { color: var(--text-dim); }
@@ -1407,6 +1667,9 @@ onBeforeUnmount(() => {
 .hl-low::after { content: ''; position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); width: 1px; height: 5px; background: rgba(245,108,108,0.8); }
 /* POC 价格标记：右侧价格列（网格右缘往右 6px），与价格标签一起显示 */
 .poc-mark { position: absolute; left: calc(100% - 150px + 6px); transform: translateY(-50%); z-index: 6; font-size: 10px; color: #e6c55a; padding: 1px 4px; border-radius: 3px; background: rgba(17,22,29,0.85); border: 1px solid rgba(230,197,90,0.35); pointer-events: none; white-space: nowrap; line-height: 1.4; }
+/* 右侧价格列：最高/最低（与 POC 同列同式样，仅颜色区分） */
+.poc-mark.hl-r-h { color: #67c23a; border-color: rgba(103,194,58,0.55); }
+.poc-mark.hl-r-l { color: #f56c6c; border-color: rgba(245,108,108,0.55); }
 .period-input { width: 56px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; font-family: var(--mono); padding: 2px 4px; text-align: center; }
 .period-input:focus { outline: none; border-color: var(--accent); }
 .del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
