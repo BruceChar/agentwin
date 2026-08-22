@@ -1,47 +1,70 @@
 <template>
-  <el-card shadow="never">
-    <template #header>
-      <div class="toolbar">
-        <span class="title">K 线行情</span>
-        <el-select v-model="symbol" style="width: 130px" @change="load(true)">
+  <el-card shadow="never" class="tv-card">
+    <!-- TradingView 风格顶栏：品种 + 周期标签页 -->
+    <div class="tv-top">
+      <div class="tv-symbol">
+        <el-select :model-value="symbol" size="small" style="width: 118px" @change="onSymbol">
           <el-option v-for="s in symbols" :key="s" :value="s" :label="s" />
         </el-select>
-        <el-select v-model="market" style="width: 130px" @change="load(true)">
+        <el-select :model-value="market" size="small" style="width: 118px" @change="onMarket">
           <el-option v-for="m in marketOptions" :key="m.value" :value="m.value" :label="m.label" />
         </el-select>
-        <el-select v-model="interval" style="width: 112px" @change="load(true)">
-          <el-option v-for="i in intervalOptions" :key="i.value" :value="i.value" :label="i.label" />
-        </el-select>
-        <el-input-number v-model="limit" :min="50" :max="1000" :step="50" size="small" style="width: 128px" @change="load()" />
-        <el-button size="small" @click="load()">刷新</el-button>
-        <span class="dim">自动刷新</span>
-        <el-switch v-model="autoRefresh" size="small" />
+        <span v-if="lastPrice != null" class="tv-px mono" :class="lastUp ? 'up' : 'down'">{{ fmtPrice(lastPrice) }}</span>
+        <span class="tv-chg mono" :class="lastUp ? 'up' : 'down'">{{ lastChangePct }}</span>
       </div>
-    </template>
+      <div class="tv-intervals">
+        <button
+          v-for="i in intervalOptions"
+          :key="i.value"
+          class="tv-tab"
+          :class="{ active: interval === i.value }"
+          @click="changeInterval(i.value)"
+        >{{ i.short }}</button>
+      </div>
+      <div class="tv-actions">
+        <el-input-number v-model="limit" :min="50" :max="1000" :step="50" size="small" style="width: 96px" @change="load()" />
+        <span class="dim">自动</span>
+        <el-switch v-model="autoRefresh" size="small" />
+        <el-button size="small" @click="load()">刷新</el-button>
+      </div>
+    </div>
 
+    <!-- 指标栏 -->
     <div class="ind-bar">
-      <span class="dim">均线周期（MA 实线 · EMA 虚线，可编辑、支持小数）</span>
+      <span class="dim">均线（MA 实线 · EMA 虚线）</span>
       <span v-for="(p, i) in periods" :key="p.id" class="chip">
         <i class="dot" :style="{ background: periodColor(i) }" />
-        <el-input :model-value="fmtPeriod(p.value)" size="small" style="width: 78px" title="周期（支持小数，如 62.8）" @change="(v: string | number) => setPeriod(p, v)" />
+        <el-input :model-value="fmtPeriod(p.value)" size="small" style="width: 68px" title="周期（支持小数，如 62.8）" @change="(v: string | number) => setPeriod(p, v)" />
         <el-checkbox v-model="p.ma" size="small" @change="render">MA</el-checkbox>
         <el-checkbox v-model="p.ema" size="small" @change="render">EMA</el-checkbox>
         <button v-if="periods.length > 1" class="del" title="删除该周期" @click="removePeriod(i)">×</button>
       </span>
-      <el-button size="small" text type="primary" @click="addPeriod">+ 添加周期</el-button>
-      <el-divider direction="vertical" />
-      <span class="dim">指标</span>
+      <el-button size="small" text type="primary" @click="addPeriod">+ 周期</el-button>
+      <span class="dim" style="margin-left: 12px">指标</span>
       <el-checkbox v-model="volOn" size="small" @change="render">成交量</el-checkbox>
       <el-checkbox v-model="macdOn" size="small" @change="render">MACD</el-checkbox>
       <el-checkbox v-model="rsiOn" size="small" @change="render">RSI</el-checkbox>
       <el-checkbox v-model="vpvrOn" size="small" @change="render">VPVR</el-checkbox>
-      <span v-if="lastPrice != null" class="px">
-        最新价 <b :class="lastUp ? 'up' : 'down'">{{ fmtPrice(lastPrice) }}</b>
-        <span class="dim">· {{ intervalLabel }} · {{ candles.length }} 根</span>
-      </span>
     </div>
 
-    <div ref="chartEl" v-loading="loading" class="chart"></div>
+    <!-- 图表 + 图例浮层 -->
+    <div class="chart-wrap">
+      <div ref="chartEl" v-loading="loading" class="chart"></div>
+      <div class="legend">
+        <span v-for="(it, idx) in legendItems" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
+      </div>
+    </div>
+
+    <!-- TradingView 风格状态栏：最新 K 线 OHLC -->
+    <div class="tv-status mono">
+      <span class="dim">时间</span><span>{{ status.time }}</span>
+      <span class="dim">开</span><span>{{ status.open }}</span>
+      <span class="dim">高</span><span class="up">{{ status.high }}</span>
+      <span class="dim">低</span><span class="down">{{ status.low }}</span>
+      <span class="dim">收</span><span :class="status.cls">{{ status.close }}</span>
+      <span class="dim">涨跌</span><span :class="status.cls">{{ status.change }} · {{ status.changePct }}</span>
+      <span class="dim">量</span><span>{{ status.volume }}</span>
+    </div>
   </el-card>
 </template>
 
@@ -70,11 +93,11 @@ const marketOptions = [
   { value: 'USDT_M', label: 'U本位合约' },
 ];
 const intervalOptions = [
-  { value: '1m', label: '1分钟' }, { value: '5m', label: '5分钟' }, { value: '15m', label: '15分钟' },
-  { value: '30m', label: '30分钟' }, { value: '1h', label: '1小时' }, { value: '2h', label: '2小时' },
-  { value: '4h', label: '4小时' }, { value: '8h', label: '8小时' }, { value: '12h', label: '12小时' },
-  { value: '1d', label: '1天' }, { value: '1w', label: '1周' }, { value: '2w', label: '2周' },
-  { value: '1M', label: '1月' },
+  { value: '1m', label: '1分钟', short: '1m' }, { value: '5m', label: '5分钟', short: '5m' }, { value: '15m', label: '15分钟', short: '15m' },
+  { value: '30m', label: '30分钟', short: '30m' }, { value: '1h', label: '1小时', short: '1h' }, { value: '2h', label: '2小时', short: '2h' },
+  { value: '4h', label: '4小时', short: '4h' }, { value: '8h', label: '8小时', short: '8h' }, { value: '12h', label: '12小时', short: '12h' },
+  { value: '1d', label: '1天', short: '1D' }, { value: '1w', label: '1周', short: '1W' }, { value: '2w', label: '2周', short: '2W' },
+  { value: '1M', label: '1月', short: '1M' },
 ];
 /** 每行周期一条色：MA 实线、EMA 虚线（同色） */
 const PERIOD_COLORS = ['#e6a23c', '#409eff', '#9254de', '#14b8a6', '#ec4899', '#06b6d4', '#f59e0b', '#7c8cf8'];
@@ -127,9 +150,66 @@ const loading = ref(false);
 const candles = ref<CandleView[]>([]);
 const lastPrice = ref<number | null>(null);
 const lastUp = ref(true);
+const lastChangePct = ref('');
 const chartEl = ref<HTMLDivElement | null>(null);
 
 const intervalLabel = computed(() => intervalOptions.find((i) => i.value === interval.value)?.label ?? interval.value);
+
+// TradingView 风格：图例浮层 + 状态栏
+interface LegendItem { name: string; color: string; value: string }
+const legendItems = ref<LegendItem[]>([]);
+const status = ref<{ time: string; open: string; high: string; low: string; close: string; change: string; changePct: string; cls: string; volume: string }>({
+  time: '-', open: '-', high: '-', low: '-', close: '-', change: '-', changePct: '-', cls: '', volume: '-',
+});
+
+function onSymbol(v: string) { symbol.value = v; load(true); }
+function onMarket(v: string) { market.value = v; load(true); }
+function changeInterval(v: string) {
+  if (interval.value === v) return;
+  interval.value = v;
+  load(true);
+}
+
+/** 图例：最后一个可见 K 线的指标值（TradingView 左上角风格） */
+function updateLegend(lastIdx: number, maLines: { name: string; color: string; vals: (number | null)[] }[], macdRes: { dif: (number | null)[]; dea: (number | null)[] }, rsiVals: (number | null)[]) {
+  const items: LegendItem[] = [];
+  for (const m of maLines) {
+    const v = m.vals[lastIdx];
+    if (v != null) items.push({ name: m.name, color: m.color, value: fmtPrice(v) });
+  }
+  if (macdOn.value) {
+    const d = macdRes.dif[lastIdx], e = macdRes.dea[lastIdx];
+    if (d != null) items.push({ name: 'DIF', color: '#f0a35e', value: fmtPrice(d) });
+    if (e != null) items.push({ name: 'DEA', color: '#4da3ff', value: fmtPrice(e) });
+  }
+  if (rsiOn.value) {
+    const r = rsiVals[lastIdx];
+    if (r != null) items.push({ name: 'RSI', color: '#4da3ff', value: Number(r).toFixed(2) });
+  }
+  legendItems.value = items;
+}
+
+/** 状态栏：最新可见 K 线 OHLC + 涨跌幅 */
+function updateStatus(c: CandleView | undefined, prev: CandleView | undefined) {
+  if (!c) {
+    status.value = { time: '-', open: '-', high: '-', low: '-', close: '-', change: '-', changePct: '-', cls: '', volume: '-' };
+    return;
+  }
+  const up = c.close >= (prev?.close ?? c.open);
+  const chg = c.close - (prev?.close ?? c.open);
+  const pct = (prev?.close ?? c.open) > 0 ? (chg / (prev?.close ?? c.open)) * 100 : 0;
+  status.value = {
+    time: new Date(c.openTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+    open: fmtPrice(c.open),
+    high: fmtPrice(c.high),
+    low: fmtPrice(c.low),
+    close: fmtPrice(c.close),
+    change: (chg >= 0 ? '+' : '') + fmtPrice(chg),
+    changePct: (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
+    cls: up ? 'up' : 'down',
+    volume: fmtVol(c.volume),
+  };
+}
 
 // ---------- 图表实例 ----------
 let chart: echarts.ECharts | null = null;
@@ -162,6 +242,7 @@ async function load(resetZoom = false) {
       const prev = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
       lastPrice.value = last.close;
       lastUp.value = last.close >= prev;
+      lastChangePct.value = prev > 0 ? ((last.close - prev) / prev) * 100 >= 0 ? '+' + (((last.close - prev) / prev) * 100).toFixed(2) + '%' : (((last.close - prev) / prev) * 100).toFixed(2) + '%' : '';
     }
     render();
   } catch (e) {
@@ -240,7 +321,7 @@ function render() {
     boundaryGap: ['1', '1'], // 首尾各留一个带宽，K 线不贴左右边框
     axisLine: { lineStyle: { color: 'rgba(128,140,155,0.25)' } },
     axisTick: { show: false },
-    axisLabel: showLabel ? { color: '#8a94a3', hideOverlap: true } : { show: false },
+    axisLabel: showLabel ? { color: '#8a94a3', hideOverlap: true, fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace', fontSize: 10 } : { show: false },
     splitLine: { show: false },
   });
   xAxes.push(mkCatAxis(0, true));
@@ -250,8 +331,8 @@ function render() {
     max: priceMax,
     scale: true,
     axisLine: { show: false },
-    axisLabel: { color: '#8a94a3', formatter: fmtPrice },
-    splitLine: { lineStyle: { color: 'rgba(128,140,155,0.10)' } },
+    axisLabel: { color: '#8a94a3', formatter: fmtPrice, fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace', fontSize: 10 },
+    splitLine: { lineStyle: { color: 'rgba(128,140,155,0.08)' } },
     axisPointer: { label: { formatter: (p: { value: number }) => fmtPrice(p.value) } },
   });
   // VPVR 专用轴：右侧竖版条，与价格轴同范围（保证与 K 线价格严格对齐）
@@ -305,7 +386,7 @@ function render() {
     xAxisIndex: 0,
     yAxisIndex: 0,
     data: cs.map((c) => [c.open, c.close, c.low, c.high]),
-    itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
+    itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN, borderWidth: 1 },
     valueFormatter: (v: unknown) =>
       Array.isArray(v)
         ? '开 ' + fmtPrice(v[0] as number) + ' 收 ' + fmtPrice(v[1] as number) + ' 低 ' + fmtPrice(v[2] as number) + ' 高 ' + fmtPrice(v[3] as number)
@@ -313,11 +394,13 @@ function render() {
   });
 
   // MA 实线 / EMA 虚线（同色系，周期可编辑）
+  const maLegend: { name: string; color: string; vals: (number | null)[] }[] = [];
   for (let i = 0; i < periods.value.length; i++) {
     const row = periods.value[i]!;
     const color = periodColor(i);
     const label = fmtPeriod(row.value);
     if (row.ma) {
+      maLegend.push({ name: 'MA(' + label + ')', color, vals: sma(closes, row.value) });
       series.push({
         name: 'MA(' + label + ')',
         type: 'line',
@@ -333,6 +416,7 @@ function render() {
       });
     }
     if (row.ema) {
+      maLegend.push({ name: 'EMA(' + label + ')', color, vals: ema(closes, row.value) });
       series.push({
         name: 'EMA(' + label + ')',
         type: 'line',
@@ -486,10 +570,10 @@ function render() {
       tooltip: {
         trigger: 'axis',
         confine: true,
-        axisPointer: { type: 'cross' },
+        axisPointer: { type: 'cross', lineStyle: { color: '#4da3ff', type: 'dashed', width: 1 }, crossStyle: { color: '#4da3ff', type: 'dashed' } },
         backgroundColor: 'rgba(17,22,29,0.92)',
         borderColor: 'rgba(128,140,155,0.3)',
-        textStyle: { color: '#d7dde4', fontSize: 12 },
+        textStyle: { color: '#d7dde4', fontSize: 11, fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace' },
       },
       axisPointer: { link: [{ xAxisIndex: catAxisIdx }] },
       grid: grids,
@@ -515,6 +599,11 @@ function render() {
     },
     true,
   );
+
+  // TradingView 风格：图例（左上角指标现值）+ 状态栏（最新可见 K 线 OHLC）
+  const lastIdx = Math.max(0, Math.min(to - 1, cs.length - 1));
+  updateLegend(lastIdx, maLegend, macdRes, rsiRes);
+  updateStatus(to - 1 < cs.length ? cs[to - 1] : undefined, to - 2 >= 0 ? cs[to - 2] : undefined);
 }
 
 // ---------- 缩放：仅重算 VPVR（可见区间） ----------
@@ -554,6 +643,21 @@ function onZoom() {
     opts['series'] = [{ id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) }];
   }
   chart.setOption(opts);
+  // 缩放后同步图例与状态栏（以最后可见 K 线为准）
+  const closes = cs.map((c) => c.close);
+  const macdRes = macd(closes);
+  const rsiRes = rsi(closes, 14);
+  const maLegend: { name: string; color: string; vals: (number | null)[] }[] = [];
+  for (let i = 0; i < periods.value.length; i++) {
+    const row = periods.value[i]!;
+    const color = periodColor(i);
+    const label = fmtPeriod(row.value);
+    if (row.ma) maLegend.push({ name: 'MA(' + label + ')', color, vals: sma(closes, row.value) });
+    if (row.ema) maLegend.push({ name: 'EMA(' + label + ')', color, vals: ema(closes, row.value) });
+  }
+  const lastIdx = Math.max(0, Math.min(to - 1, cs.length - 1));
+  updateLegend(lastIdx, maLegend, macdRes, rsiRes);
+  updateStatus(to - 1 < cs.length ? cs[to - 1] : undefined, to - 2 >= 0 ? cs[to - 2] : undefined);
 }
 
 // ---------- 生命周期 ----------
@@ -580,18 +684,40 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.chart { height: 668px; width: 100%; }
-.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.title { font-weight: 600; margin-right: 4px; }
+.tv-card :deep(.el-card__body) { padding: 0; }
 .dim { color: var(--text-dim); font-size: 12px; }
-.ind-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 2px 2px 10px; }
-.ind-bar :deep(.el-checkbox) { margin-right: 0; }
-.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px 2px 8px; }
-.chip :deep(.el-input__wrapper) { box-shadow: none; }
-.dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: none; }
-.del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
-.del:hover { color: #f56c6c; }
-.px { margin-left: auto; font-size: 13px; font-family: var(--mono); }
+.mono { font-family: var(--mono); }
 .up { color: #67c23a; }
 .down { color: #f56c6c; }
+
+/* TradingView 风格顶栏 */
+.tv-top { display: flex; align-items: center; gap: 14px; padding: 8px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.tv-symbol { display: flex; align-items: center; gap: 6px; }
+.tv-px { font-size: 15px; font-weight: 700; margin-left: 6px; }
+.tv-chg { font-size: 11px; }
+.tv-intervals { display: flex; align-items: center; gap: 2px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 2px; }
+.tv-tab { border: none; background: none; color: var(--text-dim); font-size: 11px; padding: 3px 7px; border-radius: 4px; cursor: pointer; font-family: var(--mono); }
+.tv-tab:hover { color: var(--text); }
+.tv-tab.active { background: var(--accent); color: #fff; font-weight: 600; }
+.tv-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* 指标栏 */
+.ind-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--border); }
+.ind-bar :deep(.el-checkbox) { margin-right: 0; }
+.ind-bar :deep(.el-checkbox__label) { font-size: 11px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px 1px 6px; }
+.chip :deep(.el-input__wrapper) { box-shadow: none; }
+.chip :deep(.el-input__inner) { font-size: 11px; }
+.dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; flex: none; }
+.del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+.del:hover { color: #f56c6c; }
+
+/* 图表 + 图例浮层 */
+.chart-wrap { position: relative; }
+.chart { height: 668px; width: 100%; }
+.legend { position: absolute; top: 6px; left: 70px; display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
+.lg b { font-weight: 600; margin-left: 3px; }
+
+/* TradingView 风格状态栏 */
+.tv-status { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); font-size: 11px; flex-wrap: wrap; }
 </style>
