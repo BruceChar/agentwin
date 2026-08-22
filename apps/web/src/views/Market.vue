@@ -67,6 +67,24 @@
       >
         <span v-for="(it, idx) in g.items" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
       </div>
+
+      <!-- 悬停 OHLC 浮窗（当前 K 柱：开高低收/涨跌幅/时间） -->
+      <div
+        v-if="hoverTip.visible"
+        class="hover-tip mono"
+        :style="{ left: hoverTip.x + 'px', top: hoverTip.y + 'px' }"
+      >
+        <div class="ht-time">{{ hoverTip.time }}</div>
+        <div class="ht-row"><span class="ht-k">开</span><span>{{ hoverTip.open }}</span></div>
+        <div class="ht-row"><span class="ht-k">高</span><span class="up">{{ hoverTip.high }}</span></div>
+        <div class="ht-row"><span class="ht-k">低</span><span class="down">{{ hoverTip.low }}</span></div>
+        <div class="ht-row"><span class="ht-k">收</span><span :class="hoverTip.cls">{{ hoverTip.close }}</span></div>
+        <div class="ht-row"><span class="ht-k">涨跌</span><span :class="hoverTip.cls">{{ hoverTip.change }} · {{ hoverTip.changePct }}</span></div>
+      </div>
+
+      <!-- 当前面板可见区间最高/最低点 -->
+      <div v-if="hlMarkers.high" class="hl-mark" :class="'hl-high'" :style="{ top: hlMarkers.high.y + 'px' }">H {{ hlMarkers.high.price }}</div>
+      <div v-if="hlMarkers.low" class="hl-mark" :class="'hl-low'" :style="{ top: hlMarkers.low.y + 'px' }">L {{ hlMarkers.low.price }}</div>
     </div>
 
     <!-- TradingView 风格状态栏：最新 K 线 OHLC -->
@@ -180,6 +198,36 @@ const legends = ref<LegendGroup[]>([]);
 const status = ref<{ time: string; open: string; high: string; low: string; close: string; change: string; changePct: string; cls: string; volume: string }>({
   time: '-', open: '-', high: '-', low: '-', close: '-', change: '-', changePct: '-', cls: '', volume: '-',
 });
+
+// 悬停 OHLC 浮窗
+const hoverTip = ref<{ visible: boolean; x: number; y: number; time: string; open: string; high: string; low: string; close: string; change: string; changePct: string; cls: string }>({
+  visible: false, x: 0, y: 0, time: '', open: '-', high: '-', low: '-', close: '-', change: '-', changePct: '-', cls: '',
+});
+// 当前面板可见区间最高/最低点（右侧价格轴附近）
+const hlMarkers = ref<{ high: { y: number; price: string } | null; low: { y: number; price: string } | null }>({ high: null, low: null });
+
+/** 更新可见区间最高/最低点的像素位置（在价格轴右侧显示） */
+function updateHlMarkers(visibleCandles: CandleView[]) {
+  if (!chart || !visibleCandles.length) {
+    hlMarkers.value = { high: null, low: null };
+    return;
+  }
+  let hi = -Infinity, lo = Infinity;
+  for (const c of visibleCandles) {
+    if (c.high > hi) hi = c.high;
+    if (c.low < lo) lo = c.low;
+  }
+  try {
+    const pyHi = chart.convertToPixel({ seriesIndex: 0 }, [0, hi])[1];
+    const pyLo = chart.convertToPixel({ seriesIndex: 0 }, [0, lo])[1];
+    hlMarkers.value = {
+      high: { y: pyHi - 7, price: fmtPrice(hi) },
+      low: { y: pyLo - 7, price: fmtPrice(lo) },
+    };
+  } catch {
+    hlMarkers.value = { high: null, low: null };
+  }
+}
 
 /** 面板图例布局：K线(price)/成交量(vol)/MACD(macd)/RSI(rsi) 各自左上角 */
 const PANEL_LEGEND_LEFT: Record<string, number> = { price: 70, vol: 70, macd: 70, rsi: 70 };
@@ -493,6 +541,7 @@ async function refreshLatest() {
     hoverLatestIdx = lastIdx;
     updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
     updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
+    updateHlMarkers(visible);
     const last = cs[cs.length - 1]!;
     const prevC = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
     lastPrice.value = last.close;
@@ -522,12 +571,38 @@ function render() {
         const i = Math.round(point[0] as number);
         if (Number.isFinite(i) && i >= 0 && i < candles.value.length) {
           updateHoverLegends(i);
+          // 悬停 OHLC 浮窗：跟随光标，展示当前 K 柱开高低收/涨跌幅/时间
+          const c = candles.value[i];
+          const prevC = i > 0 ? candles.value[i - 1]!.close : c.open;
+          const chg = c.close - prevC;
+          const pct = prevC > 0 ? (chg / prevC) * 100 : 0;
+          const up = c.close >= prevC;
+          const tw = chartEl.value?.clientWidth ?? 0;
+          const th = chartEl.value?.clientHeight ?? 0;
+          hoverTip.value = {
+            visible: true,
+            x: Math.min(x + 14, tw - 148),
+            y: Math.min(y + 14, th - 140),
+            time: new Date(c.openTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+            open: fmtPrice(c.open),
+            high: fmtPrice(c.high),
+            low: fmtPrice(c.low),
+            close: fmtPrice(c.close),
+            change: (chg >= 0 ? '+' : '') + fmtPrice(chg),
+            changePct: (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
+            cls: up ? 'up' : 'down',
+          };
+        } else {
+          hoverTip.value.visible = false;
         }
       } catch {
         /* 网格外悬停忽略 */
       }
     };
-    const onChartLeave = () => resetHoverLegends();
+    const onChartLeave = () => {
+      resetHoverLegends();
+      hoverTip.value.visible = false;
+    };
     chartEl.value.addEventListener('mousemove', onChartMove);
     chartEl.value.addEventListener('mouseleave', onChartLeave);
     chart.on('globalout', () => resetHoverLegends());
@@ -887,6 +962,7 @@ function render() {
   hoverLatestIdx = lastIdx;
   updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
   updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
+  updateHlMarkers(visible);
 }
 
 // ---------- 缩放：仅重算 VPVR（可见区间） ----------
@@ -968,6 +1044,7 @@ function onZoom() {
   hoverLatestIdx = lastIdx;
   updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
   updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
+  updateHlMarkers(visible);
 }
 
 // ---------- 生命周期 ----------
@@ -1036,6 +1113,15 @@ onBeforeUnmount(() => {
 .lg b { font-weight: 600; margin-left: 3px; }
 .drag-handle { position: absolute; left: 60px; right: 10px; height: 7px; cursor: row-resize; z-index: 6; border-top: 1px dashed transparent; }
 .drag-handle:hover { border-top: 1px dashed var(--accent); }
+/* 悬停 OHLC 浮窗 */
+.hover-tip { position: absolute; z-index: 7; background: rgba(17,22,29,0.92); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 11px; pointer-events: none; min-width: 132px; }
+.ht-time { color: var(--text-dim); margin-bottom: 4px; }
+.ht-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.6; }
+.ht-k { color: var(--text-dim); }
+/* 可见区间最高/最低点 */
+.hl-mark { position: absolute; right: 8px; z-index: 6; font-size: 10px; font-family: var(--mono); padding: 1px 4px; border-radius: 3px; background: rgba(17,22,29,0.85); pointer-events: none; }
+.hl-high { color: #67c23a; }
+.hl-low { color: #f56c6c; }
 .period-input { width: 56px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; font-family: var(--mono); padding: 2px 4px; text-align: center; }
 .period-input:focus { outline: none; border-color: var(--accent); }
 
