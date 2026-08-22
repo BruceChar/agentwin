@@ -31,10 +31,11 @@
 
     <!-- 指标栏 -->
     <div class="ind-bar">
-      <span class="dim">均线（MA 实线 · EMA 虚线）</span>
+      <span class="dim">均线（周期/颜色/线宽可编辑）</span>
       <span v-for="(p, i) in periods" :key="p.id" class="chip">
-        <i class="dot" :style="{ background: periodColor(i) }" />
-        <el-input :model-value="fmtPeriod(p.value)" size="small" style="width: 68px" title="周期（支持小数，如 62.8）" @change="(v: string | number) => setPeriod(p, v)" />
+        <el-input :model-value="fmtPeriod(p.value)" size="small" style="width: 60px" title="周期（支持小数，如 62.8）" @change="(v: string | number) => setPeriod(p, v)" />
+        <input v-model="p.color" type="color" class="color" :title="'颜色 ' + p.color" />
+        <el-input-number v-model="p.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 58px" title="线宽" @change="render" />
         <el-checkbox v-model="p.ma" size="small" @change="render">MA</el-checkbox>
         <el-checkbox v-model="p.ema" size="small" @change="render">EMA</el-checkbox>
         <button v-if="periods.length > 1" class="del" title="删除该周期" @click="removePeriod(i)">×</button>
@@ -47,11 +48,16 @@
       <el-checkbox v-model="vpvrOn" size="small" @change="render">VPVR</el-checkbox>
     </div>
 
-    <!-- 图表 + 图例浮层 -->
+    <!-- 图表 + 各面板独立图例（悬停联动，默认显示最新值） -->
     <div class="chart-wrap">
       <div ref="chartEl" v-loading="loading" class="chart"></div>
-      <div class="legend">
-        <span v-for="(it, idx) in legendItems" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
+      <div
+        v-for="g in legends"
+        :key="g.key"
+        class="legend"
+        :style="{ top: g.top + 'px', left: g.left + 'px' }"
+      >
+        <span v-for="(it, idx) in g.items" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
       </div>
     </div>
 
@@ -99,15 +105,14 @@ const intervalOptions = [
   { value: '1d', label: '1天', short: '1D' }, { value: '1w', label: '1周', short: '1W' }, { value: '2w', label: '2周', short: '2W' },
   { value: '1M', label: '1月', short: '1M' },
 ];
-/** 每行周期一条色：MA 实线、EMA 虚线（同色） */
+/** 每行周期：颜色与线宽可编辑（MA 实线、EMA 虚线同色） */
 const PERIOD_COLORS = ['#e6a23c', '#409eff', '#9254de', '#14b8a6', '#ec4899', '#06b6d4', '#f59e0b', '#7c8cf8'];
-interface PeriodRow { id: number; value: number; ma: boolean; ema: boolean }
-const periods = ref<PeriodRow[]>([
-  { id: 1, value: 20, ma: true, ema: true },
-  { id: 2, value: 62.8, ma: true, ema: true },
-  { id: 3, value: 144, ma: true, ema: true },
-  { id: 4, value: 169, ma: true, ema: true },
-]);
+interface PeriodRow { id: number; value: number; ma: boolean; ema: boolean; color: string; width: number }
+const periods = ref<PeriodRow[]>(
+  PERIOD_COLORS.slice(0, 4).map((c, i) => ({
+    id: i + 1, value: [20, 62.8, 144, 169][i]!, ma: true, ema: true, color: c, width: 1.2,
+  })),
+);
 let periodSeq = 5;
 function periodColor(i: number): string {
   return PERIOD_COLORS[i % PERIOD_COLORS.length]!;
@@ -116,7 +121,7 @@ function fmtPeriod(v: number): string {
   return String(Math.round(v * 100) / 100);
 }
 function addPeriod() {
-  periods.value.push({ id: periodSeq++, value: 60, ma: true, ema: true });
+  periods.value.push({ id: periodSeq++, value: 60, ma: true, ema: true, color: periodColor(periods.value.length), width: 1.2 });
   render();
 }
 function removePeriod(i: number) {
@@ -155,12 +160,31 @@ const chartEl = ref<HTMLDivElement | null>(null);
 
 const intervalLabel = computed(() => intervalOptions.find((i) => i.value === interval.value)?.label ?? interval.value);
 
-// TradingView 风格：图例浮层 + 状态栏
+// TradingView 风格：各面板独立图例（默认最新值，悬停联动）+ 状态栏
 interface LegendItem { name: string; color: string; value: string }
-const legendItems = ref<LegendItem[]>([]);
+interface LegendGroup { key: string; top: number; left: number; items: LegendItem[] }
+const legends = ref<LegendGroup[]>([]);
 const status = ref<{ time: string; open: string; high: string; low: string; close: string; change: string; changePct: string; cls: string; volume: string }>({
   time: '-', open: '-', high: '-', low: '-', close: '-', change: '-', changePct: '-', cls: '', volume: '-',
 });
+
+/** 面板图例布局：K线(price)/成交量(vol)/MACD(macd)/RSI(rsi) 各自左上角 */
+const PANEL_LEGEND_LEFT: Record<string, number> = { price: 70, vol: 70, macd: 70, rsi: 70 };
+let legendTops: Record<string, number> = { price: 6 };
+
+// 悬停联动用：缓存最近一次渲染的指标（避免每次 mousemove 重算全量）
+let hoverMa: { name: string; color: string; vals: (number | null)[] }[] = [];
+let hoverMacd: { dif: (number | null)[]; dea: (number | null)[]; hist: (number | null)[] } = { dif: [], dea: [], hist: [] };
+let hoverRsi: (number | null)[] = [];
+let hoverVolMa: (number | null)[] = [];
+let hoverLatestIdx = 0;
+
+function updateHoverLegends(idx: number) {
+  updateLegends(idx, hoverMa, hoverMacd, hoverRsi, hoverVolMa);
+}
+function resetHoverLegends() {
+  updateLegends(hoverLatestIdx, hoverMa, hoverMacd, hoverRsi, hoverVolMa);
+}
 
 function onSymbol(v: string) { symbol.value = v; load(true); }
 function onMarket(v: string) { market.value = v; load(true); }
@@ -170,23 +194,44 @@ function changeInterval(v: string) {
   load(true);
 }
 
-/** 图例：最后一个可见 K 线的指标值（TradingView 左上角风格） */
-function updateLegend(lastIdx: number, maLines: { name: string; color: string; vals: (number | null)[] }[], macdRes: { dif: (number | null)[]; dea: (number | null)[] }, rsiVals: (number | null)[]) {
-  const items: LegendItem[] = [];
+/** 计算某个索引处各面板的图例值（悬停时随鼠标联动，默认显示最新值） */
+function updateLegends(idx: number, maLines: { name: string; color: string; vals: (number | null)[] }[], macdRes: { dif: (number | null)[]; dea: (number | null)[]; hist: (number | null)[] }, rsiVals: (number | null)[], volMa: (number | null)[]) {
+  const groups: LegendGroup[] = [];
+  // K线框：MA/EMA
+  const priceItems: LegendItem[] = [];
   for (const m of maLines) {
-    const v = m.vals[lastIdx];
-    if (v != null) items.push({ name: m.name, color: m.color, value: fmtPrice(v) });
+    const v = m.vals[idx];
+    if (v != null) priceItems.push({ name: m.name, color: m.color, value: fmtPrice(v) });
   }
+  groups.push({ key: 'price', top: legendTops.price ?? 6, left: 70, items: priceItems });
+  // 成交量
+  if (volOn.value) {
+    const volItems: LegendItem[] = [];
+    const v = candles.value[idx]?.volume;
+    if (v != null) volItems.push({ name: 'VOL', color: '#8a94a3', value: fmtVol(v) });
+    const vm = volMa[idx];
+    if (vm != null) volItems.push({ name: 'VOL MA5', color: '#409eff', value: fmtVol(vm) });
+    groups.push({ key: 'vol', top: legendTops.vol ?? 0, left: 70, items: volItems });
+  }
+  // MACD
   if (macdOn.value) {
-    const d = macdRes.dif[lastIdx], e = macdRes.dea[lastIdx];
-    if (d != null) items.push({ name: 'DIF', color: '#f0a35e', value: fmtPrice(d) });
-    if (e != null) items.push({ name: 'DEA', color: '#4da3ff', value: fmtPrice(e) });
+    const macdItems: LegendItem[] = [];
+    const h = macdRes.hist[idx];
+    if (h != null) macdItems.push({ name: 'MACD', color: h >= 0 ? '#67c23a' : '#f56c6c', value: fmtPrice(h) });
+    const d = macdRes.dif[idx];
+    if (d != null) macdItems.push({ name: 'DIF', color: '#f0a35e', value: fmtPrice(d) });
+    const de = macdRes.dea[idx];
+    if (de != null) macdItems.push({ name: 'DEA', color: '#4da3ff', value: fmtPrice(de) });
+    groups.push({ key: 'macd', top: legendTops.macd ?? 0, left: 70, items: macdItems });
   }
+  // RSI
   if (rsiOn.value) {
-    const r = rsiVals[lastIdx];
-    if (r != null) items.push({ name: 'RSI', color: '#4da3ff', value: Number(r).toFixed(2) });
+    const rsiItems: LegendItem[] = [];
+    const r = rsiVals[idx];
+    if (r != null) rsiItems.push({ name: 'RSI(14)', color: '#4da3ff', value: Number(r).toFixed(2) });
+    groups.push({ key: 'rsi', top: legendTops.rsi ?? 0, left: 70, items: rsiItems });
   }
-  legendItems.value = items;
+  legends.value = groups;
 }
 
 /** 状态栏：最新可见 K 线 OHLC + 涨跌幅 */
@@ -260,6 +305,14 @@ function render() {
     chart.on('datazoom', onZoom);
     chart.on('restore', onZoom);
     chart.on('axisareaselected', onZoom);
+    // 悬停：各面板图例联动显示光标处指标值（默认显示最新值）
+    chart.on('mousemove', (params: unknown) => {
+      const p = params as { dataIndex?: number };
+      if (typeof p.dataIndex === 'number' && p.dataIndex >= 0 && p.dataIndex < candles.value.length) {
+        updateHoverLegends(p.dataIndex);
+      }
+    });
+    chart.on('globalout', () => resetHoverLegends());
   }
   const cs = candles.value;
   if (!cs.length) return;
@@ -327,6 +380,7 @@ function render() {
   xAxes.push(mkCatAxis(0, true));
   yAxes.push({
     gridIndex: 0,
+    position: 'right', // 价格数值放右侧（TradingView 风格）
     min: priceMin,
     max: priceMax,
     scale: true,
@@ -364,15 +418,16 @@ function render() {
     xAxes.push(mkCatAxis(gi, false));
     // 注意：yAxis 必须显式指定 gridIndex（默认 0 会导致跨 grid 报错）
     if (p.key === 'vol') {
-      yAxes.push({ gridIndex: gi, scale: true, axisLine: { show: false }, axisLabel: { color: '#8a94a3', formatter: fmtVol }, splitLine: { show: false } });
+      yAxes.push({ gridIndex: gi, position: 'right', scale: true, axisLine: { show: false }, axisLabel: { color: '#8a94a3', formatter: fmtVol, fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace', fontSize: 10 }, splitLine: { show: false } });
     } else if (p.key === 'macd') {
-      yAxes.push({ gridIndex: gi, scale: true, axisLine: { show: false }, axisLabel: { color: '#8a94a3', formatter: (v: number) => fmtPrice(v) }, splitLine: { show: false } });
+      yAxes.push({ gridIndex: gi, position: 'right', scale: true, axisLine: { show: false }, axisLabel: { color: '#8a94a3', formatter: (v: number) => fmtPrice(v), fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace', fontSize: 10 }, splitLine: { show: false } });
     } else {
       yAxes.push({
         gridIndex: gi,
+        position: 'right',
         min: 0, max: 100, interval: 25,
         axisLine: { show: false },
-        axisLabel: { color: '#8a94a3' },
+        axisLabel: { color: '#8a94a3', fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace', fontSize: 10 },
         splitLine: { lineStyle: { color: 'rgba(128,140,155,0.08)' } },
       });
     }
@@ -393,14 +448,13 @@ function render() {
         : fmtPrice(v as number),
   });
 
-  // MA 实线 / EMA 虚线（同色系，周期可编辑）
+  // MA 实线 / EMA 虚线（同色系，周期/颜色/线宽可编辑）
   const maLegend: { name: string; color: string; vals: (number | null)[] }[] = [];
   for (let i = 0; i < periods.value.length; i++) {
     const row = periods.value[i]!;
-    const color = periodColor(i);
     const label = fmtPeriod(row.value);
     if (row.ma) {
-      maLegend.push({ name: 'MA(' + label + ')', color, vals: sma(closes, row.value) });
+      maLegend.push({ name: 'MA(' + label + ')', color: row.color, vals: sma(closes, row.value) });
       series.push({
         name: 'MA(' + label + ')',
         type: 'line',
@@ -410,13 +464,13 @@ function render() {
         symbol: 'none',
         connectNulls: false,
         z: 2,
-        lineStyle: { width: 1.2, color },
+        lineStyle: { width: row.width, color: row.color },
         emphasis: { disabled: true },
         valueFormatter: (v: unknown) => fmtPrice(v as number),
       });
     }
     if (row.ema) {
-      maLegend.push({ name: 'EMA(' + label + ')', color, vals: ema(closes, row.value) });
+      maLegend.push({ name: 'EMA(' + label + ')', color: row.color, vals: ema(closes, row.value) });
       series.push({
         name: 'EMA(' + label + ')',
         type: 'line',
@@ -426,7 +480,7 @@ function render() {
         symbol: 'none',
         connectNulls: false,
         z: 2,
-        lineStyle: { width: 1.2, color, type: 'dashed' },
+        lineStyle: { width: row.width, color: row.color, type: 'dashed' },
         emphasis: { disabled: true },
         valueFormatter: (v: unknown) => fmtPrice(v as number),
       });
@@ -555,27 +609,26 @@ function render() {
     });
   }
 
-  // 网格：0=价格区（右侧留出 VPVR 间隔），1=VPVR 右侧独立竖版条（与 K 线间隔约 40px），2+=副图面板
+  // 网格：0=价格区（K线+右侧数值），1=VPVR 同框右侧竖版条（K线与右侧留 margin），2+=副图面板（数值靠右）
   const grids = gridTop.map((g, i) =>
     i === 0
       ? { left: 64, right: 215, top: g.top, height: g.height }
       : i === 1
-        ? { right: 40, width: 130, top: g.top, height: g.height }
-        : { left: 64, right: 16, top: g.top, height: g.height },
+        ? { right: 44, width: 125, top: g.top, height: g.height }
+        : { left: 64, right: 52, top: g.top, height: g.height },
   );
 
   chart.setOption(
     {
       animation: false,
-      tooltip: {
-        trigger: 'axis',
-        confine: true,
-        axisPointer: { type: 'cross', lineStyle: { color: '#4da3ff', type: 'dashed', width: 1 }, crossStyle: { color: '#4da3ff', type: 'dashed' } },
-        backgroundColor: 'rgba(17,22,29,0.92)',
-        borderColor: 'rgba(128,140,155,0.3)',
-        textStyle: { color: '#d7dde4', fontSize: 11, fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace' },
+      // 不用统一大浮窗：仅保留十字光标，各面板数值显示在自己图例上（悬停联动）
+      tooltip: { show: false },
+      axisPointer: {
+        link: [{ xAxisIndex: catAxisIdx }],
+        lineStyle: { color: '#4da3ff', type: 'dashed', width: 1 },
+        crossStyle: { color: '#4da3ff', type: 'dashed' },
+        label: { backgroundColor: '#2f3a46', color: '#d7dde4', fontSize: 10 },
       },
-      axisPointer: { link: [{ xAxisIndex: catAxisIdx }] },
       grid: grids,
       xAxis: xAxes,
       yAxis: yAxes,
@@ -600,9 +653,18 @@ function render() {
     true,
   );
 
-  // TradingView 风格：图例（左上角指标现值）+ 状态栏（最新可见 K 线 OHLC）
+  // TradingView 风格：各面板图例（左上角，悬停联动）+ 状态栏（最新可见 K 线 OHLC）
+  legendTops = { price: 6 };
+  if (gridIdx.vol !== undefined) legendTops.vol = gridTop[gridIdx.vol]!.top + 2;
+  if (gridIdx.macd !== undefined) legendTops.macd = gridTop[gridIdx.macd]!.top + 2;
+  if (gridIdx.rsi !== undefined) legendTops.rsi = gridTop[gridIdx.rsi]!.top + 2;
   const lastIdx = Math.max(0, Math.min(to - 1, cs.length - 1));
-  updateLegend(lastIdx, maLegend, macdRes, rsiRes);
+  hoverMa = maLegend;
+  hoverMacd = macdRes;
+  hoverRsi = rsiRes;
+  hoverVolMa = volMa;
+  hoverLatestIdx = lastIdx;
+  updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
   updateStatus(to - 1 < cs.length ? cs[to - 1] : undefined, to - 2 >= 0 ? cs[to - 2] : undefined);
 }
 
@@ -647,16 +709,21 @@ function onZoom() {
   const closes = cs.map((c) => c.close);
   const macdRes = macd(closes);
   const rsiRes = rsi(closes, 14);
+  const volMa = sma(cs.map((c) => c.volume), 5);
   const maLegend: { name: string; color: string; vals: (number | null)[] }[] = [];
   for (let i = 0; i < periods.value.length; i++) {
     const row = periods.value[i]!;
-    const color = periodColor(i);
     const label = fmtPeriod(row.value);
-    if (row.ma) maLegend.push({ name: 'MA(' + label + ')', color, vals: sma(closes, row.value) });
-    if (row.ema) maLegend.push({ name: 'EMA(' + label + ')', color, vals: ema(closes, row.value) });
+    if (row.ma) maLegend.push({ name: 'MA(' + label + ')', color: row.color, vals: sma(closes, row.value) });
+    if (row.ema) maLegend.push({ name: 'EMA(' + label + ')', color: row.color, vals: ema(closes, row.value) });
   }
   const lastIdx = Math.max(0, Math.min(to - 1, cs.length - 1));
-  updateLegend(lastIdx, maLegend, macdRes, rsiRes);
+  hoverMa = maLegend;
+  hoverMacd = macdRes;
+  hoverRsi = rsiRes;
+  hoverVolMa = volMa;
+  hoverLatestIdx = lastIdx;
+  updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
   updateStatus(to - 1 < cs.length ? cs[to - 1] : undefined, to - 2 >= 0 ? cs[to - 2] : undefined);
 }
 
@@ -708,6 +775,9 @@ onBeforeUnmount(() => {
 .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px 1px 6px; }
 .chip :deep(.el-input__wrapper) { box-shadow: none; }
 .chip :deep(.el-input__inner) { font-size: 11px; }
+.color { width: 18px; height: 18px; border: none; border-radius: 4px; padding: 0; background: none; cursor: pointer; }
+.color::-webkit-color-swatch-wrapper { padding: 0; }
+.color::-webkit-color-swatch { border: 1px solid var(--border); border-radius: 4px; }
 .dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; flex: none; }
 .del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
 .del:hover { color: #f56c6c; }
@@ -715,7 +785,7 @@ onBeforeUnmount(() => {
 /* 图表 + 图例浮层 */
 .chart-wrap { position: relative; }
 .chart { height: 668px; width: 100%; }
-.legend { position: absolute; top: 6px; left: 70px; display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
+.legend { position: absolute; display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
 .lg b { font-weight: 600; margin-left: 3px; }
 
 /* TradingView 风格状态栏 */
