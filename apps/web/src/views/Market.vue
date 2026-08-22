@@ -1,6 +1,6 @@
 <!-- ================= 行情页：K线图 + 技术指标 =================
-  周期选择：默认展示最常用的 4 个（1h/4h/1d/1w），其余在“更多”下拉；当前周期始终显示（含自定义）；支持自定义“数字+单位下拉”（如 45m/3h/2d，前端聚合）。
-  指标菜单：下拉面板（指标按钮），EMA/MA 两组开关；每条均线单独编辑（周期/颜色/线宽），勾选 ≥2 条可联动编辑。
+  周期选择：单个下拉（鼠标悬停自动展开），显示当前激活周期；内置 置顶 / 常用周期 / 自定义 三组（置顶/自定义按账户持久化），自定义可编辑、可置顶、可删除。
+  指标菜单：logo 图标下拉抽屉——一级为指标列表（MA/EMA 收进二级，不默认展示），点击“均线”进入二级明细（每条悬停显示 隐藏/编辑/删除 图标，可添加、可联动编辑）。
   指标设置按账户持久化（localStorage，key=aw-chart-ind-<accountId>），刷新/切换账户不丢失。
   VPVR：火焰图配色（低量深蓝 → 高量黄/红）。 -->
 <template>
@@ -17,81 +17,162 @@
         <span v-if="lastPrice != null" class="tv-px mono" :class="lastUp ? 'up' : 'down'">{{ fmtPrice(lastPrice) }}</span>
         <span class="tv-chg mono" :class="lastUp ? 'up' : 'down'">{{ lastChangePct }}</span>
       </div>
+      <!-- 时间周期：单个下拉（鼠标悬停自动展开），显示当前激活周期；内置 置顶 / 常用周期 / 自定义 三组 -->
       <div class="tv-intervals">
-        <button
-          v-for="i in quickIntervals"
-          :key="i.value"
-          class="tv-tab"
-          :class="{ active: interval === i.value }"
-          @click="changeInterval(i.value)"
-        >{{ i.short }}</button>
-        <el-dropdown trigger="click" @command="onMoreInterval">
-          <button class="tv-tab" :class="{ active: moreActive }">{{ moreLabel }}<span class="caret">▾</span></button>
+        <el-dropdown trigger="hover">
+          <span class="iv-trigger mono" :title="'当前周期：' + intervalLabel">{{ intervalLabel }}<span class="caret">▾</span></span>
           <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item v-for="i in moreIntervals" :key="i.value" :command="i.value" :class="{ 'iv-active': interval === i.value }">{{ i.label }}</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <!-- 自定义周期：数字 + 单位下拉（回车或改单位即生效），如 45 + m = 45m -->
-        <div class="cust-iv" :class="{ active: customActive }">
-          <input v-model="customIvNum" class="cust-num" size="4" placeholder="自定义" title="输入数字（如 45 / 3 / 2），右侧选时间单位（m/h/d/w/M）后回车生效；不支持的周期自动按最小可整除周期聚合" @keyup.enter="applyCustomInterval" />
-          <select v-model="customIvUnit" class="cust-unit" @change="applyCustomInterval">
-            <option value="m">m</option>
-            <option value="h">h</option>
-            <option value="d">d</option>
-            <option value="w">w</option>
-            <option value="M">M</option>
-          </select>
-        </div>
-        <!-- 当前周期：始终显示（标准用中文标签，自定义按数字+单位转中文） -->
-        <span class="cur-iv mono" :title="'当前周期：' + intervalLabel">{{ intervalLabel }}</span>
-      </div>
-      <div class="tv-actions">
-        <!-- 指标菜单（抽屉下拉）：EMA/MA 组开关、各指标开关、均线逐条编辑与联动编辑 -->
-        <el-popover v-model:visible="indOpen" placement="bottom-end" :width="450" trigger="click">
-          <template #reference>
-            <el-button size="small" :type="indOpen ? 'primary' : 'default'">指标</el-button>
-          </template>
-          <div class="ind-panel">
-            <!-- 主开关：EMA/MA 按组开关 + 其它指标 -->
-            <div class="ip-head">
-              <span class="ip-grp" title="按组显示/隐藏全部均线">
-                <el-checkbox v-model="emaOn" size="small" @change="render">EMA</el-checkbox>
-                <el-checkbox v-model="maOn" size="small" @change="render">MA</el-checkbox>
-              </span>
-              <span class="ip-div"></span>
-              <el-checkbox v-model="volOn" size="small" @change="render">成交量</el-checkbox>
-              <el-checkbox v-model="macdOn" size="small" @change="render">MACD</el-checkbox>
-              <el-checkbox v-model="rsiOn" size="small" @change="render">RSI</el-checkbox>
-              <el-checkbox v-model="vpvrOn" size="small" @change="render">VPVR</el-checkbox>
-            </div>
-
-            <!-- 联动编辑：勾选 ≥2 条时显示，颜色/粗细应用到所有选中项 -->
-            <div v-if="linkCount >= 2" class="ip-link">
-              <span class="ip-link-t">联动编辑 {{ linkCount }} 条</span>
-              <input v-model="linkColor" type="color" class="color" title="应用到所有选中均线" @change="applyLinked" />
-              <el-input-number v-model="linkWidth" :min="0.5" :max="4" :step="0.1" size="small" style="width: 72px" title="应用到所有选中均线" @change="applyLinked" />
-              <el-button size="small" text type="primary" @click="clearLink">取消</el-button>
-            </div>
-
-            <!-- 均线列表：每条单独编辑（周期/颜色/线宽）；最右侧勾选框用于联动编辑 -->
-            <div class="ip-lines">
-              <div v-for="(ln, i) in lines" :key="ln.id" class="ip-line" :class="{ sel: linkMap[ln.id] }">
-                <el-checkbox v-model="ln.on" size="small" :title="'显示/隐藏 ' + ln.kind.toUpperCase() + '(' + fmtPeriod(ln.period) + ')'" @change="lineChanged(ln)" />
-                <span class="ip-name" :style="{ color: ln.color }">{{ ln.kind.toUpperCase() }}({{ fmtPeriod(ln.period) }})</span>
-                <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
-                <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
-                <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 60px" title="线宽" @change="lineChanged(ln)" />
-                <el-checkbox v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="勾选后与其它勾选项联动编辑（颜色/粗细）" @change="syncLink" />
-                <button v-if="lines.length > 1" class="del" title="删除该均线" @click="removeLine(i)">×</button>
+            <div class="iv-panel" @click.stop>
+              <!-- 置顶 -->
+              <div class="iv-sec">
+                <div class="iv-sec-t">置顶</div>
+                <div class="iv-chips">
+                  <span v-for="iv in pinnedItems" :key="iv.value" class="iv-chip" :class="{ on: interval === iv.value }" :title="iv.label" @click="changeInterval(iv.value)">{{ iv.short }}<span class="iv-chip-act" title="移出置顶" @click.stop="unpinIv(iv.value)">×</span></span>
+                </div>
+              </div>
+              <!-- 常用周期 -->
+              <div class="iv-sec">
+                <div class="iv-sec-t">常用周期</div>
+                <div class="iv-chips">
+                  <span v-for="iv in commonItems" :key="iv.value" class="iv-chip" :class="{ on: interval === iv.value }" :title="iv.label" @click="changeInterval(iv.value)">{{ iv.short }}<span class="iv-chip-act" title="移到置顶" @click.stop="pinIv(iv.value)">📌</span></span>
+                </div>
+              </div>
+              <!-- 自定义 -->
+              <div class="iv-sec">
+                <div class="iv-sec-t">自定义</div>
+                <div class="iv-chips">
+                  <span v-for="iv in customItems" :key="iv.value" class="iv-chip" :class="{ on: interval === iv.value }" :title="iv.label" @click="changeInterval(iv.value)">{{ iv.short }}<span class="iv-chip-act" title="编辑" @click.stop="startEditCustom(iv.value)">✎</span><span class="iv-chip-act" title="移到置顶" @click.stop="pinIv(iv.value)">📌</span><span class="iv-chip-act" title="删除" @click.stop="removeCustom(iv.value)">×</span></span>
+                </div>
+                <div v-if="editIv" class="iv-edit">
+                  <span class="dim">编辑自定义</span>
+                  <input v-model="editIv.num" class="cust-num" size="3" @keyup.enter="saveEditCustom" />
+                  <select v-model="editIv.unit" class="cust-unit">
+                    <option value="m">m</option><option value="h">h</option><option value="d">d</option><option value="w">w</option><option value="M">M</option>
+                  </select>
+                  <el-button size="small" text type="primary" @click="saveEditCustom">保存</el-button>
+                  <el-button size="small" text @click="editIv = null">取消</el-button>
+                </div>
+                <div class="iv-add">
+                  <span class="dim">+ 添加</span>
+                  <input v-model="addIvNum" class="cust-num" size="3" placeholder="45" @keyup.enter="addCustom" />
+                  <select v-model="addIvUnit" class="cust-unit">
+                    <option value="m">m</option><option value="h">h</option><option value="d">d</option><option value="w">w</option><option value="M">M</option>
+                  </select>
+                  <el-button size="small" text type="primary" @click="addCustom">添加</el-button>
+                </div>
               </div>
             </div>
-            <div class="ip-actions">
-              <el-button size="small" text type="primary" @click="addPeriod">+ 周期（MA+EMA）</el-button>
-              <el-button size="small" text @click="addLine('ema')">+ EMA</el-button>
-              <el-button size="small" text @click="addLine('ma')">+ MA</el-button>
-            </div>
+          </template>
+        </el-dropdown>
+      </div>
+      <div class="tv-actions">
+        <!-- 指标菜单（下拉抽屉，logo 图标）：一级指标列表；点击“均线”进入二级明细 -->
+        <el-popover v-model:visible="indOpen" placement="bottom-end" :width="380" trigger="click" @hide="indLevel = 'root'; editLineId = null">
+          <template #reference>
+            <el-button size="small" class="ind-btn" :type="indOpen ? 'primary' : 'default'" title="指标设置"><el-icon><TrendCharts /></el-icon></el-button>
+          </template>
+          <div class="ind-panel">
+            <!-- 一级：指标列表（MA / EMA 收进二级，不默认展示） -->
+            <template v-if="indLevel === 'root'">
+              <div class="ip-list">
+                <div class="ip-item" title="点击进入 MA / EMA 明细" @click="indLevel = 'ma'">
+                  <span class="ip-ic" style="color:#f0a35e"><el-icon><DataLine /></el-icon></span>
+                  <span class="ip-t">均线 <span class="dim">MA / EMA</span></span>
+                  <span class="ip-st">{{ activeLineCount }} 条</span>
+                  <span class="ip-arrow">▸</span>
+                </div>
+                <div class="ip-item">
+                  <span class="ip-ic" style="color:#67c23a"><el-icon><Histogram /></el-icon></span>
+                  <span class="ip-t">成交量</span>
+                  <el-switch v-model="volOn" size="small" @change="render" />
+                </div>
+                <div class="ip-item">
+                  <span class="ip-ic" style="color:#e6a23c"><el-icon><Odometer /></el-icon></span>
+                  <span class="ip-t">MACD</span>
+                  <el-switch v-model="macdOn" size="small" @change="render" />
+                </div>
+                <div class="ip-item">
+                  <span class="ip-ic" style="color:#4da3ff"><el-icon><DataAnalysis /></el-icon></span>
+                  <span class="ip-t">RSI</span>
+                  <el-switch v-model="rsiOn" size="small" @change="render" />
+                </div>
+                <div class="ip-item">
+                  <span class="ip-ic" style="color:#9254de"><el-icon><PieChart /></el-icon></span>
+                  <span class="ip-t">VPVR</span>
+                  <el-switch v-model="vpvrOn" size="small" @change="render" />
+                </div>
+              </div>
+            </template>
+            <!-- 二级：均线明细（每条可隐藏/编辑/删除，可添加，可联动编辑） -->
+            <template v-else>
+              <div class="ip-sub">
+                <div class="ip-sub-head">
+                  <el-button size="small" text @click="indLevel = 'root'"><el-icon><ArrowLeft /></el-icon>&nbsp;返回</el-button>
+                  <span class="ip-sub-title">均线</span>
+                  <span class="ip-grp" title="按组显示/隐藏全部均线">
+                    <el-checkbox v-model="emaOn" size="small" @change="render">EMA</el-checkbox>
+                    <el-checkbox v-model="maOn" size="small" @change="render">MA</el-checkbox>
+                  </span>
+                </div>
+                <div class="ip-sec-t">MA</div>
+                <div class="ip-lines">
+                  <div v-for="ln in maLines" :key="ln.id" class="ip-line" :class="{ off: !ln.on, sel: linkMap[ln.id] }">
+                    <template v-if="editLineId === ln.id">
+                      <span class="ip-name" :style="{ color: ln.color }">MA({{ fmtPeriod(ln.period) }})</span>
+                      <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
+                      <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
+                      <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 60px" title="线宽" @change="lineChanged(ln)" />
+                      <el-button size="small" text type="primary" @click="editLineId = null">完成</el-button>
+                    </template>
+                    <template v-else>
+                      <span class="ip-name" :style="{ color: ln.color }">MA({{ fmtPeriod(ln.period) }})</span>
+                      <span class="ip-hov">
+                        <el-icon :title="ln.on ? '隐藏' : '显示'" @click="toggleLine(ln)"><View /></el-icon>
+                        <el-icon title="编辑" @click="editLineId = ln.id"><EditPen /></el-icon>
+                        <el-icon title="删除" @click="removeLineBy(ln)"><Delete /></el-icon>
+                      </span>
+                      <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
+                    </template>
+                  </div>
+                  <div v-if="!maLines.length" class="ip-empty" @click="addLine('ma')">暂无 MA 线，点击添加示例 MA(60)</div>
+                </div>
+                <div class="ip-sec-t">EMA</div>
+                <div class="ip-lines">
+                  <div v-for="ln in emaLines" :key="ln.id" class="ip-line" :class="{ off: !ln.on, sel: linkMap[ln.id] }">
+                    <template v-if="editLineId === ln.id">
+                      <span class="ip-name" :style="{ color: ln.color }">EMA({{ fmtPeriod(ln.period) }})</span>
+                      <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
+                      <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
+                      <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 60px" title="线宽" @change="lineChanged(ln)" />
+                      <el-button size="small" text type="primary" @click="editLineId = null">完成</el-button>
+                    </template>
+                    <template v-else>
+                      <span class="ip-name" :style="{ color: ln.color }">EMA({{ fmtPeriod(ln.period) }})</span>
+                      <span class="ip-hov">
+                        <el-icon :title="ln.on ? '隐藏' : '显示'" @click="toggleLine(ln)"><View /></el-icon>
+                        <el-icon title="编辑" @click="editLineId = ln.id"><EditPen /></el-icon>
+                        <el-icon title="删除" @click="removeLineBy(ln)"><Delete /></el-icon>
+                      </span>
+                      <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
+                    </template>
+                  </div>
+                  <div v-if="!emaLines.length" class="ip-empty" @click="addLine('ema')">暂无 EMA 线，点击添加示例 EMA(60)</div>
+                </div>
+                <!-- 联动编辑：开启 ⛓ 联动并勾选 ≥2 条时，颜色/粗细应用到所有选中项 -->
+                <div v-if="linkMode && linkCount >= 2" class="ip-link">
+                  <span class="ip-link-t">联动编辑 {{ linkCount }} 条</span>
+                  <input v-model="linkColor" type="color" class="color" title="应用到所有选中均线" @change="applyLinked" />
+                  <el-input-number v-model="linkWidth" :min="0.5" :max="4" :step="0.1" size="small" style="width: 72px" title="应用到所有选中均线" @change="applyLinked" />
+                  <el-button size="small" text type="primary" @click="clearLink">取消</el-button>
+                </div>
+                <div class="ip-actions">
+                  <el-button size="small" text type="primary" @click="addPeriod">+ 周期（MA+EMA）</el-button>
+                  <el-button size="small" text @click="addLine('ma')">+ MA</el-button>
+                  <el-button size="small" text @click="addLine('ema')">+ EMA</el-button>
+                  <el-button size="small" text :type="linkMode ? 'primary' : ''" @click="linkMode = !linkMode">⛓ 联动</el-button>
+                </div>
+              </div>
+            </template>
           </div>
         </el-popover>
         <el-input-number v-model="limit" :min="50" :max="1000" :step="50" size="small" style="width: 96px" @change="load()" />
@@ -118,13 +199,10 @@
         class="legend"
         :style="{ top: g.top + 'px', left: g.left + 'px' }"
       >
-        <!-- 价格面板图例：EMA / MA 分两列（组关闭或全隐藏时不渲染该列，不留灰色框）；列右上角 × 关闭整组 -->
+        <!-- 价格面板图例：EMA / MA 分两列（无 EMA/MA 提示标题，仅线值；右上角 × 关闭整组） -->
         <template v-if="g.cols && g.cols.length">
           <div v-for="col in g.cols" :key="col.key" class="lg-col">
-            <div class="lg-head-row">
-              <span class="lg-head" :style="{ color: col.key === 'ema' ? '#f0a35e' : '#4da3ff' }">{{ col.label }}</span>
-              <span class="lg-x" :title="'关闭全部 ' + col.label + ' 均线'" @click="hideGroup(col.key)">×</span>
-            </div>
+            <span class="lg-x lg-x-col" :title="'关闭全部 ' + col.label + ' 均线'" @click="hideGroup(col.key)">×</span>
             <span v-for="(it, idx) in col.items" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
           </div>
         </template>
@@ -178,6 +256,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
+import { ArrowLeft, DataAnalysis, DataLine, Delete, EditPen, Histogram, Odometer, PieChart, TrendCharts, View } from '@element-plus/icons-vue';
 import { api } from '../api.ts';
 import { accountStore } from '../store.ts';
 import {
@@ -208,9 +287,8 @@ const ALL_INTERVALS = [
   { value: '3d', label: '3天', short: '3D' }, { value: '1w', label: '1周', short: '1W' }, { value: '2w', label: '2周', short: '2W' },
   { value: '1M', label: '1月', short: '1M' },
 ];
+/** 默认置顶周期 */
 const QUICK_INTERVAL_VALUES = ['1h', '4h', '1d', '1w'];
-const quickIntervals = ALL_INTERVALS.filter((i) => QUICK_INTERVAL_VALUES.includes(i.value));
-const moreIntervals = ALL_INTERVALS.filter((i) => !QUICK_INTERVAL_VALUES.includes(i.value));
 /** 后端原生支持的周期（毫秒），用于自定义周期解析（2w 由前端 1w 聚合，不在其中） */
 const INTERVAL_MS: Record<string, number> = {
   '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
@@ -283,8 +361,12 @@ const WARMUP = 250;
 const symbol = ref('BTCUSDT');
 const market = ref('SPOT');
 const interval = ref('1h');
-const customIvNum = ref('');
-const customIvUnit = ref('m');
+// 时间周期：置顶 / 常用 / 自定义 三组（按账户持久化）
+const pinnedIv = ref<string[]>([...QUICK_INTERVAL_VALUES]);
+const customIvList = ref<{ value: string; label: string }[]>([]);
+const addIvNum = ref('');
+const addIvUnit = ref('m');
+const editIv = ref<{ value: string; num: string; unit: string } | null>(null);
 const limit = ref(300);
 const autoRefresh = ref(false);
 /** EMA / MA 两组开关：按组显示/隐藏全部均线 */
@@ -308,14 +390,28 @@ const lastUp = ref(true);
 const lastChangePct = ref('');
 const chartEl = ref<HTMLDivElement | null>(null);
 
-const moreActive = computed(() => !quickIntervals.some((i) => i.value === interval.value));
-/** 当前周期是否为自定义（不在标准周期列表中，由数字+单位确定） */
-const customActive = computed(() => !ALL_INTERVALS.some((i) => i.value === interval.value));
-/** “更多”按钮文案：选中非快捷标准周期时回显其短标签（下拉后选中展示），其余保持“更多” */
-const moreLabel = computed(() => {
-  if (quickIntervals.some((i) => i.value === interval.value)) return '更多';
-  return ALL_INTERVALS.find((i) => i.value === interval.value)?.short ?? '更多';
+// ---------- 指标菜单：一级(列表) / 二级(均线明细) 导航 ----------
+const indLevel = ref<'root' | 'ma'>('root');
+const editLineId = ref<number | null>(null);
+const linkMode = ref(false);
+const maLines = computed(() => lines.value.filter((l) => l.kind === 'ma'));
+const emaLines = computed(() => lines.value.filter((l) => l.kind === 'ema'));
+/** 当前可见均线条数（一级菜单“均线”行摘要） */
+const activeLineCount = computed(() => {
+  let n = 0;
+  for (const l of lines.value) {
+    if (l.on && (l.kind === 'ema' ? emaOn.value : maOn.value)) n++;
+  }
+  return n;
 });
+function toggleLine(ln: MaLineCfg) {
+  ln.on = !ln.on;
+  render();
+}
+function removeLineBy(ln: MaLineCfg) {
+  const i = lines.value.findIndex((l) => l.id === ln.id);
+  if (i >= 0) removeLine(i);
+}
 /** 周期显示文案：标准周期用中文标签；自定义按“数字+单位”转中文（45m→45分钟、2d→2天） */
 const UNIT_CN: Record<string, string> = { m: '分钟', h: '小时', d: '天', w: '周', M: '月' };
 function fmtIntervalLabel(v: string): string {
@@ -351,18 +447,67 @@ function resolveInterval(raw: string): { base: string; factor: number } | null {
 function intervalFetch(): { base: string; factor: number } {
   return resolveInterval(interval.value) ?? { base: interval.value, factor: 1 };
 }
-function applyCustomInterval() {
-  const num = customIvNum.value.trim();
+// ---------- 时间周期三组：置顶 / 常用周期 / 自定义 ----------
+interface IvItem { value: string; label: string; short: string }
+function ivItemOf(v: string): IvItem | null {
+  const std = ALL_INTERVALS.find((i) => i.value === v);
+  if (std) return std;
+  const c = customIvList.value.find((c) => c.value === v);
+  if (c) return { value: c.value, label: c.label, short: c.label };
+  return null;
+}
+const pinnedItems = computed(() => pinnedIv.value.map((v) => ivItemOf(v)).filter((x): x is IvItem => x != null));
+const commonItems = computed(() => ALL_INTERVALS.filter((i) => !pinnedIv.value.includes(i.value)));
+const customItems = computed(() => customIvList.value.filter((c) => !pinnedIv.value.includes(c.value)).map((c) => ({ value: c.value, label: c.label, short: c.label })));
+
+function pinIv(v: string) {
+  if (!pinnedIv.value.includes(v)) pinnedIv.value.push(v);
+}
+function unpinIv(v: string) {
+  pinnedIv.value = pinnedIv.value.filter((x) => x !== v);
+}
+function addCustom() {
+  const num = addIvNum.value.trim();
   if (!num) return;
-  const v = num + customIvUnit.value;
+  const v = num + addIvUnit.value;
   if (!resolveInterval(v)) {
     ElMessage.warning('周期格式：数字+时间单位，如 45m / 3h / 2d / 1w / 1M');
     return;
   }
-  changeInterval(v);
+  if (customIvList.value.some((c) => c.value === v)) {
+    ElMessage.warning('该自定义周期已存在');
+    return;
+  }
+  customIvList.value.push({ value: v, label: fmtIntervalLabel(v) });
+  addIvNum.value = '';
 }
-function onMoreInterval(v: string) {
-  changeInterval(v);
+function removeCustom(v: string) {
+  customIvList.value = customIvList.value.filter((c) => c.value !== v);
+  unpinIv(v);
+  if (interval.value === v) changeInterval('1h');
+}
+function startEditCustom(v: string) {
+  const m = /^(\d+(?:\.\d+)?)\s*(m|h|d|w|M)$/.exec(v);
+  if (!m) return;
+  editIv.value = { value: v, num: m[1]!, unit: m[2]! };
+}
+function saveEditCustom() {
+  if (!editIv.value) return;
+  const nv = editIv.value.num.trim() + editIv.value.unit;
+  if (!resolveInterval(nv)) {
+    ElMessage.warning('周期格式：数字+时间单位，如 45m / 3h / 2d');
+    return;
+  }
+  const old = editIv.value.value;
+  if (customIvList.value.some((c) => c.value === nv && c.value !== old)) {
+    ElMessage.warning('该自定义周期已存在');
+    return;
+  }
+  const idx = customIvList.value.findIndex((c) => c.value === old);
+  if (idx >= 0) customIvList.value[idx] = { value: nv, label: fmtIntervalLabel(nv) };
+  if (pinnedIv.value.includes(old)) pinnedIv.value = pinnedIv.value.map((x) => (x === old ? nv : x));
+  if (interval.value === old) changeInterval(nv);
+  editIv.value = null;
 }
 
 // TradingView 风格：各面板独立图例（默认最新值，悬停联动）+ 状态栏
@@ -459,17 +604,6 @@ function onMarket(v: string) { market.value = v; load(true); }
 function changeInterval(v: string) {
   if (interval.value === v) return;
   interval.value = v;
-  // 标准周期清空自定义输入；自定义周期回显到“数字+单位”
-  if (ALL_INTERVALS.some((i) => i.value === v)) {
-    customIvNum.value = '';
-    customIvUnit.value = 'm';
-  } else {
-    const m = /^(\d+(?:\.\d+)?)\s*(m|h|d|w|M)$/.exec(v);
-    if (m) {
-      customIvNum.value = m[1]!;
-      customIvUnit.value = m[2]!;
-    }
-  }
   load(true);
 }
 
@@ -1554,10 +1688,37 @@ function loadSettings() {
     }
   } catch { /* 损坏的存储忽略 */ }
 }
+// ---------- 时间周期配置持久化（置顶 / 自定义，按账户保存） ----------
+function ivSettingsKey(): string {
+  return 'aw-chart-iv-' + (accountStore.selectedId || 'default');
+}
+function saveIvSettings() {
+  try {
+    localStorage.setItem(ivSettingsKey(), JSON.stringify({ pinned: pinnedIv.value, custom: customIvList.value }));
+  } catch { /* 存储异常忽略 */ }
+}
+function loadIvSettings() {
+  try {
+    const raw = localStorage.getItem(ivSettingsKey());
+    if (!raw) return;
+    const d = JSON.parse(raw) as { pinned?: unknown; custom?: unknown };
+    if (Array.isArray(d.pinned)) {
+      const list = d.pinned.filter((v): v is string => typeof v === 'string');
+      if (list.length) pinnedIv.value = list;
+    }
+    if (Array.isArray(d.custom)) {
+      customIvList.value = d.custom
+        .filter((c): c is { value: string; label?: unknown } => !!c && typeof (c as { value?: unknown }).value === 'string')
+        .map((c) => ({ value: c.value, label: typeof c.label === 'string' && c.label ? c.label : fmtIntervalLabel(c.value) }));
+    }
+  } catch { /* 损坏的存储忽略 */ }
+}
 // 任何指标设置变化自动保存；切换账户时加载对应账户的设置
 watch([emaOn, maOn, volOn, macdOn, rsiOn, vpvrOn, lines], () => saveSettings(), { deep: true });
+watch([pinnedIv, customIvList], () => saveIvSettings(), { deep: true });
 watch(() => accountStore.selectedId, () => {
   loadSettings();
+  loadIvSettings();
   render();
 });
 
@@ -1578,6 +1739,7 @@ onMounted(() => {
   window.addEventListener('resize', resizeHandler);
   measureChart();
   loadSettings();
+  loadIvSettings();
   load();
 });
 
@@ -1603,40 +1765,67 @@ onBeforeUnmount(() => {
 .tv-symbol { display: flex; align-items: center; gap: 6px; }
 .tv-px { font-size: 15px; font-weight: 700; margin-left: 6px; }
 .tv-chg { font-size: 11px; }
-.tv-intervals { display: flex; align-items: center; gap: 2px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 2px; }
-.tv-tab { border: none; background: none; color: var(--text-dim); font-size: 11px; padding: 3px 7px; border-radius: 4px; cursor: pointer; font-family: var(--mono); }
-.tv-tab:hover { color: var(--text); }
-.tv-tab.active { background: var(--accent); color: #fff; font-weight: 600; }
-.caret { font-size: 9px; opacity: 0.7; margin-left: 2px; }
-.cust-iv { display: inline-flex; align-items: center; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
-.cust-iv.active { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(64,158,255,0.35); }
-.cust-num { width: 54px; background: none; border: none; color: var(--text); font-size: 11px; font-family: var(--mono); padding: 2px 5px; text-align: center; }
-.cust-num:focus { outline: none; }
-.cust-unit { border: none; border-left: 1px solid var(--border); background: var(--bg-elev); color: var(--text); font-size: 11px; font-family: var(--mono); padding: 2px 2px; cursor: pointer; }
+.tv-intervals { display: flex; align-items: center; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 2px; }
+/* 当前周期下拉触发：显示激活周期，悬停展开 */
+.iv-trigger { display: inline-flex; align-items: center; gap: 5px; color: var(--text); font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+.iv-trigger:hover { color: var(--accent); }
+.caret { font-size: 9px; opacity: 0.7; }
+.cust-num { width: 54px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; font-family: var(--mono); padding: 2px 5px; text-align: center; }
+.cust-num:focus { outline: none; border-color: var(--accent); }
+.cust-unit { border: 1px solid var(--border); background: var(--bg-elev); color: var(--text); font-size: 11px; font-family: var(--mono); padding: 2px 2px; cursor: pointer; border-radius: 4px; }
 .cust-unit:focus { outline: none; }
-/* 当前周期：始终显示（标准中文标签 / 自定义如 45分钟） */
-.cur-iv { font-size: 11px; font-weight: 600; color: var(--accent); padding: 2px 7px; border: 1px solid rgba(64,158,255,0.45); border-radius: 4px; background: rgba(64,158,255,0.08); white-space: nowrap; margin-left: 4px; }
-.iv-active { font-weight: 700; color: var(--accent) !important; }
+/* 周期下拉面板：置顶 / 常用周期 / 自定义 三组 */
+.iv-panel { width: 330px; }
+.iv-sec { padding: 4px 0 6px; border-bottom: 1px solid var(--border); }
+.iv-sec:last-child { border-bottom: none; }
+.iv-sec-t { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; font-weight: 600; }
+.iv-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.iv-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 4px; background: var(--bg-elev); border: 1px solid var(--border); font-size: 11px; font-family: var(--mono); cursor: pointer; color: var(--text); }
+.iv-chip:hover { border-color: var(--accent); }
+.iv-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.iv-chip-act { font-size: 10px; opacity: 0.55; cursor: pointer; border-radius: 2px; line-height: 1; padding: 0 1px; }
+.iv-chip-act:hover { opacity: 1; color: var(--accent); background: rgba(64,158,255,0.15); }
+.iv-chip.on .iv-chip-act { color: #fff; }
+.iv-chip.on .iv-chip-act:hover { color: #f56c6c; background: rgba(245,108,108,0.25); }
+.iv-edit, .iv-add { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
 .tv-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
-/* 指标菜单（下拉面板） */
+/* 指标菜单（下拉抽屉，logo 图标）：一级列表 + 二级均线明细 */
 .ind-panel { font-size: 12px; }
-.ip-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-.ip-head :deep(.el-checkbox__label) { font-size: 12px; }
-.ip-grp { display: inline-flex; align-items: center; gap: 2px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
-.ip-grp :deep(.el-checkbox__label) { font-weight: 600; }
-.ip-div { width: 1px; height: 18px; background: var(--border); }
-.ip-link { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(64,158,255,0.08); border: 1px solid rgba(64,158,255,0.35); border-radius: 5px; margin-top: 8px; }
-.ip-link-t { color: #409eff; font-weight: 600; margin-right: 2px; }
-.ip-lines { max-height: 264px; overflow-y: auto; margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
-.ip-line { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; }
+.ind-btn { font-size: 15px; padding: 5px 8px; }
+.ind-btn .el-icon { font-size: 15px; }
+.ip-list { display: flex; flex-direction: column; gap: 2px; }
+.ip-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 5px; cursor: pointer; }
+.ip-item:hover { background: var(--bg-elev); }
+.ip-ic { display: inline-flex; align-items: center; }
+.ip-ic .el-icon { font-size: 15px; }
+.ip-t { flex: 1; }
+.ip-st { font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+.ip-arrow { color: var(--text-dim); font-size: 12px; }
+.ip-sub-head { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.ip-sub-title { font-weight: 700; }
+.ip-grp { display: inline-flex; align-items: center; gap: 2px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; margin-left: auto; }
+.ip-grp :deep(.el-checkbox__label) { font-weight: 600; font-size: 11px; }
+.ip-sec-t { font-size: 11px; color: var(--text-dim); margin: 6px 0 2px; font-weight: 600; }
+.ip-lines { display: flex; flex-direction: column; gap: 2px; max-height: 196px; overflow-y: auto; }
+.ip-line { display: flex; align-items: center; gap: 6px; padding: 2px 6px; border-radius: 4px; min-height: 22px; }
 .ip-line:hover { background: var(--bg-elev); }
+.ip-line.off { opacity: 0.45; }
 .ip-line.sel { background: rgba(64,158,255,0.12); outline: 1px solid rgba(64,158,255,0.4); }
 .ip-line :deep(.el-checkbox) { margin-right: 0; }
-.ip-line :deep(.el-checkbox__label) { font-size: 11px; }
-.ip-name { width: 88px; font-family: var(--mono); font-size: 11px; font-weight: 600; flex: none; }
+.ip-name { font-family: var(--mono); font-size: 11px; font-weight: 600; }
+/* 悬停行显示 隐藏/编辑/删除 图标 */
+.ip-hov { display: none; align-items: center; gap: 4px; margin-left: auto; }
+.ip-line:hover .ip-hov { display: inline-flex; }
+.ip-hov .el-icon { font-size: 13px; cursor: pointer; color: var(--text-dim); padding: 1px; border-radius: 3px; }
+.ip-hov .el-icon:hover { color: #fff; background: rgba(128,140,155,0.25); }
+.ip-hov .el-icon:last-child:hover { color: #f56c6c; background: rgba(245,108,108,0.15); }
 .ip-linkbox { margin-left: auto; }
-.ip-actions { display: flex; gap: 6px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+.ip-empty { font-size: 11px; color: var(--text-dim); padding: 4px 6px; cursor: pointer; border: 1px dashed var(--border); border-radius: 4px; }
+.ip-empty:hover { color: var(--accent); border-color: var(--accent); }
+.ip-link { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(64,158,255,0.08); border: 1px solid rgba(64,158,255,0.35); border-radius: 5px; margin-top: 6px; }
+.ip-link-t { color: #409eff; font-weight: 600; margin-right: 2px; }
+.ip-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
 
 /* 图表 + 图例浮层 + 面板拖拽手柄 */
 .chart-wrap { position: relative; }
@@ -1644,13 +1833,12 @@ onBeforeUnmount(() => {
 .legend { position: absolute; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
 .lg b { font-weight: 600; margin-left: 3px; }
 /* EMA / MA 图例分两列（组关闭时不渲染，不留灰色框） */
-.lg-col { display: flex; flex-direction: column; gap: 2px; background: rgba(17,22,29,0.6); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px 4px; }
+.lg-col { position: relative; display: flex; flex-direction: column; gap: 2px; background: rgba(17,22,29,0.6); border: 1px solid var(--border); border-radius: 5px; padding: 3px 14px 4px 8px; }
 .lg-col .lg { line-height: 1.5; }
-.lg-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.lg-head { font-weight: 700; line-height: 1.6; }
-/* 图例关闭 ×：EMA/MA 在列右上角，VOL/MACD/RSI 在数值右边 */
+/* 图例关闭 ×：EMA/MA 在列右上角（无 EMA/MA 标题），VOL/MACD/RSI 在数值右边 */
 .lg-x { pointer-events: auto; cursor: pointer; color: var(--text-dim); font-size: 12px; line-height: 1; padding: 0 2px; border-radius: 3px; }
 .lg-x:hover { color: #f56c6c; background: rgba(245,108,108,0.15); }
+.lg-x-col { position: absolute; top: 1px; right: 2px; }
 .drag-handle { position: absolute; left: 60px; right: 10px; height: 7px; cursor: row-resize; z-index: 6; border-top: 1px dashed transparent; }
 .drag-handle:hover { border-top: 1px dashed var(--accent); }
 /* 悬停 OHLC 浮窗 */
