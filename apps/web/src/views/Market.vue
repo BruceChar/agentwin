@@ -133,8 +133,10 @@
       </div>
 
       <!-- 可见区间最高/最低点：标在所在 K 线上（价格标签 + 连接线指向该 K 线的高/低点） -->
-      <div v-if="hlMarkers.high" class="hl-mark hl-high" :style="{ left: hlMarkers.high.x + 'px', top: hlMarkers.high.y + 'px' }">H {{ hlMarkers.high.price }}</div>
-      <div v-if="hlMarkers.low" class="hl-mark hl-low" :style="{ left: hlMarkers.low.x + 'px', top: hlMarkers.low.y + 'px' }">L {{ hlMarkers.low.price }}</div>
+      <div v-if="hlMarkers.high" class="hl-mark hl-high" :style="{ left: hlMarkers.high.x + 'px', top: hlMarkers.high.y + 'px' }">{{ hlMarkers.high.price }}(H)</div>
+      <div v-if="hlMarkers.low" class="hl-mark hl-low" :style="{ left: hlMarkers.low.x + 'px', top: hlMarkers.low.y + 'px' }">{{ hlMarkers.low.price }}(L)</div>
+      <!-- POC 价格：显示在右侧价格列（与价格标签一起），格式 88888.9(poc) -->
+      <div v-if="pocMark" class="poc-mark mono" :style="{ top: pocMark.y + 'px' }">{{ pocMark.text }}</div>
     </div>
 
     <!-- TradingView 风格状态栏：最新 K 线 OHLC -->
@@ -337,6 +339,23 @@ const hoverTip = ref<{ visible: boolean; x: number; y: number; time: string; ope
 // 可见区间最高/最低点：标在所在 K 线上（价格标签 + 连接线指向该 K 线的高/低点）
 interface HlMarker { x: number; y: number; price: string }
 const hlMarkers = ref<{ high: HlMarker | null; low: HlMarker | null }>({ high: null, low: null });
+// POC 价格标记：显示在右侧价格列（与 y 轴价格标签一起），格式 88888.9(poc)
+const pocMark = ref<{ y: number; text: string } | null>(null);
+
+/** 更新右侧 POC 价格标记（锚定在 POC 价格高度，随缩放/刷新重算） */
+function updatePocMark(pocPrice: number | null) {
+  if (!chart || pocPrice == null || !candles.value.length) {
+    pocMark.value = null;
+    return;
+  }
+  try {
+    const [, py] = chart.convertToPixel({ seriesIndex: 0 }, [candles.value.length - 1, pocPrice]);
+    const h = chartEl.value?.clientHeight ?? 0;
+    pocMark.value = { y: Math.max(4, Math.min(h - 16, py)), text: fmtPrice(pocPrice) + '(poc)' };
+  } catch {
+    pocMark.value = null;
+  }
+}
 
 /** 更新可见区间最高/最低点的像素位置（标签锚定在对应的 K 线上） */
 function updateHlMarkers(visibleCandles: CandleView[], startIdx: number) {
@@ -680,9 +699,7 @@ async function refreshLatest() {
       {
         id: 'kline',
         data: padNaN(cs.map((c) => [c.open, c.close, c.low, c.high])),
-        markLine: pocPrice != null && vpvrOn.value
-          ? { silent: true, symbol: 'none', lineStyle: { color: 'rgba(230,197,90,0.8)', type: 'dashed', width: 1 }, label: { show: true, formatter: 'POC ' + fmtPrice(pocPrice), color: '#e6c55a', fontSize: 10, position: 'insideEndTop' }, data: [{ yAxis: pocPrice }] }
-          : undefined,
+        markLine: vpvrOn.value ? pocMarkLine(pocPrice) : undefined,
       },
     ];
     for (const ln of lines.value) {
@@ -727,6 +744,7 @@ async function refreshLatest() {
     updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
     updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
     updateHlMarkers(visible, realFrom);
+    updatePocMark(vpvrOn.value ? pocPrice : null);
     const last = cs[cs.length - 1]!;
     const prevC = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
     lastPrice.value = last.close;
@@ -735,6 +753,18 @@ async function refreshLatest() {
   } catch {
     /* 自动刷新失败静默，等待下次 */
   }
+}
+
+/** POC 价格线（虚线）；价格文本由右侧 DOM 标记显示，格式 88888.9(poc) */
+function pocMarkLine(pocPrice: number | null): Record<string, unknown> | undefined {
+  if (pocPrice == null) return undefined;
+  return {
+    silent: true,
+    symbol: 'none',
+    lineStyle: { color: 'rgba(230,197,90,0.8)', type: 'dashed', width: 1 },
+    label: { show: false },
+    data: [{ yAxis: pocPrice }],
+  };
 }
 
 /** VPVR 火焰图配色：低量→深蓝，高量→黄/红（辨识度更高） */
@@ -880,6 +910,8 @@ function render() {
     axisTick: { show: false },
     axisLabel: showLabel ? { color: '#8a94a3', hideOverlap: true, fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace', fontSize: 10 } : { show: false },
     splitLine: { show: false },
+    // 悬浮十字光标：只在 K 线主图显示时间标签，副图(VOL/MACD/RSI)不显示
+    axisPointer: { label: { show: showLabel } },
   });
   xAxes.push(mkCatAxis(0, true));
   // 价格轴（K线框内，数值靠右，与下方 RSI/VOL 面板对齐）
@@ -939,15 +971,7 @@ function render() {
     yAxisIndex: 0,
     data: padNaN(cs.map((c) => [c.open, c.close, c.low, c.high])),
     itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN, borderWidth: 1 },
-    markLine: pocPrice != null && vpvrOn.value
-      ? {
-          silent: true,
-          symbol: 'none',
-          lineStyle: { color: 'rgba(230,197,90,0.8)', type: 'dashed', width: 1 },
-          label: { show: true, formatter: 'POC ' + fmtPrice(pocPrice), color: '#e6c55a', fontSize: 10, position: 'insideEndTop' },
-          data: [{ yAxis: pocPrice }],
-        }
-      : undefined,
+    markLine: vpvrOn.value ? pocMarkLine(pocPrice) : undefined,
     valueFormatter: (v: unknown) =>
       Array.isArray(v)
         ? '开 ' + fmtPrice(v[0] as number) + ' 收 ' + fmtPrice(v[1] as number) + ' 低 ' + fmtPrice(v[2] as number) + ' 高 ' + fmtPrice(v[3] as number)
@@ -1154,6 +1178,7 @@ function render() {
   updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
   updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
   updateHlMarkers(visible, realFrom);
+  updatePocMark(vpvrOn.value ? pocPrice : null);
 }
 
 // ---------- 缩放：仅重算 VPVR（可见区间） ----------
@@ -1187,12 +1212,12 @@ function onZoom() {
   const opts: Record<string, unknown> = {
     yAxis: [{ gridIndex: 0, min: priceMin, max: priceMax }],
   };
+  // POC：可见区域最大量价位线（函数级作用域，供右侧价格标记使用）
+  let pocPrice: number | null = null;
   if (vpvrOn.value) {
     const buckets = Math.max(16, Math.min(48, Math.round(visible.length / 4)));
     const profile = volumeProfile(visible, buckets);
     const maxVol = Math.max(1e-9, profile.reduce((m, b) => (b.volume > m ? b.volume : m), 0));
-    // POC：可见区域最大量价位线
-    let pocPrice: number | null = null;
     if (profile.length) {
       let best = profile[0]!;
       for (const b of profile) if (b.volume > best.volume) best = b;
@@ -1202,15 +1227,7 @@ function onZoom() {
       { id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) },
       {
         id: 'kline',
-        markLine: pocPrice != null
-          ? {
-              silent: true,
-              symbol: 'none',
-              lineStyle: { color: 'rgba(230,197,90,0.8)', type: 'dashed', width: 1 },
-              label: { show: true, formatter: 'POC ' + fmtPrice(pocPrice), color: '#e6c55a', fontSize: 10, position: 'insideEndTop' },
-              data: [{ yAxis: pocPrice }],
-            }
-          : undefined,
+        markLine: pocMarkLine(pocPrice),
       },
     ];
   }
@@ -1230,6 +1247,7 @@ function onZoom() {
   updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
   updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
   updateHlMarkers(visible, realFrom);
+  updatePocMark(vpvrOn.value ? pocPrice : null);
 }
 
 // ---------- 指标设置持久化（按账户保存，刷新不丢失） ----------
@@ -1387,6 +1405,8 @@ onBeforeUnmount(() => {
 .hl-high::after { content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%); width: 1px; height: 5px; background: rgba(103,194,58,0.8); }
 .hl-low { color: #f56c6c; border-color: rgba(245,108,108,0.55); }
 .hl-low::after { content: ''; position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); width: 1px; height: 5px; background: rgba(245,108,108,0.8); }
+/* POC 价格标记：右侧价格列（网格右缘往右 6px），与价格标签一起显示 */
+.poc-mark { position: absolute; left: calc(100% - 150px + 6px); transform: translateY(-50%); z-index: 6; font-size: 10px; color: #e6c55a; padding: 1px 4px; border-radius: 3px; background: rgba(17,22,29,0.85); border: 1px solid rgba(230,197,90,0.35); pointer-events: none; white-space: nowrap; line-height: 1.4; }
 .period-input { width: 56px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; font-family: var(--mono); padding: 2px 4px; text-align: center; }
 .period-input:focus { outline: none; border-color: var(--accent); }
 .del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
