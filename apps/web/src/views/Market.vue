@@ -33,7 +33,7 @@
     <div class="ind-bar">
       <span class="dim">均线（周期/颜色/线宽可编辑）</span>
       <span v-for="(p, i) in periods" :key="p.id" class="chip">
-        <el-input :model-value="fmtPeriod(p.value)" size="small" style="width: 60px" title="周期（支持小数，如 62.8）" @change="(v: string | number) => setPeriod(p, v)" />
+        <input :value="p.input" class="period-input" size="6" title="周期（支持小数，如 62.8）" @change="(e: Event) => setPeriod(p, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
         <input v-model="p.color" type="color" class="color" :title="'颜色 ' + p.color" />
         <el-input-number v-model="p.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 58px" title="线宽" @change="render" />
         <el-checkbox v-model="p.ma" size="small" @change="render">MA</el-checkbox>
@@ -48,9 +48,17 @@
       <el-checkbox v-model="vpvrOn" size="small" @change="render">VPVR</el-checkbox>
     </div>
 
-    <!-- 图表 + 各面板独立图例（悬停联动，默认显示最新值） -->
+    <!-- 图表 + 各面板独立图例（悬停联动，默认显示最新值）+ 面板拖拽手柄 -->
     <div class="chart-wrap">
       <div ref="chartEl" v-loading="loading" class="chart"></div>
+      <div
+        v-for="(h, hi) in dragHandles"
+        :key="'h' + hi"
+        class="drag-handle"
+        :style="{ top: h.top + 'px' }"
+        :title="'拖动调整面板高度'"
+        @mousedown.prevent="startDrag(hi, $event)"
+      ></div>
       <div
         v-for="g in legends"
         :key="g.key"
@@ -107,11 +115,12 @@ const intervalOptions = [
 ];
 /** 每行周期：颜色与线宽可编辑（MA 实线、EMA 虚线同色） */
 const PERIOD_COLORS = ['#e6a23c', '#409eff', '#9254de', '#14b8a6', '#ec4899', '#06b6d4', '#f59e0b', '#7c8cf8'];
-interface PeriodRow { id: number; value: number; ma: boolean; ema: boolean; color: string; width: number }
+interface PeriodRow { id: number; value: number; ma: boolean; ema: boolean; color: string; width: number; input: string }
 const periods = ref<PeriodRow[]>(
-  PERIOD_COLORS.slice(0, 4).map((c, i) => ({
-    id: i + 1, value: [20, 62.8, 144, 169][i]!, ma: true, ema: true, color: c, width: 1.2,
-  })),
+  PERIOD_COLORS.slice(0, 4).map((c, i) => {
+    const v = [20, 62.8, 144, 169][i]!;
+    return { id: i + 1, value: v, ma: true, ema: true, color: c, width: 1.2, input: fmtPeriod(v) };
+  }),
 );
 let periodSeq = 5;
 function periodColor(i: number): string {
@@ -121,7 +130,7 @@ function fmtPeriod(v: number): string {
   return String(Math.round(v * 100) / 100);
 }
 function addPeriod() {
-  periods.value.push({ id: periodSeq++, value: 60, ma: true, ema: true, color: periodColor(periods.value.length), width: 1.2 });
+  periods.value.push({ id: periodSeq++, value: 60, ma: true, ema: true, color: periodColor(periods.value.length), width: 1.2, input: '60' });
   render();
 }
 function removePeriod(i: number) {
@@ -130,8 +139,12 @@ function removePeriod(i: number) {
 }
 function setPeriod(row: PeriodRow, raw: string | number) {
   const v = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/[^0-9.]/g, ''));
-  if (!Number.isFinite(v) || v <= 0) return;
+  if (!Number.isFinite(v) || v <= 0) {
+    row.input = fmtPeriod(row.value); // 非法输入还原
+    return;
+  }
   row.value = Math.max(1, Math.min(999, Math.round(v * 100) / 100));
+  row.input = fmtPeriod(row.value);
   render();
 }
 const UP = '#67c23a';
@@ -267,12 +280,75 @@ let mainGridH = 300;
 // 增量刷新用：最近一次渲染的面板网格索引（series 按 id 合并更新）
 let lastGridIdx: Record<string, number> = {};
 
+// ---------- 自适应高度 + 面板高度（可拖拽） ----------
+const chartH = ref(660);
+const panelH = reactive<{ vol: number; macd: number; rsi: number }>({ vol: 86, macd: 86, rsi: 86 });
+const dragHandles = ref<{ top: number }[]>([]);
+
+/** 右侧留空填充量：用于自由往右拖拽（最新值拖到中间、右边留空） */
+function rightPadFor(len: number): number {
+  return Math.max(20, Math.ceil(len * 0.6));
+}
+
+/** 面板布局计算（K线 + 可选副图面板，高度可调） */
+function computeGridLayout(panels: { key: 'vol' | 'macd' | 'rsi' }[]) {
+  const gridTop: { top: number; height: number }[] = [];
+  const gridIdx: Record<string, number> = {};
+  const mainH = chartH.value - 8 - panels.reduce((a, p) => a + panelH[p.key], 0) - panels.length * GRID_GAP;
+  gridTop.push({ top: 4, height: mainH });
+  mainGridH = mainH;
+  let top = 4 + mainH + GRID_GAP;
+  for (let i = 0; i < panels.length; i++) {
+    gridTop.push({ top, height: panelH[panels[i]!.key] });
+    gridIdx[panels[i]!.key] = i + 1;
+    top += panelH[panels[i]!.key] + GRID_GAP;
+  }
+  return { gridTop, gridIdx, catAxisIdx: [0, ...panels.map((_, i) => i + 1)] };
+}
+
+function measureChart() {
+  if (!chartEl.value) return;
+  const h = chartEl.value.clientHeight;
+  if (h > 100 && Math.abs(h - chartH.value) > 2) {
+    chartH.value = h;
+    render();
+  }
+}
+
+/** 面板拖拽：手柄 i 调整第 i 个面板高度 */
+function startDrag(hi: number, e: MouseEvent) {
+  const keys = (['vol', 'macd', 'rsi'] as const).filter((k) => (k === 'vol' ? volOn.value : k === 'macd' ? macdOn.value : rsiOn.value));
+  const key = keys[hi];
+  if (!key || !chart) return;
+  const startY = e.clientY;
+  const startH = panelH[key];
+  const onMove = (ev: MouseEvent) => {
+    // 往下拖 = 手柄下移 = 下方面板变矮、上方区域变高
+    panelH[key] = Math.max(48, Math.min(chartH.value * 0.6, startH - (ev.clientY - startY)));
+    const panels: { key: 'vol' | 'macd' | 'rsi' }[] = [];
+    if (volOn.value) panels.push({ key: 'vol' });
+    if (macdOn.value) panels.push({ key: 'macd' });
+    if (rsiOn.value) panels.push({ key: 'rsi' });
+    const { gridTop } = computeGridLayout(panels);
+    updateDragHandles(gridTop);
+    chart!.setOption({ grid: gridTop.map((g) => ({ left: 64, right: 150, top: g.top, height: g.height })) });
+  };
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    render();
+  };
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+}
+
+function updateDragHandles(gridTop: { top: number }[]) {
+  dragHandles.value = gridTop.slice(1).map((g) => ({ top: g.top - 4 }));
+}
+
 // ---------- 数据加载 ----------
 async function load(resetZoom = false) {
-  if (resetZoom) {
-    zoomStart = 0;
-    zoomEnd = 100;
-  }
+  if (resetZoom) zoomStart = 0;
   loading.value = true;
   try {
     // 币安无 2w 周期：拉 1w 数据前端两两聚合
@@ -285,6 +361,10 @@ async function load(resetZoom = false) {
     if (interval.value === '2w') cs = aggregateCandles(cs, 2);
     cs = cs.slice(-limit.value);
     candles.value = cs;
+    if (resetZoom && cs.length) {
+      // 默认视图：真实数据铺满左侧，右侧留空（VPVR 区），可自由往右拖拽
+      zoomEnd = (cs.length / (cs.length + rightPadFor(cs.length))) * 100;
+    }
     if (cs.length) {
       const last = cs[cs.length - 1]!;
       const prev = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
@@ -323,15 +403,21 @@ async function refreshLatest() {
     if (lastPrev && lastPrev.closeTime === lastNew.closeTime && lastPrev.close === lastNew.close) return;
     candles.value = cs;
 
-    // 重算指标
+    // 重算指标（含右侧填充）
+    const RIGHT_PAD = rightPadFor(cs.length);
+    const paddedLen = cs.length + RIGHT_PAD;
     const closes = cs.map((c) => c.close);
     const macdRes = macd(closes);
     const rsiRes = rsi(closes, 14);
     const volMa = sma(cs.map((c) => c.volume), 5);
-    const times = cs.map((c) => fmtAxisTime(c.openTime, interval.value));
-    const from = Math.max(0, Math.floor((cs.length * zoomStart) / 100));
-    const to = Math.min(cs.length, Math.max(from + 1, Math.ceil((cs.length * zoomEnd) / 100)));
-    const visible = cs.slice(from, to);
+    const times = [...cs.map((c) => fmtAxisTime(c.openTime, interval.value)), ...Array<string>(RIGHT_PAD).fill('')];
+    const padNull = <T,>(a: (T | null)[]): (T | null)[] => [...a, ...Array<T | null>(RIGHT_PAD).fill(null)];
+    const padNaN = (a: number[][]): (number[] | [number, number, number, number])[] => [...a, ...Array.from({ length: RIGHT_PAD }, () => [NaN, NaN, NaN, NaN])];
+    const from = Math.max(0, Math.floor((paddedLen * zoomStart) / 100));
+    const to = Math.min(paddedLen, Math.max(from + 1, Math.ceil((paddedLen * zoomEnd) / 100)));
+    const realFrom = Math.min(cs.length, from);
+    const realTo = Math.min(cs.length, Math.max(realFrom + 1, to));
+    const visible = cs.slice(realFrom, realTo);
     let yLo = Infinity, yHi = -Infinity;
     for (const c of visible) {
       if (c.low < yLo) yLo = c.low;
@@ -354,7 +440,7 @@ async function refreshLatest() {
     const seriesUpdate: Record<string, unknown>[] = [
       {
         id: 'kline',
-        data: cs.map((c) => [c.open, c.close, c.low, c.high]),
+        data: padNaN(cs.map((c) => [c.open, c.close, c.low, c.high])),
         markLine: pocPrice != null && vpvrOn.value
           ? { silent: true, symbol: 'none', lineStyle: { color: 'rgba(230,197,90,0.8)', type: 'dashed', width: 1 }, label: { show: true, formatter: 'POC ' + fmtPrice(pocPrice), color: '#e6c55a', fontSize: 10, position: 'insideEndTop' }, data: [{ yAxis: pocPrice }] }
           : undefined,
@@ -362,22 +448,22 @@ async function refreshLatest() {
     ];
     for (let i = 0; i < periods.value.length; i++) {
       const row = periods.value[i]!;
-      if (row.ma) seriesUpdate.push({ id: 'ma-' + i + '-ma', data: sma(closes, row.value) });
-      if (row.ema) seriesUpdate.push({ id: 'ma-' + i + '-ema', data: ema(closes, row.value) });
+      if (row.ma) seriesUpdate.push({ id: 'ma-' + i + '-ma', data: padNull(sma(closes, row.value)) });
+      if (row.ema) seriesUpdate.push({ id: 'ma-' + i + '-ema', data: padNull(ema(closes, row.value)) });
     }
     if (vpvrOn.value && profile.length) {
       seriesUpdate.push({ id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) });
     }
     if (volOn.value) {
-      seriesUpdate.push({ id: 'vol', data: cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } })) });
-      seriesUpdate.push({ id: 'volma5', data: volMa });
+      seriesUpdate.push({ id: 'vol', data: padNull(cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } }))) });
+      seriesUpdate.push({ id: 'volma5', data: padNull(volMa) });
     }
     if (macdOn.value) {
-      seriesUpdate.push({ id: 'macd', data: macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } })) });
-      seriesUpdate.push({ id: 'dif', data: macdRes.dif });
-      seriesUpdate.push({ id: 'dea', data: macdRes.dea });
+      seriesUpdate.push({ id: 'macd', data: padNull(macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } }))) });
+      seriesUpdate.push({ id: 'dif', data: padNull(macdRes.dif) });
+      seriesUpdate.push({ id: 'dea', data: padNull(macdRes.dea) });
     }
-    if (rsiOn.value) seriesUpdate.push({ id: 'rsi', data: rsiRes });
+    if (rsiOn.value) seriesUpdate.push({ id: 'rsi', data: padNull(rsiRes) });
 
     // 同步各面板时间轴数据（按 id 合并，避免按索引合并污染 VPVR 值轴）
     const catAxisUpdate: Record<string, unknown>[] = [{ id: 'x-cat-0', data: times }];
@@ -386,10 +472,7 @@ async function refreshLatest() {
     if (rsiOn.value && lastGridIdx.rsi !== undefined) catAxisUpdate.push({ id: 'x-cat-' + lastGridIdx.rsi, data: times });
 
     chart.setOption({
-      yAxis: [
-        { gridIndex: 0, min: priceMin, max: priceMax },
-        { gridIndex: 1, min: priceMin, max: priceMax },
-      ],
+      yAxis: [{ gridIndex: 0, min: priceMin, max: priceMax }],
       xAxis: catAxisUpdate,
       series: seriesUpdate,
     });
@@ -406,10 +489,10 @@ async function refreshLatest() {
     hoverMacd = macdRes;
     hoverRsi = rsiRes;
     hoverVolMa = volMa;
-    const lastIdx = Math.max(0, Math.min(to - 1, cs.length - 1));
+    const lastIdx = Math.max(0, Math.min(realTo - 1, cs.length - 1));
     hoverLatestIdx = lastIdx;
     updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
-    updateStatus(to - 1 < cs.length ? cs[to - 1] : undefined, to - 2 >= 0 ? cs[to - 2] : undefined);
+    updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
     const last = cs[cs.length - 1]!;
     const prevC = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
     lastPrice.value = last.close;
@@ -453,12 +536,19 @@ function render() {
   if (!cs.length) return;
 
   const closes = cs.map((c) => c.close);
-  const times = cs.map((c) => fmtAxisTime(c.openTime, interval.value));
+  // 右侧填充：允许把最新值往左拖到中间、右边留空（TradingView 式自由平移）
+  const RIGHT_PAD = rightPadFor(cs.length);
+  const paddedLen = cs.length + RIGHT_PAD;
+  const times = [...cs.map((c) => fmtAxisTime(c.openTime, interval.value)), ...Array<string>(RIGHT_PAD).fill('')];
+  const padNull = <T,>(a: (T | null)[]): (T | null)[] => [...a, ...Array<T | null>(RIGHT_PAD).fill(null)];
+  const padNaN = (a: number[][]): (number[] | [number, number, number, number])[] => [...a, ...Array.from({ length: RIGHT_PAD }, () => [NaN, NaN, NaN, NaN])];
 
-  // 可见范围（VPVR 只统计可见 K 线）
-  const from = Math.max(0, Math.floor((cs.length * zoomStart) / 100));
-  const to = Math.min(cs.length, Math.max(from + 1, Math.ceil((cs.length * zoomEnd) / 100)));
-  const visible = cs.slice(from, to);
+  // 可见范围（考虑右侧填充；VPVR/价格范围只统计真实 K 线）
+  const from = Math.max(0, Math.floor((paddedLen * zoomStart) / 100));
+  const to = Math.min(paddedLen, Math.max(from + 1, Math.ceil((paddedLen * zoomEnd) / 100)));
+  const realFrom = Math.min(cs.length, from);
+  const realTo = Math.min(cs.length, Math.max(realFrom + 1, to));
+  const visible = cs.slice(realFrom, realTo);
 
   // 价格轴范围：可见 K 线高低 + 6% 边距（K 线不贴上下边框），VPVR 轴同步
   let yLo = Infinity, yHi = -Infinity;
@@ -485,27 +575,15 @@ function render() {
     pocPrice = best.price;
   }
 
-  // 面板布局（成交量 / MACD / RSI 可开关）
+  // 面板布局（成交量 / MACD / RSI 可开关，高度可拖拽调整）
   const panels: { key: 'vol' | 'macd' | 'rsi' }[] = [];
   if (volOn.value) panels.push({ key: 'vol' });
   if (macdOn.value) panels.push({ key: 'macd' });
   if (rsiOn.value) panels.push({ key: 'rsi' });
 
-  const gridTop: { top: number; height: number }[] = [];
-  const gridIdx: Record<string, number> = {};
-  const mainH = TOTAL_H - 8 - SLIDER_H - panels.length * (PANEL_H + GRID_GAP);
-  gridTop.push({ top: 4, height: mainH }); // 0: 价格区（K线+均线）
-  gridTop.push({ top: 4, height: mainH }); // 1: VPVR 右侧竖版条（与价格区同高，间隔分开）
-  mainGridH = mainH;
-  let top = 4 + mainH + GRID_GAP;
-  for (let i = 0; i < panels.length; i++) {
-    gridTop.push({ top, height: PANEL_H });
-    gridIdx[panels[i]!.key] = i + 2; // 面板从索引 2 开始
-    top += PANEL_H + GRID_GAP;
-  }
-
-  const catAxisIdx = [0, ...panels.map((_, i) => i + 2)];
+  const { gridTop, gridIdx, catAxisIdx } = computeGridLayout(panels);
   lastGridIdx = { ...gridIdx };
+  updateDragHandles(gridTop);
 
   // 坐标轴
   const xAxes: Record<string, unknown>[] = [];
@@ -522,41 +600,19 @@ function render() {
     splitLine: { show: false },
   });
   xAxes.push(mkCatAxis(0, true));
-  // 价格轴（K线框，隐藏标签，仅横向网格线）；价格数值移到最右侧 VPVR 轴上
+  // 价格轴（K线框内，数值靠右，与下方 RSI/VOL 面板对齐）
   yAxes.push({
     gridIndex: 0,
+    position: 'right',
     min: priceMin,
     max: priceMax,
     scale: true,
     axisLine: { show: false },
-    axisLabel: { show: false },
-    splitLine: { lineStyle: { color: 'rgba(128,140,155,0.08)' } },
-  });
-  // VPVR 专用轴：嵌入 K 线框右侧，价格数值显示在它的最右侧
-  xAxes.push({
-    id: 'vpvrAxis',
-    type: 'value',
-    gridIndex: 1,
-    min: 0,
-    max: 1,
-    axisLine: { show: false },
-    axisTick: { show: false },
-    axisLabel: { show: false },
-    splitLine: { show: false },
-    axisPointer: { show: false },
-  });
-  yAxes.push({
-    gridIndex: 1,
-    position: 'right', // 价格数值在最右侧
-    min: priceMin,
-    max: priceMax,
-    scale: true,
-    axisLine: { show: false },
-    axisTick: { show: false },
     axisLabel: { color: '#8a94a3', formatter: fmtPrice, fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace', fontSize: 10 },
-    splitLine: { show: false },
+    splitLine: { lineStyle: { color: 'rgba(128,140,155,0.08)' } },
     axisPointer: { label: { formatter: (p: { value: number }) => fmtPrice(p.value) } },
   });
+  // 先建全部 category 轴（K线 + 面板），VPVR 值轴放到最后，避免挤占面板轴索引
   for (const p of panels) {
     const gi = gridIdx[p.key]!;
     xAxes.push(mkCatAxis(gi, false));
@@ -576,6 +632,20 @@ function render() {
       });
     }
   }
+  // VPVR 专用值轴：与 K 线同网格（嵌入 K 线框内，重叠展示）——放数组末尾
+  xAxes.push({
+    id: 'vpvrAxis',
+    type: 'value',
+    gridIndex: 0,
+    min: 0,
+    max: 1,
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { show: false },
+    splitLine: { show: false },
+    axisPointer: { show: false },
+  });
+  const vpvrXIdx = xAxes.length - 1;
   // 序列
   const series: Record<string, unknown>[] = [];
 
@@ -585,7 +655,7 @@ function render() {
     type: 'candlestick',
     xAxisIndex: 0,
     yAxisIndex: 0,
-    data: cs.map((c) => [c.open, c.close, c.low, c.high]),
+    data: padNaN(cs.map((c) => [c.open, c.close, c.low, c.high])),
     itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN, borderWidth: 1 },
     markLine: pocPrice != null && vpvrOn.value
       ? {
@@ -615,7 +685,7 @@ function render() {
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: sma(closes, row.value),
+        data: padNull(sma(closes, row.value)),
         symbol: 'none',
         connectNulls: false,
         z: 2,
@@ -632,7 +702,7 @@ function render() {
         type: 'line',
         xAxisIndex: 0,
         yAxisIndex: 0,
-        data: ema(closes, row.value),
+        data: padNull(ema(closes, row.value)),
         symbol: 'none',
         connectNulls: false,
         z: 2,
@@ -651,8 +721,8 @@ function render() {
       id: 'vpvr',
       name: 'VPVR',
       type: 'custom',
-      xAxisIndex: 1,
-      yAxisIndex: 1,
+      xAxisIndex: vpvrXIdx, // VPVR 值轴（同 K 线网格）
+      yAxisIndex: 0, // 与 K 线共用价格轴
       clip: true,
       silent: true,
       tooltip: { show: false },
@@ -671,11 +741,11 @@ function render() {
         const yLo = api.coord([0, lo])[1];
         const yTop = Math.min(yHi, yLo);
         const h = Math.max(1, Math.abs(yHi - yLo));
-        const w = Math.max(1, frac * params.coordSys.width * 0.85);
+        const w = Math.max(1, frac * params.coordSys.width * 0.5); // 重叠展示，柱宽限半
         return {
           type: 'rect',
           shape: { x: right - w, y: yTop, width: w, height: h },
-          style: { fill: 'rgba(77,163,255,0.45)' },
+          style: { fill: 'rgba(77,163,255,0.30)' },
         };
       },
     });
@@ -689,7 +759,7 @@ function render() {
       type: 'bar',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } })),
+      data: padNull(cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } }))),
       barMaxWidth: 8,
       valueFormatter: (v: unknown) => fmtVol(v as number),
     });
@@ -699,7 +769,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: volMa,
+      data: padNull(volMa),
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1, color: '#409eff' },
@@ -716,7 +786,7 @@ function render() {
       type: 'bar',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } })),
+      data: padNull(macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } }))),
       barMaxWidth: 6,
       valueFormatter: (v: unknown) => fmtPrice(v as number),
     });
@@ -726,7 +796,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: macdRes.dif,
+      data: padNull(macdRes.dif),
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1, color: '#f0a35e' },
@@ -739,7 +809,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: macdRes.dea,
+      data: padNull(macdRes.dea),
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1, color: '#4da3ff' },
@@ -756,7 +826,7 @@ function render() {
       type: 'line',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: rsiRes,
+      data: padNull(rsiRes),
       symbol: 'none',
       connectNulls: false,
       lineStyle: { width: 1.2, color: '#4da3ff' },
@@ -771,14 +841,8 @@ function render() {
     });
   }
 
-  // 网格：0=K线框，1=VPVR 嵌入 K 线框右侧（价格数值在其最右侧），2+=副图面板（宽度与 K 线框对齐）
-  const grids = gridTop.map((g, i) =>
-    i === 0
-      ? { left: 64, right: 195, top: g.top, height: g.height }
-      : i === 1
-        ? { right: 66, width: 110, top: g.top, height: g.height }
-        : { left: 64, right: 195, top: g.top, height: g.height },
-  );
+  // 网格：K线框与所有副图面板左右对齐（VPVR 嵌入 K 线框内重叠展示，数值全部靠右对齐）
+  const grids = gridTop.map((g) => ({ left: 64, right: 150, top: g.top, height: g.height }));
 
   chart.setOption(
     {
@@ -822,7 +886,7 @@ function render() {
   hoverVolMa = volMa;
   hoverLatestIdx = lastIdx;
   updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
-  updateStatus(to - 1 < cs.length ? cs[to - 1] : undefined, to - 2 >= 0 ? cs[to - 2] : undefined);
+  updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
 }
 
 // ---------- 缩放：仅重算 VPVR（可见区间） ----------
@@ -837,10 +901,14 @@ function onZoom() {
   zoomEnd = e;
   if (!candles.value.length) return;
   const cs = candles.value;
-  const from = Math.max(0, Math.floor((cs.length * s) / 100));
-  const to = Math.min(cs.length, Math.max(from + 1, Math.ceil((cs.length * e) / 100)));
-  const visible = cs.slice(from, to);
-  // 缩放后价格轴范围随可见 K 线重算（K 线不贴上下边框），VPVR 轴同步
+  const RIGHT_PAD = rightPadFor(cs.length);
+  const paddedLen = cs.length + RIGHT_PAD;
+  const from = Math.max(0, Math.floor((paddedLen * s) / 100));
+  const to = Math.min(paddedLen, Math.max(from + 1, Math.ceil((paddedLen * e) / 100)));
+  const realFrom = Math.min(cs.length, from);
+  const realTo = Math.min(cs.length, Math.max(realFrom + 1, to));
+  const visible = cs.slice(realFrom, realTo);
+  // 缩放后价格轴范围随可见 K 线重算（K 线不贴上下边框）
   let yLo = Infinity, yHi = -Infinity;
   for (const c of visible) {
     if (c.low < yLo) yLo = c.low;
@@ -850,10 +918,7 @@ function onZoom() {
   const priceMin = yLo - yPad;
   const priceMax = yHi + yPad;
   const opts: Record<string, unknown> = {
-    yAxis: [
-      { gridIndex: 0, min: priceMin, max: priceMax },
-      { gridIndex: 1, min: priceMin, max: priceMax },
-    ],
+    yAxis: [{ gridIndex: 0, min: priceMin, max: priceMax }],
   };
   if (vpvrOn.value) {
     const buckets = Math.max(16, Math.min(48, Math.round(visible.length / 4)));
@@ -895,14 +960,14 @@ function onZoom() {
     if (row.ma) maLegend.push({ name: 'MA(' + label + ')', color: row.color, vals: sma(closes, row.value) });
     if (row.ema) maLegend.push({ name: 'EMA(' + label + ')', color: row.color, vals: ema(closes, row.value) });
   }
-  const lastIdx = Math.max(0, Math.min(to - 1, cs.length - 1));
+  const lastIdx = Math.max(0, Math.min(realTo - 1, cs.length - 1));
   hoverMa = maLegend;
   hoverMacd = macdRes;
   hoverRsi = rsiRes;
   hoverVolMa = volMa;
   hoverLatestIdx = lastIdx;
   updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
-  updateStatus(to - 1 < cs.length ? cs[to - 1] : undefined, to - 2 >= 0 ? cs[to - 2] : undefined);
+  updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
 }
 
 // ---------- 生命周期 ----------
@@ -915,8 +980,12 @@ watch(autoRefresh, (on) => {
 });
 
 onMounted(() => {
-  resizeHandler = () => chart?.resize();
+  resizeHandler = () => {
+    chart?.resize();
+    measureChart();
+  };
   window.addEventListener('resize', resizeHandler);
+  measureChart();
   load();
 });
 
@@ -960,11 +1029,15 @@ onBeforeUnmount(() => {
 .del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
 .del:hover { color: #f56c6c; }
 
-/* 图表 + 图例浮层 */
+/* 图表 + 图例浮层 + 面板拖拽手柄 */
 .chart-wrap { position: relative; }
-.chart { height: 668px; width: 100%; }
+.chart { height: calc(100vh - 248px); min-height: 420px; width: 100%; }
 .legend { position: absolute; display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
 .lg b { font-weight: 600; margin-left: 3px; }
+.drag-handle { position: absolute; left: 60px; right: 10px; height: 7px; cursor: row-resize; z-index: 6; border-top: 1px dashed transparent; }
+.drag-handle:hover { border-top: 1px dashed var(--accent); }
+.period-input { width: 56px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; font-family: var(--mono); padding: 2px 4px; text-align: center; }
+.period-input:focus { outline: none; border-color: var(--accent); }
 
 /* TradingView 风格状态栏 */
 .tv-status { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); font-size: 11px; flex-wrap: wrap; }
