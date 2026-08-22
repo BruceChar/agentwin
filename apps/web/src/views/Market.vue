@@ -19,6 +19,8 @@
       </div>
       <!-- 时间周期：单个下拉（鼠标悬停自动展开），显示当前激活周期；内置 置顶 / 常用周期 / 自定义 三组 -->
       <div class="tv-intervals">
+        <!-- 置顶周期：默认展示 4 个（与下拉内置顶组同步） -->
+        <button v-for="iv in pinnedItems" :key="iv.value" class="tv-tab" :class="{ active: interval === iv.value }" :title="iv.label" @click="changeInterval(iv.value)">{{ iv.short }}</button>
         <el-dropdown trigger="hover">
           <span class="iv-trigger mono" :title="'当前周期：' + intervalLabel">{{ intervalLabel }}<span class="caret">▾</span></span>
           <template #dropdown>
@@ -34,23 +36,14 @@
               <div class="iv-sec">
                 <div class="iv-sec-t">常用周期</div>
                 <div class="iv-chips">
-                  <span v-for="iv in commonItems" :key="iv.value" class="iv-chip" :class="{ on: interval === iv.value }" :title="iv.label" @click="changeInterval(iv.value)">{{ iv.short }}<span class="iv-chip-act" title="移到置顶" @click.stop="pinIv(iv.value)">📌</span></span>
+                  <span v-for="iv in commonItems" :key="iv.value" class="iv-chip" :class="{ on: interval === iv.value }" :title="iv.label" @click="changeInterval(iv.value)">{{ iv.short }}<span class="iv-chip-act" title="移到置顶" @click.stop="pinIv(iv.value)"><el-icon><Top /></el-icon></span></span>
                 </div>
               </div>
               <!-- 自定义 -->
               <div class="iv-sec">
                 <div class="iv-sec-t">自定义</div>
                 <div class="iv-chips">
-                  <span v-for="iv in customItems" :key="iv.value" class="iv-chip" :class="{ on: interval === iv.value }" :title="iv.label" @click="changeInterval(iv.value)">{{ iv.short }}<span class="iv-chip-act" title="编辑" @click.stop="startEditCustom(iv.value)">✎</span><span class="iv-chip-act" title="移到置顶" @click.stop="pinIv(iv.value)">📌</span><span class="iv-chip-act" title="删除" @click.stop="removeCustom(iv.value)">×</span></span>
-                </div>
-                <div v-if="editIv" class="iv-edit">
-                  <span class="dim">编辑自定义</span>
-                  <input v-model="editIv.num" class="cust-num" size="3" @keyup.enter="saveEditCustom" />
-                  <select v-model="editIv.unit" class="cust-unit">
-                    <option value="m">m</option><option value="h">h</option><option value="d">d</option><option value="w">w</option><option value="M">M</option>
-                  </select>
-                  <el-button size="small" text type="primary" @click="saveEditCustom">保存</el-button>
-                  <el-button size="small" text @click="editIv = null">取消</el-button>
+                  <span v-for="iv in customItems" :key="iv.value" class="iv-chip" :class="{ on: interval === iv.value }" :title="iv.label" @click="changeInterval(iv.value)">{{ iv.short }}<span class="iv-chip-act" title="移到置顶" @click.stop="pinIv(iv.value)"><el-icon><Top /></el-icon></span><span class="iv-chip-act" title="删除" @click.stop="removeCustom(iv.value)">×</span></span>
                 </div>
                 <div class="iv-add">
                   <span class="dim">+ 添加</span>
@@ -67,7 +60,7 @@
       </div>
       <div class="tv-actions">
         <!-- 指标菜单（下拉抽屉，logo 图标）：一级指标列表；点击“均线”进入二级明细 -->
-        <el-popover v-model:visible="indOpen" placement="bottom-end" :width="380" trigger="click" @hide="indLevel = 'root'; editLineId = null">
+        <el-popover v-model:visible="indOpen" placement="bottom-end" :width="430" trigger="click" @hide="indLevel = 'root'">
           <template #reference>
             <el-button size="small" class="ind-btn" :type="indOpen ? 'primary' : 'default'" title="指标设置"><el-icon><TrendCharts /></el-icon></el-button>
           </template>
@@ -117,44 +110,26 @@
                 <div class="ip-sec-t">MA</div>
                 <div class="ip-lines">
                   <div v-for="ln in maLines" :key="ln.id" class="ip-line" :class="{ off: !ln.on, sel: linkMap[ln.id] }">
-                    <template v-if="editLineId === ln.id">
-                      <span class="ip-name" :style="{ color: ln.color }">MA({{ fmtPeriod(ln.period) }})</span>
-                      <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
-                      <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
-                      <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 60px" title="线宽" @change="lineChanged(ln)" />
-                      <el-button size="small" text type="primary" @click="editLineId = null">完成</el-button>
-                    </template>
-                    <template v-else>
-                      <span class="ip-name" :style="{ color: ln.color }">MA({{ fmtPeriod(ln.period) }})</span>
-                      <span class="ip-hov">
-                        <el-icon :title="ln.on ? '隐藏' : '显示'" @click="toggleLine(ln)"><View /></el-icon>
-                        <el-icon title="编辑" @click="editLineId = ln.id"><EditPen /></el-icon>
-                        <el-icon title="删除" @click="removeLineBy(ln)"><Delete /></el-icon>
-                      </span>
-                      <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
-                    </template>
+                    <el-checkbox v-model="ln.on" size="small" :title="'显示/隐藏 MA(' + fmtPeriod(ln.period) + ')'" @change="lineChanged(ln)" />
+                    <span class="ip-name" :style="{ color: ln.color }">MA({{ fmtPeriod(ln.period) }})</span>
+                    <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
+                    <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
+                    <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 56px" title="线宽" @change="lineChanged(ln)" />
+                    <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
+                    <button v-if="lines.length > 1" class="del" title="删除该均线" @click="removeLineById(ln.id)">×</button>
                   </div>
                   <div v-if="!maLines.length" class="ip-empty" @click="addLine('ma')">暂无 MA 线，点击添加示例 MA(60)</div>
                 </div>
                 <div class="ip-sec-t">EMA</div>
                 <div class="ip-lines">
                   <div v-for="ln in emaLines" :key="ln.id" class="ip-line" :class="{ off: !ln.on, sel: linkMap[ln.id] }">
-                    <template v-if="editLineId === ln.id">
-                      <span class="ip-name" :style="{ color: ln.color }">EMA({{ fmtPeriod(ln.period) }})</span>
-                      <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
-                      <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
-                      <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 60px" title="线宽" @change="lineChanged(ln)" />
-                      <el-button size="small" text type="primary" @click="editLineId = null">完成</el-button>
-                    </template>
-                    <template v-else>
-                      <span class="ip-name" :style="{ color: ln.color }">EMA({{ fmtPeriod(ln.period) }})</span>
-                      <span class="ip-hov">
-                        <el-icon :title="ln.on ? '隐藏' : '显示'" @click="toggleLine(ln)"><View /></el-icon>
-                        <el-icon title="编辑" @click="editLineId = ln.id"><EditPen /></el-icon>
-                        <el-icon title="删除" @click="removeLineBy(ln)"><Delete /></el-icon>
-                      </span>
-                      <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
-                    </template>
+                    <el-checkbox v-model="ln.on" size="small" :title="'显示/隐藏 EMA(' + fmtPeriod(ln.period) + ')'" @change="lineChanged(ln)" />
+                    <span class="ip-name" :style="{ color: ln.color }">EMA({{ fmtPeriod(ln.period) }})</span>
+                    <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
+                    <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
+                    <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 56px" title="线宽" @change="lineChanged(ln)" />
+                    <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
+                    <button v-if="lines.length > 1" class="del" title="删除该均线" @click="removeLineById(ln.id)">×</button>
                   </div>
                   <div v-if="!emaLines.length" class="ip-empty" @click="addLine('ema')">暂无 EMA 线，点击添加示例 EMA(60)</div>
                 </div>
@@ -203,7 +178,14 @@
         <template v-if="g.cols && g.cols.length">
           <div v-for="col in g.cols" :key="col.key" class="lg-col">
             <span class="lg-x lg-x-col" :title="'关闭全部 ' + col.label + ' 均线'" @click="hideGroup(col.key)">×</span>
-            <span v-for="(it, idx) in col.items" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
+            <span v-for="(it, idx) in col.items" :key="idx" class="lg" :style="{ color: it.color }">
+              {{ it.name }}<b>{{ it.value }}</b>
+              <span v-if="it.id != null" class="lg-quick">
+                <el-icon :title="'隐藏/显示 '" @click.stop="toggleLineById(it.id)"><View /></el-icon>
+                <el-icon title="编辑" @click.stop="editLineFromLegend()"><EditPen /></el-icon>
+                <el-icon title="删除" @click.stop="removeLineById(it.id)"><Delete /></el-icon>
+              </span>
+            </span>
           </div>
         </template>
         <!-- 其它面板（VOL/MACD/RSI）：× 在数值右边，点击关闭该指标 -->
@@ -220,9 +202,10 @@
         :style="{ left: hoverTip.x + 'px', top: hoverTip.y + 'px' }"
       >
         <div class="ht-time">{{ hoverTip.time }}</div>
+        <div class="ht-row"><span class="ht-k">鼠标价</span><span>{{ hoverTip.mousePrice }} <b class="ht-pct" :class="hoverTip.mouseCls">{{ hoverTip.mousePct }}</b></span></div>
         <div class="ht-row"><span class="ht-k">开</span><span>{{ hoverTip.open }}</span></div>
-        <div class="ht-row"><span class="ht-k">高</span><span class="up">{{ hoverTip.high }} <b class="ht-pct">{{ hoverTip.highPct }}</b></span></div>
-        <div class="ht-row"><span class="ht-k">低</span><span class="down">{{ hoverTip.low }} <b class="ht-pct">{{ hoverTip.lowPct }}</b></span></div>
+        <div class="ht-row"><span class="ht-k">高</span><span class="up">{{ hoverTip.high }}</span></div>
+        <div class="ht-row"><span class="ht-k">低</span><span class="down">{{ hoverTip.low }}</span></div>
         <div class="ht-row"><span class="ht-k">收</span><span :class="hoverTip.cls">{{ hoverTip.close }}</span></div>
         <div class="ht-row"><span class="ht-k">振幅</span><span>{{ hoverTip.amp }}</span></div>
         <div class="ht-row"><span class="ht-k">差值</span><span>{{ hoverTip.diff }}</span></div>
@@ -256,7 +239,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
-import { ArrowLeft, DataAnalysis, DataLine, Delete, EditPen, Histogram, Odometer, PieChart, TrendCharts, View } from '@element-plus/icons-vue';
+import { ArrowLeft, DataAnalysis, DataLine, Delete, EditPen, Histogram, Odometer, PieChart, Top, TrendCharts, View } from '@element-plus/icons-vue';
 import { api } from '../api.ts';
 import { accountStore } from '../store.ts';
 import {
@@ -366,7 +349,6 @@ const pinnedIv = ref<string[]>([...QUICK_INTERVAL_VALUES]);
 const customIvList = ref<{ value: string; label: string }[]>([]);
 const addIvNum = ref('');
 const addIvUnit = ref('m');
-const editIv = ref<{ value: string; num: string; unit: string } | null>(null);
 const limit = ref(300);
 const autoRefresh = ref(false);
 /** EMA / MA 两组开关：按组显示/隐藏全部均线 */
@@ -392,7 +374,6 @@ const chartEl = ref<HTMLDivElement | null>(null);
 
 // ---------- 指标菜单：一级(列表) / 二级(均线明细) 导航 ----------
 const indLevel = ref<'root' | 'ma'>('root');
-const editLineId = ref<number | null>(null);
 const linkMode = ref(false);
 const maLines = computed(() => lines.value.filter((l) => l.kind === 'ma'));
 const emaLines = computed(() => lines.value.filter((l) => l.kind === 'ema'));
@@ -404,13 +385,20 @@ const activeLineCount = computed(() => {
   }
   return n;
 });
-function toggleLine(ln: MaLineCfg) {
-  ln.on = !ln.on;
-  render();
+/** 图例快捷图标：隐藏/显示单条均线（按 id） */
+function toggleLineById(id: number) {
+  const ln = lines.value.find((l) => l.id === id);
+  if (ln) { ln.on = !ln.on; render(); }
 }
-function removeLineBy(ln: MaLineCfg) {
-  const i = lines.value.findIndex((l) => l.id === ln.id);
+/** 图例快捷图标：删除单条均线（按 id） */
+function removeLineById(id: number) {
+  const i = lines.value.findIndex((l) => l.id === id);
   if (i >= 0) removeLine(i);
+}
+/** 图例快捷图标：编辑 → 打开指标菜单二级（均线明细直接展示编辑工具） */
+function editLineFromLegend() {
+  indOpen.value = true;
+  indLevel.value = 'ma';
 }
 /** 周期显示文案：标准周期用中文标签；自定义按“数字+单位”转中文（45m→45分钟、2d→2天） */
 const UNIT_CN: Record<string, string> = { m: '分钟', h: '小时', d: '天', w: '周', M: '月' };
@@ -486,32 +474,8 @@ function removeCustom(v: string) {
   unpinIv(v);
   if (interval.value === v) changeInterval('1h');
 }
-function startEditCustom(v: string) {
-  const m = /^(\d+(?:\.\d+)?)\s*(m|h|d|w|M)$/.exec(v);
-  if (!m) return;
-  editIv.value = { value: v, num: m[1]!, unit: m[2]! };
-}
-function saveEditCustom() {
-  if (!editIv.value) return;
-  const nv = editIv.value.num.trim() + editIv.value.unit;
-  if (!resolveInterval(nv)) {
-    ElMessage.warning('周期格式：数字+时间单位，如 45m / 3h / 2d');
-    return;
-  }
-  const old = editIv.value.value;
-  if (customIvList.value.some((c) => c.value === nv && c.value !== old)) {
-    ElMessage.warning('该自定义周期已存在');
-    return;
-  }
-  const idx = customIvList.value.findIndex((c) => c.value === old);
-  if (idx >= 0) customIvList.value[idx] = { value: nv, label: fmtIntervalLabel(nv) };
-  if (pinnedIv.value.includes(old)) pinnedIv.value = pinnedIv.value.map((x) => (x === old ? nv : x));
-  if (interval.value === old) changeInterval(nv);
-  editIv.value = null;
-}
-
 // TradingView 风格：各面板独立图例（默认最新值，悬停联动）+ 状态栏
-interface LegendItem { name: string; color: string; value: string }
+interface LegendItem { id?: number; name: string; color: string; value: string }
 interface LegendCol { key: 'ema' | 'ma'; label: string; items: LegendItem[] }
 interface LegendGroup { key: string; top: number; left: number; items?: LegendItem[]; cols?: LegendCol[]; label?: string }
 const legends = ref<LegendGroup[]>([]);
@@ -520,8 +484,8 @@ const status = ref<{ time: string; open: string; high: string; low: string; clos
 });
 
 // 悬停 OHLC 浮窗（含振幅/差值/高低相对收盘价百分比：高用+，低用-）
-const hoverTip = ref<{ visible: boolean; x: number; y: number; time: string; open: string; high: string; low: string; close: string; highPct: string; lowPct: string; amp: string; diff: string; change: string; changePct: string; cls: string }>({
-  visible: false, x: 0, y: 0, time: '', open: '-', high: '-', low: '-', close: '-', highPct: '', lowPct: '', amp: '-', diff: '-', change: '-', changePct: '-', cls: '',
+const hoverTip = ref<{ visible: boolean; x: number; y: number; time: string; open: string; high: string; low: string; close: string; mousePrice: string; mousePct: string; mouseCls: string; amp: string; diff: string; change: string; changePct: string; cls: string }>({
+  visible: false, x: 0, y: 0, time: '', open: '-', high: '-', low: '-', close: '-', mousePrice: '-', mousePct: '', mouseCls: '', amp: '-', diff: '-', change: '-', changePct: '-', cls: '',
 });
 // 可见区间最高/最低点：标在所在 K 线上（价格标签 + 连接线指向该 K 线的高/低点）
 interface HlMarker { x: number; y: number; price: string }
@@ -585,7 +549,7 @@ function updateHlMarkers(visibleCandles: CandleView[], startIdx: number) {
 let legendTops: Record<string, number> = { price: 6 };
 
 // 悬停联动用：缓存最近一次渲染的指标（避免每次 mousemove 重算全量）
-interface MaLine { name: string; color: string; vals: (number | null)[]; kind: 'ema' | 'ma' }
+interface MaLine { id: number; name: string; color: string; vals: (number | null)[]; kind: 'ema' | 'ma' }
 let hoverMa: MaLine[] = [];
 let hoverMacd: { dif: (number | null)[]; dea: (number | null)[]; hist: (number | null)[] } = { dif: [], dea: [], hist: [] };
 let hoverRsi: (number | null)[] = [];
@@ -644,6 +608,7 @@ function buildMaLegend(closes: number[]): MaLine[] {
     if (!on) continue;
     const label = fmtPeriod(ln.period);
     out.push({
+      id: ln.id,
       name: (ln.kind === 'ema' ? 'EMA(' : 'MA(') + label + ')',
       color: ln.color,
       kind: ln.kind,
@@ -662,7 +627,7 @@ function updateLegends(idx: number, maLines: MaLine[], macdRes: { dif: (number |
   for (const m of maLines) {
     const v = m.vals[idx];
     if (v == null) continue;
-    const it: LegendItem = { name: m.name, color: m.color, value: fmtPrice(v) };
+    const it: LegendItem = { id: m.id, name: m.name, color: m.color, value: fmtPrice(v) };
     if (m.kind === 'ema') emaCol.items.push(it);
     else maCol.items.push(it);
   }
@@ -1067,11 +1032,12 @@ function render() {
           const chg = c.close - prevC;
           const pct = prevC > 0 ? (chg / prevC) * 100 : 0;
           const up = c.close >= prevC;
-          // 振幅=(高-低)/昨收、差值=高-低；高/低相对本 K 线收盘价的百分比（高恒+、低恒-）
+          // 振幅=(高-低)/昨收、差值=高-低；鼠标所在价位相对当前价(最新价)的百分比（OHLC 仅价格不带 %）
           const amp = prevC > 0 ? ((c.high - c.low) / prevC) * 100 : 0;
           const diff = c.high - c.low;
-          const highPct = c.close > 0 ? ((c.high - c.close) / c.close) * 100 : 0;
-          const lowPct = c.close > 0 ? ((c.low - c.close) / c.close) * 100 : 0;
+          const yVal = Number(point[1]);
+          const curPrice = lastPrice.value ?? c.close;
+          const mousePct = curPrice > 0 ? ((yVal - curPrice) / curPrice) * 100 : 0;
           const tw = chartEl.value?.clientWidth ?? 0;
           const th = chartEl.value?.clientHeight ?? 0;
           hoverTip.value = {
@@ -1083,8 +1049,9 @@ function render() {
             high: fmtPrice(c.high),
             low: fmtPrice(c.low),
             close: fmtPrice(c.close),
-            highPct: (highPct >= 0 ? '+' : '') + highPct.toFixed(2) + '%',
-            lowPct: lowPct.toFixed(2) + '%',
+            mousePrice: fmtPrice(yVal),
+            mousePct: (mousePct >= 0 ? '+' : '') + mousePct.toFixed(2) + '%',
+            mouseCls: mousePct >= 0 ? 'up' : 'down',
             amp: amp.toFixed(2) + '%',
             diff: fmtPrice(diff),
             change: (chg >= 0 ? '+' : '') + fmtPrice(chg),
@@ -1254,7 +1221,7 @@ function render() {
     const label = fmtPeriod(ln.period);
     const name = (ln.kind === 'ema' ? 'EMA(' : 'MA(') + label + ')';
     const vals = ln.kind === 'ema' ? ema(closes, ln.period) : sma(closes, ln.period);
-    maLegend.push({ name, color: ln.color, kind: ln.kind, vals });
+    maLegend.push({ id: ln.id, name, color: ln.color, kind: ln.kind, vals });
     series.push({
       id: 'ind-' + ln.id,
       name,
@@ -1766,6 +1733,10 @@ onBeforeUnmount(() => {
 .tv-px { font-size: 15px; font-weight: 700; margin-left: 6px; }
 .tv-chg { font-size: 11px; }
 .tv-intervals { display: flex; align-items: center; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 2px; }
+/* 置顶周期 tab（默认展示 4 个） */
+.tv-tab { border: none; background: none; color: var(--text-dim); font-size: 11px; padding: 3px 7px; border-radius: 4px; cursor: pointer; font-family: var(--mono); }
+.tv-tab:hover { color: var(--text); }
+.tv-tab.active { background: var(--accent); color: #fff; font-weight: 600; }
 /* 当前周期下拉触发：显示激活周期，悬停展开 */
 .iv-trigger { display: inline-flex; align-items: center; gap: 5px; color: var(--text); font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
 .iv-trigger:hover { color: var(--accent); }
@@ -1783,7 +1754,8 @@ onBeforeUnmount(() => {
 .iv-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 4px; background: var(--bg-elev); border: 1px solid var(--border); font-size: 11px; font-family: var(--mono); cursor: pointer; color: var(--text); }
 .iv-chip:hover { border-color: var(--accent); }
 .iv-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-.iv-chip-act { font-size: 10px; opacity: 0.55; cursor: pointer; border-radius: 2px; line-height: 1; padding: 0 1px; }
+.iv-chip-act { display: inline-flex; align-items: center; font-size: 10px; opacity: 0.55; cursor: pointer; border-radius: 2px; line-height: 1; padding: 0 1px; }
+.iv-chip-act .el-icon { font-size: 11px; vertical-align: middle; }
 .iv-chip-act:hover { opacity: 1; color: var(--accent); background: rgba(64,158,255,0.15); }
 .iv-chip.on .iv-chip-act { color: #fff; }
 .iv-chip.on .iv-chip-act:hover { color: #f56c6c; background: rgba(245,108,108,0.25); }
@@ -1814,13 +1786,10 @@ onBeforeUnmount(() => {
 .ip-line.sel { background: rgba(64,158,255,0.12); outline: 1px solid rgba(64,158,255,0.4); }
 .ip-line :deep(.el-checkbox) { margin-right: 0; }
 .ip-name { font-family: var(--mono); font-size: 11px; font-weight: 600; }
-/* 悬停行显示 隐藏/编辑/删除 图标 */
-.ip-hov { display: none; align-items: center; gap: 4px; margin-left: auto; }
-.ip-line:hover .ip-hov { display: inline-flex; }
-.ip-hov .el-icon { font-size: 13px; cursor: pointer; color: var(--text-dim); padding: 1px; border-radius: 3px; }
-.ip-hov .el-icon:hover { color: #fff; background: rgba(128,140,155,0.25); }
-.ip-hov .el-icon:last-child:hover { color: #f56c6c; background: rgba(245,108,108,0.15); }
-.ip-linkbox { margin-left: auto; }
+/* 菜单二级直接展示编辑工具（周期/颜色/线宽），删除按钮靠右 */
+.ip-name { font-family: var(--mono); font-size: 11px; font-weight: 600; width: 62px; flex: none; }
+.ip-line .del { margin-left: auto; }
+.ip-linkbox { flex: none; }
 .ip-empty { font-size: 11px; color: var(--text-dim); padding: 4px 6px; cursor: pointer; border: 1px dashed var(--border); border-radius: 4px; }
 .ip-empty:hover { color: var(--accent); border-color: var(--accent); }
 .ip-link { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(64,158,255,0.08); border: 1px solid rgba(64,158,255,0.35); border-radius: 5px; margin-top: 6px; }
@@ -1831,7 +1800,14 @@ onBeforeUnmount(() => {
 .chart-wrap { position: relative; }
 .chart { height: calc(100vh - 248px); min-height: 420px; width: 100%; }
 .legend { position: absolute; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
+.lg { display: inline-flex; align-items: center; }
 .lg b { font-weight: 600; margin-left: 3px; }
+/* 图例行悬浮快捷图标（K线图上）：隐藏/编辑/删除 */
+.lg-quick { display: none; align-items: center; gap: 3px; margin-left: 4px; pointer-events: auto; }
+.lg:hover .lg-quick { display: inline-flex; }
+.lg-quick .el-icon { font-size: 11px; cursor: pointer; color: var(--text-dim); padding: 1px; border-radius: 3px; }
+.lg-quick .el-icon:hover { color: #fff; background: rgba(128,140,155,0.25); }
+.lg-quick .el-icon:last-child:hover { color: #f56c6c; background: rgba(245,108,108,0.15); }
 /* EMA / MA 图例分两列（组关闭时不渲染，不留灰色框） */
 .lg-col { position: relative; display: flex; flex-direction: column; gap: 2px; background: rgba(17,22,29,0.6); border: 1px solid var(--border); border-radius: 5px; padding: 3px 14px 4px 8px; }
 .lg-col .lg { line-height: 1.5; }
