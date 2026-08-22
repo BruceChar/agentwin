@@ -305,13 +305,17 @@ function render() {
     chart.on('datazoom', onZoom);
     chart.on('restore', onZoom);
     chart.on('axisareaselected', onZoom);
-    // 悬停：各面板图例联动显示光标处指标值（默认显示最新值）
-    chart.on('mousemove', (params: unknown) => {
-      const p = params as { dataIndex?: number };
-      if (typeof p.dataIndex === 'number' && p.dataIndex >= 0 && p.dataIndex < candles.value.length) {
-        updateHoverLegends(p.dataIndex);
+    // 悬停：按纵轴任意位置触发（不要求鼠标正好压在 K 线上），各面板图例联动
+    chart.getZr().on('mousemove', (event: unknown) => {
+      const ev = event as { offsetX: number; offsetY: number };
+      if (ev.offsetX == null || ev.offsetY == null || !chart) return;
+      const idx = chart.convertFromPixel({ xAxisIndex: 0 }, [ev.offsetX, ev.offsetY])[0];
+      const i = Math.round(idx);
+      if (Number.isFinite(i) && i >= 0 && i < candles.value.length) {
+        updateHoverLegends(i);
       }
     });
+    chart.getZr().on('globalout', () => resetHoverLegends());
     chart.on('globalout', () => resetHoverLegends());
   }
   const cs = candles.value;
@@ -342,6 +346,13 @@ function render() {
   const buckets = Math.max(16, Math.min(48, Math.round(visible.length / 4)));
   const profile = volumeProfile(visible, buckets);
   const maxVol = Math.max(1e-9, profile.reduce((m, b) => (b.volume > m ? b.volume : m), 0));
+  // POC：当前可见区域成交量最大的价位（VPVR 的平衡点价格线）
+  let pocPrice: number | null = null;
+  if (profile.length) {
+    let best = profile[0]!;
+    for (const b of profile) if (b.volume > best.volume) best = b;
+    pocPrice = best.price;
+  }
 
   // 面板布局（成交量 / MACD / RSI 可开关）
   const panels: { key: 'vol' | 'macd' | 'rsi' }[] = [];
@@ -378,18 +389,17 @@ function render() {
     splitLine: { show: false },
   });
   xAxes.push(mkCatAxis(0, true));
+  // 价格轴（K线框，隐藏标签，仅横向网格线）；价格数值移到最右侧 VPVR 轴上
   yAxes.push({
     gridIndex: 0,
-    position: 'right', // 价格数值放右侧（TradingView 风格）
     min: priceMin,
     max: priceMax,
     scale: true,
     axisLine: { show: false },
-    axisLabel: { color: '#8a94a3', formatter: fmtPrice, fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace', fontSize: 10 },
+    axisLabel: { show: false },
     splitLine: { lineStyle: { color: 'rgba(128,140,155,0.08)' } },
-    axisPointer: { label: { formatter: (p: { value: number }) => fmtPrice(p.value) } },
   });
-  // VPVR 专用轴：右侧竖版条，与价格轴同范围（保证与 K 线价格严格对齐）
+  // VPVR 专用轴：嵌入 K 线框右侧，价格数值显示在它的最右侧
   xAxes.push({
     id: 'vpvrAxis',
     type: 'value',
@@ -404,14 +414,15 @@ function render() {
   });
   yAxes.push({
     gridIndex: 1,
+    position: 'right', // 价格数值在最右侧
     min: priceMin,
     max: priceMax,
     scale: true,
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { show: false },
+    axisLabel: { color: '#8a94a3', formatter: fmtPrice, fontFamily: 'SF Mono, JetBrains Mono, Consolas, monospace', fontSize: 10 },
     splitLine: { show: false },
-    axisPointer: { show: false },
+    axisPointer: { label: { formatter: (p: { value: number }) => fmtPrice(p.value) } },
   });
   for (const p of panels) {
     const gi = gridIdx[p.key]!;
@@ -436,12 +447,22 @@ function render() {
   const series: Record<string, unknown>[] = [];
 
   series.push({
+    id: 'kline',
     name: 'K线',
     type: 'candlestick',
     xAxisIndex: 0,
     yAxisIndex: 0,
     data: cs.map((c) => [c.open, c.close, c.low, c.high]),
     itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN, borderWidth: 1 },
+    markLine: pocPrice != null && vpvrOn.value
+      ? {
+          silent: true,
+          symbol: 'none',
+          lineStyle: { color: 'rgba(230,197,90,0.8)', type: 'dashed', width: 1 },
+          label: { show: true, formatter: 'POC ' + fmtPrice(pocPrice), color: '#e6c55a', fontSize: 10, position: 'insideEndTop' },
+          data: [{ yAxis: pocPrice }],
+        }
+      : undefined,
     valueFormatter: (v: unknown) =>
       Array.isArray(v)
         ? '开 ' + fmtPrice(v[0] as number) + ' 收 ' + fmtPrice(v[1] as number) + ' 低 ' + fmtPrice(v[2] as number) + ' 高 ' + fmtPrice(v[3] as number)
@@ -609,20 +630,27 @@ function render() {
     });
   }
 
-  // 网格：0=价格区（K线+右侧数值），1=VPVR 同框右侧竖版条（K线与右侧留 margin），2+=副图面板（数值靠右）
+  // 网格：0=K线框，1=VPVR 嵌入 K 线框右侧（价格数值在其最右侧），2+=副图面板（宽度与 K 线框对齐）
   const grids = gridTop.map((g, i) =>
     i === 0
-      ? { left: 64, right: 215, top: g.top, height: g.height }
+      ? { left: 64, right: 195, top: g.top, height: g.height }
       : i === 1
-        ? { right: 44, width: 125, top: g.top, height: g.height }
-        : { left: 64, right: 52, top: g.top, height: g.height },
+        ? { right: 66, width: 110, top: g.top, height: g.height }
+        : { left: 64, right: 195, top: g.top, height: g.height },
   );
 
   chart.setOption(
     {
       animation: false,
-      // 不用统一大浮窗：仅保留十字光标，各面板数值显示在自己图例上（悬停联动）
-      tooltip: { show: false },
+      // 不用统一大浮窗：tooltip 触发十字光标但 formatter 返回空（不弹框），各面板数值显示在自己图例上（悬停联动）
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'cross', lineStyle: { color: '#4da3ff', type: 'dashed', width: 1 }, crossStyle: { color: '#4da3ff', type: 'dashed' }, label: { backgroundColor: '#2f3a46', color: '#d7dde4', fontSize: 10 } },
+        formatter: () => '',
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        padding: 0,
+      },
       axisPointer: {
         link: [{ xAxisIndex: catAxisIdx }],
         lineStyle: { color: '#4da3ff', type: 'dashed', width: 1 },
@@ -702,7 +730,28 @@ function onZoom() {
     const buckets = Math.max(16, Math.min(48, Math.round(visible.length / 4)));
     const profile = volumeProfile(visible, buckets);
     const maxVol = Math.max(1e-9, profile.reduce((m, b) => (b.volume > m ? b.volume : m), 0));
-    opts['series'] = [{ id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) }];
+    // POC：可见区域最大量价位线
+    let pocPrice: number | null = null;
+    if (profile.length) {
+      let best = profile[0]!;
+      for (const b of profile) if (b.volume > best.volume) best = b;
+      pocPrice = best.price;
+    }
+    opts['series'] = [
+      { id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) },
+      {
+        id: 'kline',
+        markLine: pocPrice != null
+          ? {
+              silent: true,
+              symbol: 'none',
+              lineStyle: { color: 'rgba(230,197,90,0.8)', type: 'dashed', width: 1 },
+              label: { show: true, formatter: 'POC ' + fmtPrice(pocPrice), color: '#e6c55a', fontSize: 10, position: 'insideEndTop' },
+              data: [{ yAxis: pocPrice }],
+            }
+          : undefined,
+      },
+    ];
   }
   chart.setOption(opts);
   // 缩放后同步图例与状态栏（以最后可见 K 线为准）
