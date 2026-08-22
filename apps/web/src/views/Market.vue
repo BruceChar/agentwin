@@ -1,6 +1,11 @@
+<!-- ================= 行情页：K线图 + 技术指标 =================
+  周期选择：默认展示最常用的 4 个（1h/4h/1d/1w），其余在“更多”下拉；支持自定义“数字+时间单位”（如 45m/3h/2d，前端聚合）。
+  指标菜单：下拉面板（指标按钮），EMA/MA 两组开关；每条均线单独编辑（周期/颜色/线宽），勾选 ≥2 条可联动编辑。
+  指标设置按账户持久化（localStorage，key=aw-chart-ind-<accountId>），刷新/切换账户不丢失。
+  VPVR：火焰图配色（低量深蓝 → 高量黄/红）。 -->
 <template>
   <el-card shadow="never" class="tv-card">
-    <!-- TradingView 风格顶栏：品种 + 周期标签页 -->
+    <!-- TradingView 风格顶栏：品种 + 周期选择 + 指标菜单 -->
     <div class="tv-top">
       <div class="tv-symbol">
         <el-select :model-value="symbol" size="small" style="width: 118px" @change="onSymbol">
@@ -14,38 +19,74 @@
       </div>
       <div class="tv-intervals">
         <button
-          v-for="i in intervalOptions"
+          v-for="i in quickIntervals"
           :key="i.value"
           class="tv-tab"
           :class="{ active: interval === i.value }"
           @click="changeInterval(i.value)"
         >{{ i.short }}</button>
+        <el-dropdown trigger="click" @command="onMoreInterval">
+          <button class="tv-tab" :class="{ active: moreActive }">更多<span class="caret">▾</span></button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-for="i in moreIntervals" :key="i.value" :command="i.value" :class="{ 'iv-active': interval === i.value }">{{ i.label }}</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <input v-model="customIv" class="cust-iv" size="7" placeholder="自定义 45m" title="输入数字+时间单位（m/h/d/w/M）后回车，如 45m / 3h / 2d / 1w；不支持的周期自动按最小可整除周期聚合" @keyup.enter="applyCustomInterval" />
       </div>
       <div class="tv-actions">
+        <!-- 指标菜单（抽屉下拉）：EMA/MA 组开关、各指标开关、均线逐条编辑与联动编辑 -->
+        <el-popover v-model:visible="indOpen" placement="bottom-end" :width="450" trigger="click">
+          <template #reference>
+            <el-button size="small" :type="indOpen ? 'primary' : 'default'">指标</el-button>
+          </template>
+          <div class="ind-panel">
+            <!-- 主开关：EMA/MA 按组开关 + 其它指标 -->
+            <div class="ip-head">
+              <span class="ip-grp" title="按组显示/隐藏全部均线">
+                <el-checkbox v-model="emaOn" size="small" @change="render">EMA</el-checkbox>
+                <el-checkbox v-model="maOn" size="small" @change="render">MA</el-checkbox>
+              </span>
+              <span class="ip-div"></span>
+              <el-checkbox v-model="volOn" size="small" @change="render">成交量</el-checkbox>
+              <el-checkbox v-model="macdOn" size="small" @change="render">MACD</el-checkbox>
+              <el-checkbox v-model="rsiOn" size="small" @change="render">RSI</el-checkbox>
+              <el-checkbox v-model="vpvrOn" size="small" @change="render">VPVR</el-checkbox>
+            </div>
+
+            <!-- 联动编辑：勾选 ≥2 条时显示，颜色/粗细应用到所有选中项 -->
+            <div v-if="linkCount >= 2" class="ip-link">
+              <span class="ip-link-t">联动编辑 {{ linkCount }} 条</span>
+              <input v-model="linkColor" type="color" class="color" title="应用到所有选中均线" @change="applyLinked" />
+              <el-input-number v-model="linkWidth" :min="0.5" :max="4" :step="0.1" size="small" style="width: 72px" title="应用到所有选中均线" @change="applyLinked" />
+              <el-button size="small" text type="primary" @click="clearLink">取消</el-button>
+            </div>
+
+            <!-- 均线列表：每条单独编辑（周期/颜色/线宽）；最右侧勾选框用于联动编辑 -->
+            <div class="ip-lines">
+              <div v-for="(ln, i) in lines" :key="ln.id" class="ip-line" :class="{ sel: linkMap[ln.id] }">
+                <el-checkbox v-model="ln.on" size="small" :title="'显示/隐藏 ' + ln.kind.toUpperCase() + '(' + fmtPeriod(ln.period) + ')'" @change="lineChanged(ln)" />
+                <span class="ip-name" :style="{ color: ln.color }">{{ ln.kind.toUpperCase() }}({{ fmtPeriod(ln.period) }})</span>
+                <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
+                <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
+                <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 60px" title="线宽" @change="lineChanged(ln)" />
+                <el-checkbox v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="勾选后与其它勾选项联动编辑（颜色/粗细）" @change="syncLink" />
+                <button v-if="lines.length > 1" class="del" title="删除该均线" @click="removeLine(i)">×</button>
+              </div>
+            </div>
+            <div class="ip-actions">
+              <el-button size="small" text type="primary" @click="addPeriod">+ 周期（MA+EMA）</el-button>
+              <el-button size="small" text @click="addLine('ema')">+ EMA</el-button>
+              <el-button size="small" text @click="addLine('ma')">+ MA</el-button>
+            </div>
+          </div>
+        </el-popover>
         <el-input-number v-model="limit" :min="50" :max="1000" :step="50" size="small" style="width: 96px" @change="load()" />
         <span class="dim">自动</span>
         <el-switch v-model="autoRefresh" size="small" />
         <el-button size="small" @click="refreshLatest">刷新</el-button>
       </div>
-    </div>
-
-    <!-- 指标栏 -->
-    <div class="ind-bar">
-      <span class="dim">均线（周期/颜色/线宽可编辑）</span>
-      <span v-for="(p, i) in periods" :key="p.id" class="chip">
-        <input :value="p.input" class="period-input" size="6" title="周期（支持小数，如 62.8）" @change="(e: Event) => setPeriod(p, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
-        <input v-model="p.color" type="color" class="color" :title="'颜色 ' + p.color" />
-        <el-input-number v-model="p.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 58px" title="线宽" @change="render" />
-        <el-checkbox v-model="p.ma" size="small" @change="render">MA</el-checkbox>
-        <el-checkbox v-model="p.ema" size="small" @change="render">EMA</el-checkbox>
-        <button v-if="periods.length > 1" class="del" title="删除该周期" @click="removePeriod(i)">×</button>
-      </span>
-      <el-button size="small" text type="primary" @click="addPeriod">+ 周期</el-button>
-      <span class="dim" style="margin-left: 12px">指标</span>
-      <el-checkbox v-model="volOn" size="small" @change="render">成交量</el-checkbox>
-      <el-checkbox v-model="macdOn" size="small" @change="render">MACD</el-checkbox>
-      <el-checkbox v-model="rsiOn" size="small" @change="render">RSI</el-checkbox>
-      <el-checkbox v-model="vpvrOn" size="small" @change="render">VPVR</el-checkbox>
     </div>
 
     <!-- 图表 + 各面板独立图例（悬停联动，默认显示最新值）+ 面板拖拽手柄 -->
@@ -65,7 +106,16 @@
         class="legend"
         :style="{ top: g.top + 'px', left: g.left + 'px' }"
       >
-        <span v-for="(it, idx) in g.items" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
+        <!-- 价格面板图例：EMA / MA 分两列（组关闭或全隐藏时不渲染该列，不留灰色框） -->
+        <template v-if="g.cols && g.cols.length">
+          <div v-for="col in g.cols" :key="col.key" class="lg-col">
+            <span class="lg-head" :style="{ color: col.key === 'ema' ? '#f0a35e' : '#4da3ff' }">{{ col.label }}</span>
+            <span v-for="(it, idx) in col.items" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
+          </div>
+        </template>
+        <template v-else>
+          <span v-for="(it, idx) in g.items" :key="idx" class="lg" :style="{ color: it.color }">{{ it.name }}<b>{{ it.value }}</b></span>
+        </template>
       </div>
 
       <!-- 悬停 OHLC 浮窗（当前 K 柱：开高低收/涨跌幅/时间） -->
@@ -82,9 +132,9 @@
         <div class="ht-row"><span class="ht-k">涨跌</span><span :class="hoverTip.cls">{{ hoverTip.change }} · {{ hoverTip.changePct }}</span></div>
       </div>
 
-      <!-- 当前面板可见区间最高/最低点 -->
-      <div v-if="hlMarkers.high" class="hl-mark" :class="'hl-high'" :style="{ top: hlMarkers.high.y + 'px' }">H {{ hlMarkers.high.price }}</div>
-      <div v-if="hlMarkers.low" class="hl-mark" :class="'hl-low'" :style="{ top: hlMarkers.low.y + 'px' }">L {{ hlMarkers.low.price }}</div>
+      <!-- 可见区间最高/最低点：标在所在 K 线上（价格标签 + 连接线指向该 K 线的高/低点） -->
+      <div v-if="hlMarkers.high" class="hl-mark hl-high" :style="{ left: hlMarkers.high.x + 'px', top: hlMarkers.high.y + 'px' }">H {{ hlMarkers.high.price }}</div>
+      <div v-if="hlMarkers.low" class="hl-mark hl-low" :style="{ left: hlMarkers.low.x + 'px', top: hlMarkers.low.y + 'px' }">L {{ hlMarkers.low.price }}</div>
     </div>
 
     <!-- TradingView 风格状态栏：最新 K 线 OHLC -->
@@ -105,6 +155,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
 import { api } from '../api.ts';
+import { accountStore } from '../store.ts';
 import {
   aggregateCandles,
   ema,
@@ -124,64 +175,105 @@ const marketOptions = [
   { value: 'SPOT', label: '现货' },
   { value: 'USDT_M', label: 'U本位合约' },
 ];
-const intervalOptions = [
-  { value: '1m', label: '1分钟', short: '1m' }, { value: '5m', label: '5分钟', short: '5m' }, { value: '15m', label: '15分钟', short: '15m' },
-  { value: '30m', label: '30分钟', short: '30m' }, { value: '1h', label: '1小时', short: '1h' }, { value: '2h', label: '2小时', short: '2h' },
-  { value: '4h', label: '4小时', short: '4h' }, { value: '8h', label: '8小时', short: '8h' }, { value: '12h', label: '12小时', short: '12h' },
-  { value: '1d', label: '1天', short: '1D' }, { value: '1w', label: '1周', short: '1W' }, { value: '2w', label: '2周', short: '2W' },
+/** 全部周期（含前端聚合的 2w）；默认只展示最常用的 4 个，其余进“更多”下拉 */
+const ALL_INTERVALS = [
+  { value: '1m', label: '1分钟', short: '1m' }, { value: '3m', label: '3分钟', short: '3m' }, { value: '5m', label: '5分钟', short: '5m' },
+  { value: '15m', label: '15分钟', short: '15m' }, { value: '30m', label: '30分钟', short: '30m' }, { value: '1h', label: '1小时', short: '1h' },
+  { value: '2h', label: '2小时', short: '2h' }, { value: '4h', label: '4小时', short: '4h' }, { value: '6h', label: '6小时', short: '6h' },
+  { value: '8h', label: '8小时', short: '8h' }, { value: '12h', label: '12小时', short: '12h' }, { value: '1d', label: '1天', short: '1D' },
+  { value: '3d', label: '3天', short: '3D' }, { value: '1w', label: '1周', short: '1W' }, { value: '2w', label: '2周', short: '2W' },
   { value: '1M', label: '1月', short: '1M' },
 ];
-/** 每行周期：颜色与线宽可编辑（MA 实线、EMA 虚线同色） */
+const QUICK_INTERVAL_VALUES = ['1h', '4h', '1d', '1w'];
+const quickIntervals = ALL_INTERVALS.filter((i) => QUICK_INTERVAL_VALUES.includes(i.value));
+const moreIntervals = ALL_INTERVALS.filter((i) => !QUICK_INTERVAL_VALUES.includes(i.value));
+/** 后端原生支持的周期（毫秒），用于自定义周期解析（2w 由前端 1w 聚合，不在其中） */
+const INTERVAL_MS: Record<string, number> = {
+  '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+  '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000, '6h': 21_600_000, '8h': 28_800_000, '12h': 43_200_000,
+  '1d': 86_400_000, '3d': 259_200_000, '1w': 604_800_000, '1M': 2_592_000_000,
+};
+
+/** 每条均线（EMA / MA 分开，可单独编辑） */
 const PERIOD_COLORS = ['#e6a23c', '#409eff', '#9254de', '#14b8a6', '#ec4899', '#06b6d4', '#f59e0b', '#7c8cf8'];
-interface PeriodRow { id: number; value: number; ma: boolean; ema: boolean; color: string; width: number; input: string }
-const periods = ref<PeriodRow[]>(
-  PERIOD_COLORS.slice(0, 4).map((c, i) => {
-    const v = [20, 62.8, 144, 169][i]!;
-    return { id: i + 1, value: v, ma: true, ema: true, color: c, width: 1.2, input: fmtPeriod(v) };
-  }),
-);
-let periodSeq = 5;
-function periodColor(i: number): string {
-  return PERIOD_COLORS[i % PERIOD_COLORS.length]!;
+interface MaLineCfg {
+  id: number;
+  kind: 'ema' | 'ma';
+  period: number;
+  color: string;
+  width: number;
+  on: boolean;
+  input: string;
 }
+const DEFAULT_LINE_PERIODS = [20, 62.8, 144, 169];
+let lineSeq = 1;
 function fmtPeriod(v: number): string {
   return String(Math.round(v * 100) / 100);
 }
+function defaultLines(): MaLineCfg[] {
+  const out: MaLineCfg[] = [];
+  DEFAULT_LINE_PERIODS.forEach((p, i) => {
+    const c = PERIOD_COLORS[i % PERIOD_COLORS.length]!;
+    out.push({ id: lineSeq++, kind: 'ema', period: p, color: c, width: 1.2, on: true, input: fmtPeriod(p) });
+    out.push({ id: lineSeq++, kind: 'ma', period: p, color: c, width: 1.2, on: true, input: fmtPeriod(p) });
+  });
+  return out;
+}
 function addPeriod() {
-  periods.value.push({ id: periodSeq++, value: 60, ma: true, ema: true, color: periodColor(periods.value.length), width: 1.2, input: '60' });
+  const c = PERIOD_COLORS[lines.value.length % PERIOD_COLORS.length]!;
+  lines.value.push({ id: lineSeq++, kind: 'ema', period: 60, color: c, width: 1.2, on: true, input: '60' });
+  lines.value.push({ id: lineSeq++, kind: 'ma', period: 60, color: c, width: 1.2, on: true, input: '60' });
   render();
 }
-function removePeriod(i: number) {
-  periods.value.splice(i, 1);
+function addLine(kind: 'ema' | 'ma') {
+  const c = PERIOD_COLORS[lines.value.length % PERIOD_COLORS.length]!;
+  lines.value.push({ id: lineSeq++, kind, period: 60, color: c, width: 1.2, on: true, input: '60' });
   render();
 }
-function setPeriod(row: PeriodRow, raw: string | number) {
+function removeLine(i: number) {
+  const ln = lines.value[i];
+  if (!ln) return;
+  delete linkMap[ln.id];
+  lines.value.splice(i, 1);
+  syncLink();
+  render();
+}
+function setLinePeriod(ln: MaLineCfg, raw: string | number) {
   const v = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/[^0-9.]/g, ''));
   if (!Number.isFinite(v) || v <= 0) {
-    row.input = fmtPeriod(row.value); // 非法输入还原
+    ln.input = fmtPeriod(ln.period); // 非法输入还原
     return;
   }
-  row.value = Math.max(1, Math.min(999, Math.round(v * 100) / 100));
-  row.input = fmtPeriod(row.value);
+  ln.period = Math.max(1, Math.min(999, Math.round(v * 100) / 100));
+  ln.input = fmtPeriod(ln.period);
   render();
 }
+
 const UP = '#67c23a';
 const DOWN = '#f56c6c';
 const GRID_GAP = 14;
-const PANEL_H = 86;
-const SLIDER_H = 26;
-const TOTAL_H = 660;
 
 // ---------- 状态 ----------
 const symbol = ref('BTCUSDT');
 const market = ref('SPOT');
 const interval = ref('1h');
+const customIv = ref('');
 const limit = ref(300);
 const autoRefresh = ref(false);
+/** EMA / MA 两组开关：按组显示/隐藏全部均线 */
+const emaOn = ref(true);
+const maOn = ref(true);
 const volOn = ref(true);
 const macdOn = ref(true);
 const rsiOn = ref(true);
 const vpvrOn = ref(true);
+const indOpen = ref(false);
+const lines = ref<MaLineCfg[]>(defaultLines());
+// 联动编辑：勾选 ≥2 条后，颜色/粗细应用到所有选中项
+const linkMap = reactive<Record<number, boolean>>({});
+const linkColor = ref('#409eff');
+const linkWidth = ref(1.2);
+const linkCount = computed(() => Object.values(linkMap).filter(Boolean).length);
 const loading = ref(false);
 const candles = ref<CandleView[]>([]);
 const lastPrice = ref<number | null>(null);
@@ -189,11 +281,50 @@ const lastUp = ref(true);
 const lastChangePct = ref('');
 const chartEl = ref<HTMLDivElement | null>(null);
 
-const intervalLabel = computed(() => intervalOptions.find((i) => i.value === interval.value)?.label ?? interval.value);
+const moreActive = computed(() => !quickIntervals.some((i) => i.value === interval.value));
+const intervalLabel = computed(() => ALL_INTERVALS.find((i) => i.value === interval.value)?.label ?? interval.value);
+
+/** 解析周期（含自定义“数字+时间单位”），返回取数基础周期与聚合倍数；2w→1w×2，45m→15m×3 */
+function resolveInterval(raw: string): { base: string; factor: number } | null {
+  const s = raw.trim();
+  if (!s) return null;
+  if (INTERVAL_MS[s]) return { base: s, factor: 1 }; // 原生支持的周期直接用
+  const m = /^(\d+(?:\.\d+)?)\s*(m|h|d|w|M)$/.exec(s);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!(n > 0)) return null;
+  const unitMs = m[2] === 'm' ? 60_000 : m[2] === 'h' ? 3_600_000 : m[2] === 'd' ? 86_400_000 : m[2] === 'w' ? 604_800_000 : 2_592_000_000;
+  const target = n * unitMs;
+  // 取最大的可整除的原生周期作为基础，前端聚合（如 2w→1w×2、45m→15m×3）
+  const entries = Object.entries(INTERVAL_MS).sort((a, b) => b[1] - a[1]);
+  for (const [iv, ms] of entries) {
+    if (ms <= target + 1e-6) {
+      const factor = Math.round(target / ms);
+      if (factor >= 1 && Math.abs(factor * ms - target) < 1e-6) return { base: iv, factor };
+    }
+  }
+  return null;
+}
+function intervalFetch(): { base: string; factor: number } {
+  return resolveInterval(interval.value) ?? { base: interval.value, factor: 1 };
+}
+function applyCustomInterval() {
+  const v = customIv.value.trim();
+  if (!v) return;
+  if (!resolveInterval(v)) {
+    ElMessage.warning('周期格式：数字+时间单位，如 45m / 3h / 2d / 1w / 1M');
+    return;
+  }
+  changeInterval(v);
+}
+function onMoreInterval(v: string) {
+  changeInterval(v);
+}
 
 // TradingView 风格：各面板独立图例（默认最新值，悬停联动）+ 状态栏
 interface LegendItem { name: string; color: string; value: string }
-interface LegendGroup { key: string; top: number; left: number; items: LegendItem[] }
+interface LegendCol { key: 'ema' | 'ma'; label: string; items: LegendItem[] }
+interface LegendGroup { key: string; top: number; left: number; items?: LegendItem[]; cols?: LegendCol[] }
 const legends = ref<LegendGroup[]>([]);
 const status = ref<{ time: string; open: string; high: string; low: string; close: string; change: string; changePct: string; cls: string; volume: string }>({
   time: '-', open: '-', high: '-', low: '-', close: '-', change: '-', changePct: '-', cls: '', volume: '-',
@@ -203,26 +334,32 @@ const status = ref<{ time: string; open: string; high: string; low: string; clos
 const hoverTip = ref<{ visible: boolean; x: number; y: number; time: string; open: string; high: string; low: string; close: string; change: string; changePct: string; cls: string }>({
   visible: false, x: 0, y: 0, time: '', open: '-', high: '-', low: '-', close: '-', change: '-', changePct: '-', cls: '',
 });
-// 当前面板可见区间最高/最低点（右侧价格轴附近）
-const hlMarkers = ref<{ high: { y: number; price: string } | null; low: { y: number; price: string } | null }>({ high: null, low: null });
+// 可见区间最高/最低点：标在所在 K 线上（价格标签 + 连接线指向该 K 线的高/低点）
+interface HlMarker { x: number; y: number; price: string }
+const hlMarkers = ref<{ high: HlMarker | null; low: HlMarker | null }>({ high: null, low: null });
 
-/** 更新可见区间最高/最低点的像素位置（在价格轴右侧显示） */
-function updateHlMarkers(visibleCandles: CandleView[]) {
+/** 更新可见区间最高/最低点的像素位置（标签锚定在对应的 K 线上） */
+function updateHlMarkers(visibleCandles: CandleView[], startIdx: number) {
   if (!chart || !visibleCandles.length) {
     hlMarkers.value = { high: null, low: null };
     return;
   }
   let hi = -Infinity, lo = Infinity;
-  for (const c of visibleCandles) {
-    if (c.high > hi) hi = c.high;
-    if (c.low < lo) lo = c.low;
+  let hiI = 0, loI = 0;
+  for (let i = 0; i < visibleCandles.length; i++) {
+    const c = visibleCandles[i]!;
+    if (c.high > hi) { hi = c.high; hiI = i; }
+    if (c.low < lo) { lo = c.low; loI = i; }
   }
   try {
-    const pyHi = chart.convertToPixel({ seriesIndex: 0 }, [0, hi])[1];
-    const pyLo = chart.convertToPixel({ seriesIndex: 0 }, [0, lo])[1];
+    const [pxHi, pyHi] = chart.convertToPixel({ seriesIndex: 0 }, [startIdx + hiI, hi]);
+    const [pxLo, pyLo] = chart.convertToPixel({ seriesIndex: 0 }, [startIdx + loI, lo]);
+    const w = chartEl.value?.clientWidth ?? 0;
+    const h = chartEl.value?.clientHeight ?? 0;
+    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
     hlMarkers.value = {
-      high: { y: pyHi - 7, price: fmtPrice(hi) },
-      low: { y: pyLo - 7, price: fmtPrice(lo) },
+      high: { x: clamp(pxHi, 36, w - 36), y: clamp(pyHi - 24, 4, h - 22), price: fmtPrice(hi) },
+      low: { x: clamp(pxLo, 36, w - 36), y: clamp(pyLo + 8, 22, h - 18), price: fmtPrice(lo) },
     };
   } catch {
     hlMarkers.value = { high: null, low: null };
@@ -230,11 +367,11 @@ function updateHlMarkers(visibleCandles: CandleView[]) {
 }
 
 /** 面板图例布局：K线(price)/成交量(vol)/MACD(macd)/RSI(rsi) 各自左上角 */
-const PANEL_LEGEND_LEFT: Record<string, number> = { price: 70, vol: 70, macd: 70, rsi: 70 };
 let legendTops: Record<string, number> = { price: 6 };
 
 // 悬停联动用：缓存最近一次渲染的指标（避免每次 mousemove 重算全量）
-let hoverMa: { name: string; color: string; vals: (number | null)[] }[] = [];
+interface MaLine { name: string; color: string; vals: (number | null)[]; kind: 'ema' | 'ma' }
+let hoverMa: MaLine[] = [];
 let hoverMacd: { dif: (number | null)[]; dea: (number | null)[]; hist: (number | null)[] } = { dif: [], dea: [], hist: [] };
 let hoverRsi: (number | null)[] = [];
 let hoverVolMa: (number | null)[] = [];
@@ -247,25 +384,79 @@ function resetHoverLegends() {
   updateLegends(hoverLatestIdx, hoverMa, hoverMacd, hoverRsi, hoverVolMa);
 }
 
-
 function onSymbol(v: string) { symbol.value = v; load(true); }
 function onMarket(v: string) { market.value = v; load(true); }
 function changeInterval(v: string) {
   if (interval.value === v) return;
   interval.value = v;
+  // 标准周期清空自定义输入；自定义周期回显到输入框
+  customIv.value = (quickIntervals.some((i) => i.value === v) || moreIntervals.some((i) => i.value === v)) ? '' : v;
   load(true);
 }
 
+/** 联动编辑：勾选项 ≥2 时应用颜色/粗细到所有选中均线 */
+function syncLink() {
+  const first = lines.value.find((l) => linkMap[l.id]);
+  if (first) {
+    linkColor.value = first.color;
+    linkWidth.value = first.width;
+  }
+}
+function clearLink() {
+  for (const k of Object.keys(linkMap)) delete linkMap[Number(k)];
+}
+function applyLinked() {
+  for (const l of lines.value) {
+    if (linkMap[l.id]) { l.color = linkColor.value; l.width = linkWidth.value; }
+  }
+  render();
+}
+/** 单条均线变化：勾选了联动编辑的项，颜色/粗细同步到其它选中项 */
+function lineChanged(ln: MaLineCfg) {
+  if (linkMap[ln.id] && linkCount.value >= 2) {
+    for (const l of lines.value) {
+      if (linkMap[l.id] && l.id !== ln.id) { l.color = ln.color; l.width = ln.width; }
+    }
+    linkColor.value = ln.color;
+    linkWidth.value = ln.width;
+  }
+  render();
+}
+
+/** 按当前可见均线构建图例缓存（kind 区分 EMA / MA，图例按组分列） */
+function buildMaLegend(closes: number[]): MaLine[] {
+  const out: MaLine[] = [];
+  for (const ln of lines.value) {
+    const on = ln.kind === 'ema' ? emaOn.value && ln.on : maOn.value && ln.on;
+    if (!on) continue;
+    const label = fmtPeriod(ln.period);
+    out.push({
+      name: (ln.kind === 'ema' ? 'EMA(' : 'MA(') + label + ')',
+      color: ln.color,
+      kind: ln.kind,
+      vals: ln.kind === 'ema' ? ema(closes, ln.period) : sma(closes, ln.period),
+    });
+  }
+  return out;
+}
+
 /** 计算某个索引处各面板的图例值（悬停时随鼠标联动，默认显示最新值） */
-function updateLegends(idx: number, maLines: { name: string; color: string; vals: (number | null)[] }[], macdRes: { dif: (number | null)[]; dea: (number | null)[]; hist: (number | null)[] }, rsiVals: (number | null)[], volMa: (number | null)[]) {
+function updateLegends(idx: number, maLines: MaLine[], macdRes: { dif: (number | null)[]; dea: (number | null)[]; hist: (number | null)[] }, rsiVals: (number | null)[], volMa: (number | null)[]) {
   const groups: LegendGroup[] = [];
-  // K线框：MA/EMA
-  const priceItems: LegendItem[] = [];
+  // K线框：EMA / MA 按组分两列（组关闭或该组无可见线时不渲染该列，避免残留灰色框）
+  const emaCol: LegendCol = { key: 'ema', label: 'EMA', items: [] };
+  const maCol: LegendCol = { key: 'ma', label: 'MA', items: [] };
   for (const m of maLines) {
     const v = m.vals[idx];
-    if (v != null) priceItems.push({ name: m.name, color: m.color, value: fmtPrice(v) });
+    if (v == null) continue;
+    const it: LegendItem = { name: m.name, color: m.color, value: fmtPrice(v) };
+    if (m.kind === 'ema') emaCol.items.push(it);
+    else maCol.items.push(it);
   }
-  groups.push({ key: 'price', top: legendTops.price ?? 6, left: 70, items: priceItems });
+  const cols: LegendCol[] = [];
+  if (emaOn.value && emaCol.items.length) cols.push(emaCol);
+  if (maOn.value && maCol.items.length) cols.push(maCol);
+  if (cols.length) groups.push({ key: 'price', top: legendTops.price ?? 6, left: 70, cols });
   // 成交量
   if (volOn.value) {
     const volItems: LegendItem[] = [];
@@ -399,14 +590,14 @@ async function load(resetZoom = false) {
   if (resetZoom) zoomStart = 0;
   loading.value = true;
   try {
-    // 币安无 2w 周期：拉 1w 数据前端两两聚合
-    const iv = interval.value === '2w' ? '1w' : interval.value;
-    const n = interval.value === '2w' ? Math.min(limit.value * 2, 1000) : limit.value;
+    // 自定义周期（如 45m / 2w）：拉基础周期数据后前端聚合
+    const { base, factor } = intervalFetch();
+    const n = Math.min(limit.value * factor, 1000);
     const res = await api.get<{ candles: CandleView[] }>(
-      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + iv + '&limit=' + n,
+      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + base + '&limit=' + n,
     );
     let cs = res.candles;
-    if (interval.value === '2w') cs = aggregateCandles(cs, 2);
+    if (factor > 1) cs = aggregateCandles(cs, factor);
     cs = cs.slice(-limit.value);
     candles.value = cs;
     if (resetZoom && cs.length) {
@@ -435,13 +626,13 @@ async function load(resetZoom = false) {
 async function refreshLatest() {
   if (!chart || !candles.value.length) return load();
   try {
-    const iv = interval.value === '2w' ? '1w' : interval.value;
-    const n = interval.value === '2w' ? Math.min(limit.value * 2, 1000) : limit.value;
+    const { base, factor } = intervalFetch();
+    const n = Math.min(limit.value * factor, 1000);
     const res = await api.get<{ candles: CandleView[] }>(
-      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + iv + '&limit=' + n,
+      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + base + '&limit=' + n,
     );
     let cs = res.candles;
-    if (interval.value === '2w') cs = aggregateCandles(cs, 2);
+    if (factor > 1) cs = aggregateCandles(cs, factor);
     cs = cs.slice(-limit.value);
     const prevArr = candles.value;
     const lastPrev = prevArr[prevArr.length - 1];
@@ -494,10 +685,10 @@ async function refreshLatest() {
           : undefined,
       },
     ];
-    for (let i = 0; i < periods.value.length; i++) {
-      const row = periods.value[i]!;
-      if (row.ma) seriesUpdate.push({ id: 'ma-' + i + '-ma', data: padNull(sma(closes, row.value)) });
-      if (row.ema) seriesUpdate.push({ id: 'ma-' + i + '-ema', data: padNull(ema(closes, row.value)) });
+    for (const ln of lines.value) {
+      const on = ln.kind === 'ema' ? emaOn.value && ln.on : maOn.value && ln.on;
+      if (!on) continue;
+      seriesUpdate.push({ id: 'ind-' + ln.id, data: padNull(ln.kind === 'ema' ? ema(closes, ln.period) : sma(closes, ln.period)) });
     }
     if (vpvrOn.value && profile.length) {
       seriesUpdate.push({ id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) });
@@ -526,13 +717,7 @@ async function refreshLatest() {
     });
 
     // 图例 / 状态栏 / 顶栏价格
-    const maLegend: { name: string; color: string; vals: (number | null)[] }[] = [];
-    for (let i = 0; i < periods.value.length; i++) {
-      const row = periods.value[i]!;
-      const label = fmtPeriod(row.value);
-      if (row.ma) maLegend.push({ name: 'MA(' + label + ')', color: row.color, vals: sma(closes, row.value) });
-      if (row.ema) maLegend.push({ name: 'EMA(' + label + ')', color: row.color, vals: ema(closes, row.value) });
-    }
+    const maLegend = buildMaLegend(closes);
     hoverMa = maLegend;
     hoverMacd = macdRes;
     hoverRsi = rsiRes;
@@ -541,7 +726,7 @@ async function refreshLatest() {
     hoverLatestIdx = lastIdx;
     updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
     updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
-    updateHlMarkers(visible);
+    updateHlMarkers(visible, realFrom);
     const last = cs[cs.length - 1]!;
     const prevC = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
     lastPrice.value = last.close;
@@ -550,6 +735,28 @@ async function refreshLatest() {
   } catch {
     /* 自动刷新失败静默，等待下次 */
   }
+}
+
+/** VPVR 火焰图配色：低量→深蓝，高量→黄/红（辨识度更高） */
+function heatColor(f: number): string {
+  const t = Math.max(0, Math.min(1, f));
+  const stops: Array<[number, [number, number, number]]> = [
+    [0.0, [15, 46, 98]],
+    [0.3, [0, 108, 186]],
+    [0.55, [24, 168, 212]],
+    [0.75, [255, 213, 79]],
+    [1.0, [255, 92, 51]],
+  ];
+  let i = 0;
+  while (i < stops.length - 2 && t > stops[i + 1]![0]) i++;
+  const [t0, c0] = stops[i]!;
+  const [t1, c1] = stops[i + 1]!;
+  const k = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+  const r = Math.round(c0[0] + (c1[0] - c0[0]) * k);
+  const g = Math.round(c0[1] + (c1[1] - c0[1]) * k);
+  const b = Math.round(c0[2] + (c1[2] - c0[2]) * k);
+  const a = (0.18 + t * 0.72).toFixed(3);
+  return `rgba(${r},${g},${b},${a})`;
 }
 
 // ---------- 渲染 ----------
@@ -747,50 +954,34 @@ function render() {
         : fmtPrice(v as number),
   });
 
-  // MA 实线 / EMA 虚线（同色系，周期/颜色/线宽可编辑）
-  const maLegend: { name: string; color: string; vals: (number | null)[] }[] = [];
-  for (let i = 0; i < periods.value.length; i++) {
-    const row = periods.value[i]!;
-    const label = fmtPeriod(row.value);
-    if (row.ma) {
-      maLegend.push({ name: 'MA(' + label + ')', color: row.color, vals: sma(closes, row.value) });
-      series.push({
-        id: 'ma-' + i + '-ma',
-        name: 'MA(' + label + ')',
-        type: 'line',
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: padNull(sma(closes, row.value)),
-        symbol: 'none',
-        connectNulls: false,
-        z: 2,
-        lineStyle: { width: row.width, color: row.color },
-        emphasis: { disabled: true },
-        valueFormatter: (v: unknown) => fmtPrice(v as number),
-      });
-    }
-    if (row.ema) {
-      maLegend.push({ name: 'EMA(' + label + ')', color: row.color, vals: ema(closes, row.value) });
-      series.push({
-        id: 'ma-' + i + '-ema',
-        name: 'EMA(' + label + ')',
-        type: 'line',
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: padNull(ema(closes, row.value)),
-        symbol: 'none',
-        connectNulls: false,
-        z: 2,
-        lineStyle: { width: row.width, color: row.color, type: 'dashed' },
-        emphasis: { disabled: true },
-        valueFormatter: (v: unknown) => fmtPrice(v as number),
-      });
-    }
+  // MA / EMA 线：每条单独编辑（周期/颜色/线宽），EMA / MA 两组开关按组隐藏，勾选可联动编辑
+  const maLegend: MaLine[] = [];
+  for (const ln of lines.value) {
+    const on = ln.kind === 'ema' ? emaOn.value && ln.on : maOn.value && ln.on;
+    if (!on) continue;
+    const label = fmtPeriod(ln.period);
+    const name = (ln.kind === 'ema' ? 'EMA(' : 'MA(') + label + ')';
+    const vals = ln.kind === 'ema' ? ema(closes, ln.period) : sma(closes, ln.period);
+    maLegend.push({ name, color: ln.color, kind: ln.kind, vals });
+    series.push({
+      id: 'ind-' + ln.id,
+      name,
+      type: 'line',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      data: padNull(vals),
+      symbol: 'none',
+      connectNulls: false,
+      z: 2,
+      lineStyle: { width: ln.width, color: ln.color },
+      emphasis: { disabled: true },
+      valueFormatter: (v: unknown) => fmtPrice(v as number),
+    });
   }
 
   // VPVR：右侧独立竖版条 —— 用 custom 系列按像素精确绘制，
   // 柱锚定 VPVR 网格右边缘、与价格轴严格对齐（同范围 y 轴）、随可见区间重算；
-  // VPVR 网格与 K 线网格之间留出间隔（见 grids 配置）
+  // 火焰图配色：低量深蓝 → 高量黄/红
   if (vpvrOn.value && profile.length) {
     series.push({
       id: 'vpvr',
@@ -820,7 +1011,7 @@ function render() {
         return {
           type: 'rect',
           shape: { x: right - w, y: yTop, width: w, height: h },
-          style: { fill: 'rgba(77,163,255,0.30)' },
+          style: { fill: heatColor(frac) },
         };
       },
     });
@@ -962,7 +1153,7 @@ function render() {
   hoverLatestIdx = lastIdx;
   updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
   updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
-  updateHlMarkers(visible);
+  updateHlMarkers(visible, realFrom);
 }
 
 // ---------- 缩放：仅重算 VPVR（可见区间） ----------
@@ -1029,13 +1220,7 @@ function onZoom() {
   const macdRes = macd(closes);
   const rsiRes = rsi(closes, 14);
   const volMa = sma(cs.map((c) => c.volume), 5);
-  const maLegend: { name: string; color: string; vals: (number | null)[] }[] = [];
-  for (let i = 0; i < periods.value.length; i++) {
-    const row = periods.value[i]!;
-    const label = fmtPeriod(row.value);
-    if (row.ma) maLegend.push({ name: 'MA(' + label + ')', color: row.color, vals: sma(closes, row.value) });
-    if (row.ema) maLegend.push({ name: 'EMA(' + label + ')', color: row.color, vals: ema(closes, row.value) });
-  }
+  const maLegend = buildMaLegend(closes);
   const lastIdx = Math.max(0, Math.min(realTo - 1, cs.length - 1));
   hoverMa = maLegend;
   hoverMacd = macdRes;
@@ -1044,8 +1229,72 @@ function onZoom() {
   hoverLatestIdx = lastIdx;
   updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
   updateStatus(realTo - 1 < cs.length ? cs[realTo - 1] : undefined, realTo - 2 >= 0 ? cs[realTo - 2] : undefined);
-  updateHlMarkers(visible);
+  updateHlMarkers(visible, realFrom);
 }
+
+// ---------- 指标设置持久化（按账户保存，刷新不丢失） ----------
+interface IndSettings {
+  v: number;
+  emaOn: boolean;
+  maOn: boolean;
+  volOn: boolean;
+  macdOn: boolean;
+  rsiOn: boolean;
+  vpvrOn: boolean;
+  lines: MaLineCfg[];
+}
+function settingsKey(): string {
+  return 'aw-chart-ind-' + (accountStore.selectedId || 'default');
+}
+function saveSettings() {
+  try {
+    const data: IndSettings = {
+      v: 1,
+      emaOn: emaOn.value, maOn: maOn.value,
+      volOn: volOn.value, macdOn: macdOn.value, rsiOn: rsiOn.value, vpvrOn: vpvrOn.value,
+      lines: lines.value.map((l) => ({ ...l })),
+    };
+    localStorage.setItem(settingsKey(), JSON.stringify(data));
+  } catch { /* 存储异常忽略 */ }
+}
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(settingsKey());
+    if (!raw) return;
+    const d = JSON.parse(raw) as IndSettings;
+    if (!d || d.v !== 1) return;
+    emaOn.value = d.emaOn !== false;
+    maOn.value = d.maOn !== false;
+    volOn.value = d.volOn !== false;
+    macdOn.value = d.macdOn !== false;
+    rsiOn.value = d.rsiOn !== false;
+    vpvrOn.value = d.vpvrOn !== false;
+    if (Array.isArray(d.lines) && d.lines.length) {
+      lines.value = d.lines.map((l) => {
+        const period = Number(l.period) > 0 ? Number(l.period) : 20;
+        return {
+          id: l.id,
+          kind: l.kind === 'ema' ? 'ema' : 'ma',
+          period,
+          color: typeof l.color === 'string' ? l.color : '#409eff',
+          width: Number(l.width) > 0 ? Number(l.width) : 1.2,
+          on: l.on !== false,
+          input: typeof l.input === 'string' && l.input ? l.input : fmtPeriod(period),
+        };
+      });
+      lineSeq = Math.max(lineSeq, ...lines.value.map((l) => l.id)) + 1;
+    }
+    for (const k of Object.keys(linkMap)) {
+      if (!lines.value.some((l) => l.id === Number(k))) delete linkMap[Number(k)];
+    }
+  } catch { /* 损坏的存储忽略 */ }
+}
+// 任何指标设置变化自动保存；切换账户时加载对应账户的设置
+watch([emaOn, maOn, volOn, macdOn, rsiOn, vpvrOn, lines], () => saveSettings(), { deep: true });
+watch(() => accountStore.selectedId, () => {
+  loadSettings();
+  render();
+});
 
 // ---------- 生命周期 ----------
 watch(autoRefresh, (on) => {
@@ -1063,6 +1312,7 @@ onMounted(() => {
   };
   window.addEventListener('resize', resizeHandler);
   measureChart();
+  loadSettings();
   load();
 });
 
@@ -1090,27 +1340,40 @@ onBeforeUnmount(() => {
 .tv-tab { border: none; background: none; color: var(--text-dim); font-size: 11px; padding: 3px 7px; border-radius: 4px; cursor: pointer; font-family: var(--mono); }
 .tv-tab:hover { color: var(--text); }
 .tv-tab.active { background: var(--accent); color: #fff; font-weight: 600; }
+.caret { font-size: 9px; opacity: 0.7; margin-left: 2px; }
+.cust-iv { width: 92px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; font-family: var(--mono); padding: 2px 5px; text-align: center; }
+.cust-iv:focus { outline: none; border-color: var(--accent); }
+.iv-active { font-weight: 700; color: var(--accent) !important; }
 .tv-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
-/* 指标栏 */
-.ind-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--border); }
-.ind-bar :deep(.el-checkbox) { margin-right: 0; }
-.ind-bar :deep(.el-checkbox__label) { font-size: 11px; }
-.chip { display: inline-flex; align-items: center; gap: 4px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px 1px 6px; }
-.chip :deep(.el-input__wrapper) { box-shadow: none; }
-.chip :deep(.el-input__inner) { font-size: 11px; }
-.color { width: 18px; height: 18px; border: none; border-radius: 4px; padding: 0; background: none; cursor: pointer; }
-.color::-webkit-color-swatch-wrapper { padding: 0; }
-.color::-webkit-color-swatch { border: 1px solid var(--border); border-radius: 4px; }
-.dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; flex: none; }
-.del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
-.del:hover { color: #f56c6c; }
+/* 指标菜单（下拉面板） */
+.ind-panel { font-size: 12px; }
+.ip-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.ip-head :deep(.el-checkbox__label) { font-size: 12px; }
+.ip-grp { display: inline-flex; align-items: center; gap: 2px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
+.ip-grp :deep(.el-checkbox__label) { font-weight: 600; }
+.ip-div { width: 1px; height: 18px; background: var(--border); }
+.ip-link { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(64,158,255,0.08); border: 1px solid rgba(64,158,255,0.35); border-radius: 5px; margin-top: 8px; }
+.ip-link-t { color: #409eff; font-weight: 600; margin-right: 2px; }
+.ip-lines { max-height: 264px; overflow-y: auto; margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+.ip-line { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; }
+.ip-line:hover { background: var(--bg-elev); }
+.ip-line.sel { background: rgba(64,158,255,0.12); outline: 1px solid rgba(64,158,255,0.4); }
+.ip-line :deep(.el-checkbox) { margin-right: 0; }
+.ip-line :deep(.el-checkbox__label) { font-size: 11px; }
+.ip-name { width: 88px; font-family: var(--mono); font-size: 11px; font-weight: 600; flex: none; }
+.ip-linkbox { margin-left: auto; }
+.ip-actions { display: flex; gap: 6px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
 
 /* 图表 + 图例浮层 + 面板拖拽手柄 */
 .chart-wrap { position: relative; }
 .chart { height: calc(100vh - 248px); min-height: 420px; width: 100%; }
-.legend { position: absolute; display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
+.legend { position: absolute; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
 .lg b { font-weight: 600; margin-left: 3px; }
+/* EMA / MA 图例分两列（组关闭时不渲染，不留灰色框） */
+.lg-col { display: flex; flex-direction: column; gap: 2px; background: rgba(17,22,29,0.6); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px 4px; }
+.lg-col .lg { line-height: 1.5; }
+.lg-head { font-weight: 700; line-height: 1.6; }
 .drag-handle { position: absolute; left: 60px; right: 10px; height: 7px; cursor: row-resize; z-index: 6; border-top: 1px dashed transparent; }
 .drag-handle:hover { border-top: 1px dashed var(--accent); }
 /* 悬停 OHLC 浮窗 */
@@ -1118,12 +1381,19 @@ onBeforeUnmount(() => {
 .ht-time { color: var(--text-dim); margin-bottom: 4px; }
 .ht-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.6; }
 .ht-k { color: var(--text-dim); }
-/* 可见区间最高/最低点 */
-.hl-mark { position: absolute; right: 8px; z-index: 6; font-size: 10px; font-family: var(--mono); padding: 1px 4px; border-radius: 3px; background: rgba(17,22,29,0.85); pointer-events: none; }
-.hl-high { color: #67c23a; }
-.hl-low { color: #f56c6c; }
+/* 可见区间最高/最低点：锚定在所在 K 线上，标签 + 连接线指向该点 */
+.hl-mark { position: absolute; transform: translateX(-50%); z-index: 6; font-size: 10px; font-family: var(--mono); padding: 1px 5px; border-radius: 3px; background: rgba(17,22,29,0.9); border: 1px solid; pointer-events: none; white-space: nowrap; line-height: 1.4; }
+.hl-high { color: #67c23a; border-color: rgba(103,194,58,0.55); }
+.hl-high::after { content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%); width: 1px; height: 5px; background: rgba(103,194,58,0.8); }
+.hl-low { color: #f56c6c; border-color: rgba(245,108,108,0.55); }
+.hl-low::after { content: ''; position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); width: 1px; height: 5px; background: rgba(245,108,108,0.8); }
 .period-input { width: 56px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; font-family: var(--mono); padding: 2px 4px; text-align: center; }
 .period-input:focus { outline: none; border-color: var(--accent); }
+.del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+.del:hover { color: #f56c6c; }
+.color { width: 18px; height: 18px; border: none; border-radius: 4px; padding: 0; background: none; cursor: pointer; }
+.color::-webkit-color-swatch-wrapper { padding: 0; }
+.color::-webkit-color-swatch { border: 1px solid var(--border); border-radius: 4px; }
 
 /* TradingView 风格状态栏 */
 .tv-status { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); font-size: 11px; flex-wrap: wrap; }
