@@ -25,7 +25,7 @@
         <el-input-number v-model="limit" :min="50" :max="1000" :step="50" size="small" style="width: 96px" @change="load()" />
         <span class="dim">自动</span>
         <el-switch v-model="autoRefresh" size="small" />
-        <el-button size="small" @click="load()">刷新</el-button>
+        <el-button size="small" @click="refreshLatest">刷新</el-button>
       </div>
     </div>
 
@@ -186,6 +186,7 @@ function resetHoverLegends() {
   updateLegends(hoverLatestIdx, hoverMa, hoverMacd, hoverRsi, hoverVolMa);
 }
 
+
 function onSymbol(v: string) { symbol.value = v; load(true); }
 function onMarket(v: string) { market.value = v; load(true); }
 function changeInterval(v: string) {
@@ -263,6 +264,8 @@ let resizeHandler: (() => void) | null = null;
 let zoomStart = 0;
 let zoomEnd = 100;
 let mainGridH = 300;
+// 增量刷新用：最近一次渲染的面板网格索引（series 按 id 合并更新）
+let lastGridIdx: Record<string, number> = {};
 
 // ---------- 数据加载 ----------
 async function load(resetZoom = false) {
@@ -297,6 +300,126 @@ async function load(resetZoom = false) {
   }
 }
 
+/**
+ * 增量刷新（自动刷新用）：只更新最新 K 线与指标数据（merge 模式，不重建整图），
+ * 避免整页重绘闪屏；无变化时直接跳过。
+ */
+async function refreshLatest() {
+  if (!chart || !candles.value.length) return load();
+  try {
+    const iv = interval.value === '2w' ? '1w' : interval.value;
+    const n = interval.value === '2w' ? Math.min(limit.value * 2, 1000) : limit.value;
+    const res = await api.get<{ candles: CandleView[] }>(
+      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + iv + '&limit=' + n,
+    );
+    let cs = res.candles;
+    if (interval.value === '2w') cs = aggregateCandles(cs, 2);
+    cs = cs.slice(-limit.value);
+    const prevArr = candles.value;
+    const lastPrev = prevArr[prevArr.length - 1];
+    const lastNew = cs[cs.length - 1];
+    if (!cs.length || !lastNew) return;
+    // 无变化（最新 K 线时间与收盘价一致）则跳过
+    if (lastPrev && lastPrev.closeTime === lastNew.closeTime && lastPrev.close === lastNew.close) return;
+    candles.value = cs;
+
+    // 重算指标
+    const closes = cs.map((c) => c.close);
+    const macdRes = macd(closes);
+    const rsiRes = rsi(closes, 14);
+    const volMa = sma(cs.map((c) => c.volume), 5);
+    const times = cs.map((c) => fmtAxisTime(c.openTime, interval.value));
+    const from = Math.max(0, Math.floor((cs.length * zoomStart) / 100));
+    const to = Math.min(cs.length, Math.max(from + 1, Math.ceil((cs.length * zoomEnd) / 100)));
+    const visible = cs.slice(from, to);
+    let yLo = Infinity, yHi = -Infinity;
+    for (const c of visible) {
+      if (c.low < yLo) yLo = c.low;
+      if (c.high > yHi) yHi = c.high;
+    }
+    const yPad = (yHi - yLo) * 0.06;
+    const priceMin = yLo - yPad;
+    const priceMax = yHi + yPad;
+    const buckets = Math.max(16, Math.min(48, Math.round(visible.length / 4)));
+    const profile = volumeProfile(visible, buckets);
+    const maxVol = Math.max(1e-9, profile.reduce((m, b) => (b.volume > m ? b.volume : m), 0));
+    let pocPrice: number | null = null;
+    if (profile.length) {
+      let best = profile[0]!;
+      for (const b of profile) if (b.volume > best.volume) best = b;
+      pocPrice = best.price;
+    }
+
+    // merge 模式只更新数据（按 series id 合并），不重建整图
+    const seriesUpdate: Record<string, unknown>[] = [
+      {
+        id: 'kline',
+        data: cs.map((c) => [c.open, c.close, c.low, c.high]),
+        markLine: pocPrice != null && vpvrOn.value
+          ? { silent: true, symbol: 'none', lineStyle: { color: 'rgba(230,197,90,0.8)', type: 'dashed', width: 1 }, label: { show: true, formatter: 'POC ' + fmtPrice(pocPrice), color: '#e6c55a', fontSize: 10, position: 'insideEndTop' }, data: [{ yAxis: pocPrice }] }
+          : undefined,
+      },
+    ];
+    for (let i = 0; i < periods.value.length; i++) {
+      const row = periods.value[i]!;
+      if (row.ma) seriesUpdate.push({ id: 'ma-' + i + '-ma', data: sma(closes, row.value) });
+      if (row.ema) seriesUpdate.push({ id: 'ma-' + i + '-ema', data: ema(closes, row.value) });
+    }
+    if (vpvrOn.value && profile.length) {
+      seriesUpdate.push({ id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) });
+    }
+    if (volOn.value) {
+      seriesUpdate.push({ id: 'vol', data: cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } })) });
+      seriesUpdate.push({ id: 'volma5', data: volMa });
+    }
+    if (macdOn.value) {
+      seriesUpdate.push({ id: 'macd', data: macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } })) });
+      seriesUpdate.push({ id: 'dif', data: macdRes.dif });
+      seriesUpdate.push({ id: 'dea', data: macdRes.dea });
+    }
+    if (rsiOn.value) seriesUpdate.push({ id: 'rsi', data: rsiRes });
+
+    // 同步各面板时间轴数据（按 id 合并，避免按索引合并污染 VPVR 值轴）
+    const catAxisUpdate: Record<string, unknown>[] = [{ id: 'x-cat-0', data: times }];
+    if (volOn.value && lastGridIdx.vol !== undefined) catAxisUpdate.push({ id: 'x-cat-' + lastGridIdx.vol, data: times });
+    if (macdOn.value && lastGridIdx.macd !== undefined) catAxisUpdate.push({ id: 'x-cat-' + lastGridIdx.macd, data: times });
+    if (rsiOn.value && lastGridIdx.rsi !== undefined) catAxisUpdate.push({ id: 'x-cat-' + lastGridIdx.rsi, data: times });
+
+    chart.setOption({
+      yAxis: [
+        { gridIndex: 0, min: priceMin, max: priceMax },
+        { gridIndex: 1, min: priceMin, max: priceMax },
+      ],
+      xAxis: catAxisUpdate,
+      series: seriesUpdate,
+    });
+
+    // 图例 / 状态栏 / 顶栏价格
+    const maLegend: { name: string; color: string; vals: (number | null)[] }[] = [];
+    for (let i = 0; i < periods.value.length; i++) {
+      const row = periods.value[i]!;
+      const label = fmtPeriod(row.value);
+      if (row.ma) maLegend.push({ name: 'MA(' + label + ')', color: row.color, vals: sma(closes, row.value) });
+      if (row.ema) maLegend.push({ name: 'EMA(' + label + ')', color: row.color, vals: ema(closes, row.value) });
+    }
+    hoverMa = maLegend;
+    hoverMacd = macdRes;
+    hoverRsi = rsiRes;
+    hoverVolMa = volMa;
+    const lastIdx = Math.max(0, Math.min(to - 1, cs.length - 1));
+    hoverLatestIdx = lastIdx;
+    updateLegends(lastIdx, maLegend, macdRes, rsiRes, volMa);
+    updateStatus(to - 1 < cs.length ? cs[to - 1] : undefined, to - 2 >= 0 ? cs[to - 2] : undefined);
+    const last = cs[cs.length - 1]!;
+    const prevC = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
+    lastPrice.value = last.close;
+    lastUp.value = last.close >= prevC;
+    lastChangePct.value = prevC > 0 ? (((last.close - prevC) / prevC) * 100 >= 0 ? '+' : '') + (((last.close - prevC) / prevC) * 100).toFixed(2) + '%' : '';
+  } catch {
+    /* 自动刷新失败静默，等待下次 */
+  }
+}
+
 // ---------- 渲染 ----------
 function render() {
   if (!chartEl.value) return;
@@ -305,17 +428,25 @@ function render() {
     chart.on('datazoom', onZoom);
     chart.on('restore', onZoom);
     chart.on('axisareaselected', onZoom);
-    // 悬停：按纵轴任意位置触发（不要求鼠标正好压在 K 线上），各面板图例联动
-    chart.getZr().on('mousemove', (event: unknown) => {
-      const ev = event as { offsetX: number; offsetY: number };
-      if (ev.offsetX == null || ev.offsetY == null || !chart) return;
-      const idx = chart.convertFromPixel({ xAxisIndex: 0 }, [ev.offsetX, ev.offsetY])[0];
-      const i = Math.round(idx);
-      if (Number.isFinite(i) && i >= 0 && i < candles.value.length) {
-        updateHoverLegends(i);
+    // 悬停：按纵轴任意位置触发（不要求鼠标正好压在 K 线上），各面板图例联动。
+    // 用 DOM 原生事件（offsetX/offsetY 相对图表容器）+ convertFromPixel(seriesIndex) 换算 K 线索引
+    const onChartMove = (e: MouseEvent) => {
+      const x = e.offsetX ?? (e as MouseEvent & { layerX?: number }).layerX;
+      const y = e.offsetY ?? (e as MouseEvent & { layerY?: number }).layerY;
+      if (x == null || y == null || !chart) return;
+      try {
+        const point = chart.convertFromPixel({ seriesIndex: 0 }, [x, y]);
+        const i = Math.round(point[0] as number);
+        if (Number.isFinite(i) && i >= 0 && i < candles.value.length) {
+          updateHoverLegends(i);
+        }
+      } catch {
+        /* 网格外悬停忽略 */
       }
-    });
-    chart.getZr().on('globalout', () => resetHoverLegends());
+    };
+    const onChartLeave = () => resetHoverLegends();
+    chartEl.value.addEventListener('mousemove', onChartMove);
+    chartEl.value.addEventListener('mouseleave', onChartLeave);
     chart.on('globalout', () => resetHoverLegends());
   }
   const cs = candles.value;
@@ -374,11 +505,13 @@ function render() {
   }
 
   const catAxisIdx = [0, ...panels.map((_, i) => i + 2)];
+  lastGridIdx = { ...gridIdx };
 
   // 坐标轴
   const xAxes: Record<string, unknown>[] = [];
   const yAxes: Record<string, unknown>[] = [];
   const mkCatAxis = (gi: number, showLabel: boolean) => ({
+    id: 'x-cat-' + gi,
     type: 'category',
     gridIndex: gi,
     data: times,
@@ -477,6 +610,7 @@ function render() {
     if (row.ma) {
       maLegend.push({ name: 'MA(' + label + ')', color: row.color, vals: sma(closes, row.value) });
       series.push({
+        id: 'ma-' + i + '-ma',
         name: 'MA(' + label + ')',
         type: 'line',
         xAxisIndex: 0,
@@ -493,6 +627,7 @@ function render() {
     if (row.ema) {
       maLegend.push({ name: 'EMA(' + label + ')', color: row.color, vals: ema(closes, row.value) });
       series.push({
+        id: 'ma-' + i + '-ema',
         name: 'EMA(' + label + ')',
         type: 'line',
         xAxisIndex: 0,
@@ -549,6 +684,7 @@ function render() {
   if (gridIdx.vol !== undefined) {
     const gi = gridIdx.vol;
     series.push({
+      id: 'vol',
       name: '成交量',
       type: 'bar',
       xAxisIndex: gi,
@@ -558,6 +694,7 @@ function render() {
       valueFormatter: (v: unknown) => fmtVol(v as number),
     });
     series.push({
+      id: 'volma5',
       name: 'VOL MA5',
       type: 'line',
       xAxisIndex: gi,
@@ -574,6 +711,7 @@ function render() {
   if (gridIdx.macd !== undefined) {
     const gi = gridIdx.macd;
     series.push({
+      id: 'macd',
       name: 'MACD',
       type: 'bar',
       xAxisIndex: gi,
@@ -583,6 +721,7 @@ function render() {
       valueFormatter: (v: unknown) => fmtPrice(v as number),
     });
     series.push({
+      id: 'dif',
       name: 'DIF',
       type: 'line',
       xAxisIndex: gi,
@@ -595,6 +734,7 @@ function render() {
       valueFormatter: (v: unknown) => fmtPrice(v as number),
     });
     series.push({
+      id: 'dea',
       name: 'DEA',
       type: 'line',
       xAxisIndex: gi,
@@ -611,6 +751,7 @@ function render() {
   if (gridIdx.rsi !== undefined) {
     const gi = gridIdx.rsi;
     series.push({
+      id: 'rsi',
       name: 'RSI14',
       type: 'line',
       xAxisIndex: gi,
@@ -661,20 +802,8 @@ function render() {
       xAxis: xAxes,
       yAxis: yAxes,
       dataZoom: [
+        // 仅内置缩放（滚轮/拖拽），不显示底部缩放条
         { type: 'inside', xAxisIndex: catAxisIdx, start: zoomStart, end: zoomEnd },
-        {
-          type: 'slider',
-          xAxisIndex: catAxisIdx,
-          bottom: 4,
-          height: 18,
-          start: zoomStart,
-          end: zoomEnd,
-          borderColor: 'rgba(128,140,155,0.25)',
-          backgroundColor: 'rgba(128,140,155,0.08)',
-          fillerColor: 'rgba(77,163,255,0.18)',
-          handleStyle: { color: '#4da3ff' },
-          textStyle: { color: '#8a94a3', fontSize: 10 },
-        },
       ],
       series,
     },
@@ -782,7 +911,7 @@ watch(autoRefresh, (on) => {
     clearInterval(timer);
     timer = null;
   }
-  if (on) timer = setInterval(() => load(), 30_000);
+  if (on) timer = setInterval(() => refreshLatest(), 30_000);
 });
 
 onMounted(() => {
