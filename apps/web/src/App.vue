@@ -5,80 +5,48 @@
       <div class="side-brand">
         <span class="logo-dot"></span>
         <span class="brand-name">AgentWin</span>
-        <span class="brand-sub">交易日志系统</span>
+        <span class="brand-sub">久赌必赢</span>
       </div>
 
       <nav class="side-nav">
-        <div v-for="group in navGroups" :key="group.title" class="nav-group">
-          <div class="nav-group-title">{{ group.title }}</div>
-          <router-link
-            v-for="item in group.items"
-            :key="item.path"
-            :to="item.path"
-            class="nav-item"
-            :class="{ active: isActive(item) }"
-          >
-            <el-icon class="nav-ic"><component :is="item.icon" /></el-icon>
-            <span class="nav-label">{{ item.label }}</span>
-            <span v-if="badgeOf(item) > 0" class="nav-badge">{{ badgeOf(item) }}</span>
-          </router-link>
-        </div>
+        <router-link
+          v-for="item in navItems"
+          :key="item.path"
+          :to="item.path"
+          class="nav-item"
+          :class="{ active: isActive(item) }"
+        >
+          <el-icon class="nav-ic"><component :is="item.icon" /></el-icon>
+          <span class="nav-label">{{ item.label }}</span>
+          <span v-if="badgeOf(item) > 0" class="nav-badge">{{ badgeOf(item) }}</span>
+        </router-link>
       </nav>
 
-      <div class="side-bottom">
-        <div class="side-account">
-          <span class="acct-dot" :class="acct?.type ?? ''"></span>
-          <span class="acct-name">{{ acctLabel }}</span>
-          <span class="acct-caret">▾</span>
-        </div>
-        <router-link to="/settings" class="nav-item flat" :class="{ active: $route.path === '/settings' }">
-          <el-icon class="nav-ic"><Setting /></el-icon>
-          <span class="nav-label">设置</span>
-        </router-link>
-      </div>
+      <!-- 设置固定左下角 -->
+      <router-link to="/settings" class="nav-item settings-pin" :class="{ active: route.path === '/settings' }">
+        <el-icon class="nav-ic"><Setting /></el-icon>
+        <span class="nav-label">设置</span>
+      </router-link>
     </aside>
 
     <!-- 右侧弹性内容区 -->
     <div class="main">
       <header class="topbar">
         <div class="crumb">
-          <span class="crumb-sep" v-if="crumbGroup">/</span>
-          <span class="crumb-dim" v-if="crumbGroup">{{ crumbGroup }}</span>
           <b>{{ crumbTitle }}</b>
         </div>
         <div class="top-right">
-          <div class="search-box">
-            <el-icon class="s-ic"><Search /></el-icon>
-            <input v-model="searchText" placeholder="搜索品种 / 日志 / 计划…" @keyup.enter="doSearch" />
-            <kbd class="s-kbd">↵</kbd>
+          <!-- 全站统一：BTCUSDT 实时价格（含设置页） -->
+          <div class="btc-chip" title="BTCUSDT 现货 · 24h 涨跌幅">
+            <span class="btc-sym">BTCUSDT</span>
+            <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
+            <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
           </div>
-          <el-tag size="small" :type="syncOk ? 'success' : 'warning'" effect="dark" class="sync-tag">
-            <span class="sync-dot" :class="{ ok: syncOk }"></span>{{ syncOk ? '已连接' : '同步中' }}
-          </el-tag>
-          <button class="icon-btn" title="AI 助手" @click="go('/llm')"><el-icon><ChatDotRound /></el-icon></button>
-          <button class="icon-btn" title="新建计划" @click="go('/journal?new=1')"><el-icon><Plus /></el-icon></button>
-          <el-popover trigger="click" placement="bottom-end" :width="300">
-            <template #reference>
-              <button class="acct-btn">{{ acctLabel }} <span class="caret">▾</span></button>
-            </template>
-            <div class="pop">
-              <div class="pop-title">账户（各页面数据跟随所选账户）</div>
-              <div class="acct-list">
-                <div
-                  v-for="a in accountStore.accounts"
-                  :key="a.id"
-                  class="acct-item"
-                  :class="{ active: a.id === accountStore.selectedId }"
-                  @click="pickAccount(a.id)"
-                >
-                  <span class="acct-dot" :class="a.type"></span>
-                  <span class="acct-name">{{ a.type === 'real' ? '真实' : '模拟' }} · {{ a.name }}</span>
-                  <span v-if="a.id === accountStore.selectedId" class="acct-check">✓</span>
-                </div>
-                <div v-if="!accountStore.accounts.length" class="pop-line dim">暂无账户</div>
-              </div>
-            </div>
-          </el-popover>
+          <!-- 代理连接状态：直连 / 已连接 / 受限 / 异常（随 /health + /binance/status + /binance/proxy-status 实时检测） -->
+          <button class="proxy-chip" :class="proxyCls" :title="proxyMsg">
+            <span class="proxy-dot"></span>
+            <span class="proxy-text">{{ proxyText }}</span>
+          </button>
         </div>
       </header>
 
@@ -91,108 +59,169 @@
       </main>
     </div>
 
-    <!-- AI 顾问悬浮窗 -->
-    <el-drawer v-model="chatVisible" size="440px" :with-header="false" destroy-on-close>
-      <div class="chat-wrap"><AiChat /></div>
-    </el-drawer>
+    <!-- 全局 AI 聊天浮窗（右下角） -->
+    <Transition name="chat-pop">
+      <div v-if="chatVisible" class="ai-chat-panel">
+        <div class="ai-chat-head">
+          <b>AI 策略顾问</b>
+          <button class="ai-chat-close" title="收起" @click="chatVisible = false">×</button>
+        </div>
+        <div class="ai-chat-body"><AiChat /></div>
+      </div>
+    </Transition>
+    <button class="ai-bubble" :class="{ open: chatVisible }" :title="chatVisible ? '收起 AI 顾问' : '打开 AI 顾问'" @click="chatVisible = !chatVisible">AI</button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import { api } from './api.ts';
 import AiChat from './components/AiChat.vue';
-import { accountLabel, accountStore, loadAccounts, selectAccount } from './store.ts';
+import { loadAccounts } from './store.ts';
 import { deriveStatus, type TradeJournal } from './lib/journal.ts';
 
 const route = useRoute();
-const router = useRouter();
 
 type NavItem = { path: string; label: string; icon: string; badgeKey?: string };
-const navGroups: { title: string; items: NavItem[] }[] = [
-  {
-    title: '核心工作流',
-    items: [
-      { path: '/', label: '仪表盘', icon: 'Odometer' },
-      { path: '/journal', label: '交易日志', icon: 'Notebook', badgeKey: 'holding' },
-      { path: '/review', label: '复盘中心', icon: 'DataAnalysis', badgeKey: 'pending' },
-    ],
-  },
-  {
-    title: '策略与数据',
-    items: [
-      { path: '/strategies', label: '策略管理', icon: 'SetUp' },
-      { path: '/stats', label: '统计分析', icon: 'TrendCharts' },
-      { path: '/market', label: '行情', icon: 'DataLine' },
-    ],
-  },
-  {
-    title: '工具',
-    items: [
-      { path: '/paper', label: '模拟交易', icon: 'Money' },
-      { path: '/sentiment', label: '舆情', icon: 'ChatDotRound' },
-      { path: '/llm', label: 'AI 助手', icon: 'MagicStick' },
-    ],
-  },
+// 导航平铺（无分组），设置固定在左下角
+const navItems: NavItem[] = [
+  { path: '/', label: '仪表盘', icon: 'Odometer' },
+  { path: '/journal', label: '日志中心', icon: 'Notebook', badgeKey: 'journal' },
+  { path: '/strategies', label: '策略中心', icon: 'SetUp', badgeKey: 'strategies' },
+  { path: '/data', label: '数据中心', icon: 'DataLine' },
 ];
 
 const counts = ref<Record<string, number>>({ plan: 0, holding: 0, pending: 0, done: 0 });
-const syncOk = ref(false);
-const searchText = ref('');
+const journalRecords = ref<TradeJournal[]>([]);
+/** 代理连接状态：''=默认 'ok'=已连接 'warn'=受限/不可达 'err'=异常 'off'=直连/未配置 */
+const proxyCls = ref('');
+const proxyText = ref('检测中…');
+const proxyMsg = ref('');
 const chatVisible = ref(false);
 
-const acct = computed(() => accountStore.accounts.find((a) => a.id === accountStore.selectedId) ?? null);
-const acctLabel = computed(() => accountLabel(acct.value));
+const btcPrice = ref<number | null>(null);
+const btcChg = ref(0);
 
 function badgeOf(item: NavItem): number {
   if (!item.badgeKey) return 0;
+  if (item.badgeKey === 'journal') return (counts.value.pending ?? 0) + (counts.value.holding ?? 0);
+  if (item.badgeKey === 'strategies') return stratTodoCount.value;
   return counts.value[item.badgeKey] ?? 0;
 }
+
+/** 策略中心角标：待处理优化任务数（净盈亏为负的策略视为待优化） */
+const stratTodoCount = computed(() => {
+  const byKey = new Map<string, number>();
+  for (const r of journalRecords.value) {
+    const st = deriveStatus(r);
+    if (st !== 'done' && st !== 'pending') continue;
+    const key = r.strategyName || r.strategyVersion;
+    if (!key) continue;
+    byKey.set(key, (byKey.get(key) ?? 0) + (r.netPnl ?? 0));
+  }
+  return [...byKey.values()].filter((net) => net < 0).length;
+});
 
 function isActive(item: NavItem): boolean {
   if (item.path === '/') return route.path === '/';
   return route.path.startsWith(item.path);
 }
 
-const crumbGroup = computed(() => {
-  const p = route.path;
-  if (p.startsWith('/journal') || p.startsWith('/review')) return '核心工作流';
-  if (p.startsWith('/strategies') || p.startsWith('/stats') || p.startsWith('/market')) return '策略与数据';
-  if (p.startsWith('/paper') || p.startsWith('/sentiment') || p.startsWith('/llm')) return '工具';
-  return '';
-});
 const crumbTitle = computed(() => (route.meta.title as string) ?? '仪表盘');
 
-function go(path: string) { router.push(path); }
-
-function pickAccount(id: string) { selectAccount(id); }
-
-function doSearch() {
-  const q = searchText.value.trim();
-  if (!q) return;
-  router.push({ path: '/journal', query: { search: q } });
+/** 顶栏 BTCUSDT 实时价格 */
+const btcUp = computed(() => btcChg.value >= 0);
+function fmtBtc(v: number | null): string {
+  if (v === null || !Number.isFinite(v)) return '—';
+  return v >= 1000 ? v.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : v.toFixed(2);
+}
+function fmtBtcChg(v: number): string {
+  if (!Number.isFinite(v)) return '—';
+  return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+}
+async function refreshPrice() {
+  try {
+    const r = await api.get<{ tickers: { symbol: string; lastPrice: number; priceChangePercent?: number }[] }>('/market/tickers?market=SPOT').catch(() => null);
+    const b = r?.tickers.find((t) => t.symbol === 'BTCUSDT');
+    if (b) {
+      btcPrice.value = b.lastPrice;
+      btcChg.value = b.priceChangePercent ?? 0;
+    }
+  } catch { /* 保留上一次价格 */ }
 }
 
+interface BinanceStatusLite { configured?: boolean; reachable?: boolean; message?: string; proxy?: { enabled?: boolean } }
+interface ProxyExitLite { success?: boolean; country?: string; countryCode?: string; restricted?: boolean; error?: string }
+interface ProxyStatusLite { enabled?: boolean; exit?: ProxyExitLite | null }
+
+/**
+ * 代理连接状态：以真实数据判定，而非单看行情源 ping——
+ * - /health            → 服务与行情源可达；
+ * - /binance/status    → 私有 API（api.binance.com）探活 + 是否配置 Key + 代理开关；
+ * - /binance/proxy-status → 代理出口地区检测（美国/中国等币安封锁区 → 受限）。
+ * 服务不可达则判定异常。
+ */
 async function refreshStatus() {
   try {
-    await api.get('/health').catch(() => null);
-    syncOk.value = true;
-    await loadAccounts().catch(() => null);
-    const j = await api.get<{ records: TradeJournal[] }>('/journal/trades?limit=1000').catch(() => null);
-    if (j) {
-      const c = { plan: 0, holding: 0, pending: 0, done: 0 };
-      for (const r of j.records) c[deriveStatus(r)]++;
-      counts.value = c;
+    await api.get<{ ok?: boolean }>('/health');
+    const [st, ps] = await Promise.all([
+      api.get<BinanceStatusLite>('/binance/status').catch(() => null),
+      api.get<ProxyStatusLite>('/binance/proxy-status').catch(() => null),
+    ]);
+    const exit = ps?.exit;
+    if (!st) {
+      proxyCls.value = 'err';
+      proxyText.value = '状态未知';
+      proxyMsg.value = '币安状态检测失败';
+    } else if (!st.configured) {
+      proxyCls.value = 'off';
+      proxyText.value = '未配置';
+      proxyMsg.value = '币安未配置 API Key/Secret';
+    } else if (!st.proxy?.enabled) {
+      proxyCls.value = 'off';
+      proxyText.value = '直连';
+      proxyMsg.value = st.reachable
+        ? '直连模式，币安可达'
+        : '直连模式，币安不可达（建议开启代理）：' + (st.message ?? '');
+    } else if (!exit || exit.success === false) {
+      proxyCls.value = 'err';
+      proxyText.value = '代理异常';
+      proxyMsg.value = '代理连接异常：' + (exit?.error ?? '代理出口检测失败');
+    } else if (st.reachable) {
+      proxyCls.value = 'ok';
+      proxyText.value = '代理已连接';
+      proxyMsg.value = '代理已连接（出口 ' + (exit.country ?? '未知') + '），币安可达';
+    } else if (exit.restricted) {
+      proxyCls.value = 'warn';
+      proxyText.value = '代理受限';
+      proxyMsg.value = '代理出口受限（' + (exit.country ?? '未知') + '），币安不可达——请更换代理出口地区';
+    } else {
+      proxyCls.value = 'warn';
+      proxyText.value = '币安不可达';
+      proxyMsg.value = '代理已开启但币安不可达：' + (st.message ?? '');
     }
   } catch {
-    syncOk.value = false;
+    proxyCls.value = 'err';
+    proxyText.value = '服务异常';
+    proxyMsg.value = '服务不可达，请检查后端';
+  }
+  // 角标与账户数据（独立于连接状态，失败不影响连接判断）
+  await loadAccounts().catch(() => null);
+  const j = await api.get<{ records: TradeJournal[] }>('/journal/trades?limit=1000').catch(() => null);
+  if (j) {
+    journalRecords.value = j.records;
+    const c = { plan: 0, holding: 0, pending: 0, done: 0 };
+    for (const r of j.records) c[deriveStatus(r)]++;
+    counts.value = c;
   }
 }
 
 onMounted(() => {
   refreshStatus();
-  setInterval(refreshStatus, 60000);
+  refreshPrice();
+  setInterval(refreshStatus, 15000);   // 15s：连接状态快速同步
+  setInterval(refreshPrice, 5000);
 });
 </script>
 
@@ -214,8 +243,7 @@ onMounted(() => {
 .brand-sub { font-size: 10px; color: var(--aw-text-dim); }
 
 .side-nav { flex: 1; overflow-y: auto; padding: 4px 0; }
-.nav-group { margin-bottom: 14px; }
-.nav-group-title { padding: 6px 16px 4px; font-size: 10px; color: var(--aw-text-disabled); letter-spacing: 1px; }
+.settings-pin { border-top: 1px solid var(--aw-border); }
 .nav-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 16px; color: var(--aw-text-dim); text-decoration: none;
@@ -236,18 +264,7 @@ onMounted(() => {
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--aw-mono);
 }
-.side-bottom { border-top: 1px solid var(--aw-border); padding: 8px 0; }
-.side-account {
-  display: flex; align-items: center; gap: 8px; padding: 8px 16px;
-  cursor: pointer; font-size: 12px; color: var(--aw-text-body);
-}
-.side-account:hover { background: rgba(255,255,255,0.03); }
-.acct-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.acct-dot.real { background: #f0a35e; box-shadow: 0 0 6px #f0a35e; }
-.acct-dot.paper { background: var(--aw-up); }
-.acct-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acct-caret { font-size: 9px; color: var(--aw-text-dim); }
-.nav-item.flat { border-left: 3px solid transparent; }
+
 
 /* ---------- 主区 ---------- */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -256,23 +273,22 @@ onMounted(() => {
   padding: 0 20px; border-bottom: 1px solid var(--aw-border); background: var(--aw-bg);
 }
 .crumb { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.crumb-sep { color: var(--aw-text-disabled); }
-.crumb-dim { color: var(--aw-text-dim); font-size: 12px; }
 .crumb b { color: var(--aw-text-title); font-weight: 600; }
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-.search-box {
-  display: flex; align-items: center; gap: 6px;
+/* 代理连接状态（文字 chip：直连/已连接/受限/异常） */
+.proxy-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
   background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 8px;
-  padding: 0 10px; height: 30px; width: 220px; color: var(--aw-text-dim); font-size: 12px;
+  font-size: 12px; color: var(--aw-text-dim); cursor: default; white-space: nowrap;
   transition: all var(--aw-dur-fast) var(--aw-ease);
 }
-.search-box:focus-within { border-color: var(--aw-accent); width: 260px; }
-.s-ic { font-size: 13px; }
-.search-box input { background: transparent; border: none; outline: none; color: var(--aw-text-body); font-size: 12px; flex: 1; font-family: inherit; }
-.s-kbd { font-size: 10px; color: var(--aw-text-disabled); border: 1px solid var(--aw-border); border-radius: 4px; padding: 0 4px; font-family: var(--aw-mono); }
-.sync-tag { border: none; }
-.sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--aw-todo); display: inline-block; margin-right: 5px; }
-.sync-dot.ok { background: var(--aw-up); }
+.proxy-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--aw-text-disabled); flex: none; }
+.proxy-chip.ok { color: var(--aw-up); border-color: rgba(16,185,129,0.4); }
+.proxy-chip.ok .proxy-dot { background: var(--aw-up); box-shadow: 0 0 6px rgba(16,185,129,0.5); }
+.proxy-chip.warn { color: var(--aw-todo); border-color: rgba(245,158,11,0.4); }
+.proxy-chip.warn .proxy-dot { background: var(--aw-todo); box-shadow: 0 0 6px rgba(245,158,11,0.5); }
+.proxy-chip.err { color: var(--aw-down); border-color: rgba(239,68,68,0.4); }
+.proxy-chip.err .proxy-dot { background: var(--aw-down); box-shadow: 0 0 6px rgba(239,68,68,0.5); }
 .icon-btn {
   width: 30px; height: 30px; border-radius: 8px; border: 1px solid transparent;
   background: transparent; color: var(--aw-text-dim); cursor: pointer;
@@ -280,13 +296,7 @@ onMounted(() => {
   transition: all var(--aw-dur-fast) var(--aw-ease);
 }
 .icon-btn:hover { background: var(--aw-bg-card); color: var(--aw-accent); border-color: var(--aw-border); }
-.acct-btn {
-  display: flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px;
-  background: var(--aw-bg-card); border: 1px solid var(--aw-border); color: var(--aw-text-body);
-  border-radius: 8px; font-size: 12px; cursor: pointer; font-family: var(--aw-mono);
-}
-.acct-btn:hover { border-color: var(--aw-accent); }
-.caret { font-size: 9px; }
+
 
 .content { flex: 1; overflow-y: auto; padding: 16px 20px; }
 
@@ -294,12 +304,48 @@ onMounted(() => {
 .fade-enter-active, .fade-leave-active { transition: opacity var(--aw-dur-fast) var(--aw-ease); }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
-.chat-wrap { height: calc(100vh - 40px); }
-.pop-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-.pop-line { font-size: 12px; margin-bottom: 4px; }
-.acct-list { display: flex; flex-direction: column; gap: 2px; }
-.acct-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--aw-text-body); }
-.acct-item:hover { background: var(--aw-bg-card); }
-.acct-item.active { background: var(--aw-accent-dim); color: var(--aw-accent); }
-.acct-check { color: var(--aw-accent); font-weight: 700; }
+
+
+/* ---------- 顶栏 BTC 实时价格 ---------- */
+.btc-chip {
+  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px;
+  background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 8px;
+  font-size: 12px;
+}
+.btc-sym { color: var(--aw-text-dim); font-size: 11px; font-weight: 600; }
+.btc-px { font-size: 13px; font-weight: 700; }
+.btc-chg { font-size: 11px; }
+
+/* ---------- 全局 AI 聊天浮窗（右下角） ---------- */
+.ai-chat-panel {
+  position: fixed; right: 20px; bottom: 76px; z-index: 2000;
+  width: 360px; height: 520px; max-height: calc(100vh - 120px);
+  display: flex; flex-direction: column;
+  background: var(--aw-bg-elev); border: 1px solid var(--aw-border); border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45); overflow: hidden;
+}
+.ai-chat-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--aw-border);
+  font-size: 13px; color: var(--aw-text-title);
+}
+.ai-chat-close {
+  width: 24px; height: 24px; border-radius: 6px; border: none; background: transparent;
+  color: var(--aw-text-dim); font-size: 16px; cursor: pointer; line-height: 1;
+}
+.ai-chat-close:hover { background: var(--aw-bg-hover); color: var(--aw-text-body); }
+.ai-chat-body { flex: 1; min-height: 0; padding: 10px 14px 12px; }
+.ai-bubble {
+  position: fixed; right: 20px; bottom: 20px; z-index: 2000;
+  width: 48px; height: 48px; border-radius: 50%;
+  background: var(--aw-accent); color: #06202a; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 800; letter-spacing: 0.5px; line-height: 1;
+  box-shadow: 0 6px 20px rgba(6, 182, 212, 0.45);
+  transition: all 200ms var(--aw-ease);
+}
+.ai-bubble:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(6, 182, 212, 0.6); }
+.ai-bubble.open { background: var(--aw-bg-elev); color: var(--aw-accent); border: 1px solid var(--aw-accent); box-shadow: none; }
+.chat-pop-enter-active, .chat-pop-leave-active { transition: opacity 200ms var(--aw-ease), transform 200ms var(--aw-ease); }
+.chat-pop-enter-from, .chat-pop-leave-to { opacity: 0; transform: translateY(12px); }
 </style>
