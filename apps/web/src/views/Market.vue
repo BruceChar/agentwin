@@ -4,7 +4,7 @@
   指标设置按账户持久化（localStorage，key=aw-chart-ind-<accountId>），刷新/切换账户不丢失。
   VPVR：火焰图配色（低量深蓝 → 高量黄/红）。 -->
 <template>
-  <el-card shadow="never" class="tv-card">
+  <el-card shadow="never" class="tv-card fullbleed">
     <!-- TradingView 风格顶栏：品种 + 周期选择 + 指标菜单 -->
     <div class="tv-top">
       <div class="tv-symbol">
@@ -630,7 +630,7 @@ function updateLegends(idx: number, maLines: MaLine[], macdRes: { dif: (number |
   const cols: LegendCol[] = [];
   if (emaOn.value && emaCol.items.length) cols.push(emaCol);
   if (maOn.value && maCol.items.length) cols.push(maCol);
-  if (cols.length) groups.push({ key: 'price', top: legendTops.price ?? 6, left: 70, cols });
+  if (cols.length) groups.push({ key: 'price', top: legendTops.price ?? 6, left: 10, cols });
   // 成交量
   if (volOn.value) {
     const volItems: LegendItem[] = [];
@@ -638,7 +638,7 @@ function updateLegends(idx: number, maLines: MaLine[], macdRes: { dif: (number |
     if (v != null) volItems.push({ name: 'VOL', color: '#8a94a3', value: fmtVol(v) });
     const vm = volMa[idx];
     if (vm != null) volItems.push({ name: 'VOL MA5', color: '#409eff', value: fmtVol(vm) });
-    groups.push({ key: 'vol', label: '成交量', top: legendTops.vol ?? 0, left: 70, items: volItems });
+    groups.push({ key: 'vol', label: '成交量', top: legendTops.vol ?? 0, left: 10, items: volItems });
   }
   // MACD
   if (macdOn.value) {
@@ -649,14 +649,14 @@ function updateLegends(idx: number, maLines: MaLine[], macdRes: { dif: (number |
     if (d != null) macdItems.push({ name: 'DIF', color: '#f0a35e', value: fmtPrice(d) });
     const de = macdRes.dea[idx];
     if (de != null) macdItems.push({ name: 'DEA', color: '#4da3ff', value: fmtPrice(de) });
-    groups.push({ key: 'macd', label: 'MACD', top: legendTops.macd ?? 0, left: 70, items: macdItems });
+    groups.push({ key: 'macd', label: 'MACD', top: legendTops.macd ?? 0, left: 10, items: macdItems });
   }
   // RSI
   if (rsiOn.value) {
     const rsiItems: LegendItem[] = [];
     const r = rsiVals[idx];
     if (r != null) rsiItems.push({ name: 'RSI(14)', color: '#4da3ff', value: Number(r).toFixed(2) });
-    groups.push({ key: 'rsi', label: 'RSI', top: legendTops.rsi ?? 0, left: 70, items: rsiItems });
+    groups.push({ key: 'rsi', label: 'RSI', top: legendTops.rsi ?? 0, left: 10, items: rsiItems });
   }
   legends.value = groups;
 }
@@ -716,6 +716,9 @@ let reachedStart = false;              // 已到数据起点（无法再往前�
 let lastPocPrice: number | null = null;
 let lastVisible: CandleView[] = [];
 let lastRealFrom = 0;
+// 用户是否手动调整过视图（拖拽/滚轮缩放）。true 时自动刷新保持绝对窗口位置（不跟随最新 K 线），
+// 只在数据加载（load）或手动刷新后回到跟随最新状态。
+let userAdjusted = false;
 // 增量刷新用：最近一次渲染的面板网格索引（series 按 id 合并更新）
 let lastGridIdx: Record<string, number> = {};
 
@@ -770,7 +773,7 @@ function startDrag(hi: number, e: MouseEvent) {
     if (rsiOn.value) panels.push({ key: 'rsi' });
     const { gridTop } = computeGridLayout(panels);
     updateDragHandles(gridTop);
-    chart!.setOption({ grid: gridTop.map((g) => ({ left: 64, right: 150, top: g.top, height: g.height })) });
+    chart!.setOption({ grid: gridTop.map((g) => ({ left: 8, right: 60, top: g.top, height: g.height })) });
   };
   const onUp = () => {
     window.removeEventListener('mousemove', onMove);
@@ -804,6 +807,7 @@ async function load(resetZoom = true) {
     candles.value = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
     reachedStart = false;
     yPan = 0;
+    userAdjusted = false; // 重新加载 → 回到默认视图（跟随最新 K 线）
     if (resetZoom && candles.value.length) {
       // 默认视图：最近 limit 根可见，左侧预热数据隐藏（用于 MA/EMA 左侧值），右侧留空可自由平移
       const warmup = Math.max(0, candles.value.length - limit.value);
@@ -829,8 +833,11 @@ async function load(resetZoom = true) {
  * 增量刷新（自动刷新用）：只更新最新 K 线与指标数据（merge 模式，不重建整图），
  * 避免整页重绘闪屏；无变化时直接跳过。
  */
+let refreshingLatest = false; // 防重入：上一次刷新还在请求中则跳过本次（1s 高频下避免重叠/竞态）
 async function refreshLatest() {
+  if (refreshingLatest) return;
   if (!chart || !candles.value.length) return load();
+  refreshingLatest = true;
   try {
     const { base, factor } = intervalFetch();
     const n = Math.min(limit.value * factor, Math.floor(1000 / factor) * factor);
@@ -845,13 +852,15 @@ async function refreshLatest() {
     if (!lastNew) return;
     // 无变化（最新 K 线时间与收盘价一致）则跳过
     if (lastPrev && lastPrev.closeTime === lastNew.closeTime && lastPrev.close === lastNew.close) return;
-    // 记录当前可见窗口相对最新 K 线的偏移（根数）：刷新后按同样偏移重新锚定，
-    // 保持拖拽/缩放后的位置不跳动（右侧留空时 rightOff 为负）
+    // 记录当前可见窗口的绝对位置（padded 空间，不 clamp 到真实 K 线）：
+    // - 用户已调整视图：保持同一批 K 线可见，不跟随最新 K 线，右侧进入填充区也不回弹；
+    // - 默认视图（未调整）：按距最新 K 线的偏移跟随，新 K 线自然进入视野。
     const oldPadded = prevArr.length + rightPadFor(prevArr.length);
     const oldFrom = Math.max(0, Math.floor((oldPadded * zoomStart) / 100));
-    const oldTo = Math.min(prevArr.length, Math.max(oldFrom + 1, Math.ceil((oldPadded * zoomEnd) / 100)));
+    const oldToPadded = Math.max(oldFrom + 1, Math.ceil((oldPadded * zoomEnd) / 100));
+    const oldTo = Math.min(prevArr.length, oldToPadded);
     const leftOff = prevArr.length - 1 - oldFrom;
-    const rightOff = prevArr.length - 1 - (oldTo - 1);
+    const rightOff = prevArr.length - oldTo;
     // 与已加载缓冲合并（保留左侧历史/预热页）：丢弃与新页重叠的旧尾部，避免缺口
     if (baseCandles.length) {
       const firstFresh = latestBase[0]!.openTime;
@@ -864,12 +873,22 @@ async function refreshLatest() {
     const cs = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
     if (!cs.length) return;
     candles.value = cs;
-    // 按距最新 K 线的偏移重新定位可见窗口（保持拖拽位置）；
-    // 退化场景（如视图整体在右侧留空区/紧贴最新 K 线缩放）保持原缩放百分比，避免跳变复位
-    const nf = Math.max(0, cs.length - 1 - leftOff);
-    const nt = Math.min(cs.length, cs.length - rightOff);
-    if (nf < cs.length && nt > nf + 1) {
-      anchorZoom(nf, nt);
+    // 锚定可见窗口：
+    // - 用户已调整（拖拽/缩放）→ 保持绝对窗口位置：同一批 K 线原地不动，新 K 线不挤入视野，
+    //   右侧原本在填充区时按填充区偏移保持（不再回弹到默认视图）；
+    // - 默认视图 → 按距最新 K 线的偏移跟随，新 K 线进入视野（仅更新最新价格，不整体复位）。
+    if (userAdjusted) {
+      const newPadded = cs.length + rightPadFor(cs.length);
+      const newFrom = Math.max(0, Math.min(oldFrom, cs.length - 1));
+      const newToPadded = Math.min(newPadded, Math.max(newFrom + 1, oldToPadded));
+      zoomStart = (newFrom / newPadded) * 100;
+      zoomEnd = (newToPadded / newPadded) * 100;
+    } else {
+      const nf = Math.max(0, cs.length - 1 - leftOff);
+      const nt = Math.min(cs.length, cs.length - rightOff);
+      if (nf < cs.length && nt > nf + 1) {
+        anchorZoom(nf, nt);
+      }
     }
 
     // 重算指标（含右侧填充）
@@ -967,6 +986,8 @@ async function refreshLatest() {
     lastChangePct.value = prevC > 0 ? (((last.close - prevC) / prevC) * 100 >= 0 ? '+' : '') + (((last.close - prevC) / prevC) * 100).toFixed(2) + '%' : '';
   } catch {
     /* 自动刷新失败静默，等待下次 */
+  } finally {
+    refreshingLatest = false;
   }
 }
 
@@ -1069,8 +1090,12 @@ function render() {
     chartEl.value.addEventListener('mousemove', onChartMove);
     chartEl.value.addEventListener('mouseleave', onChartLeave);
     chart.on('globalout', () => resetHoverLegends());
-    // 视图上下拖拽：拖拽平移价格轴（左右平移由 dataZoom 内置处理，互不冲突）
+    // 视图上下拖拽：拖拽平移价格轴（左右平移由 dataZoom 内置处理，互不冲突）。
+    // 注意：zrender 在 canvas 上 stopPropagation 掉 mousemove，冒泡到不了 window/chartEl，
+    // 必须用捕获阶段监听（捕获先于 zrender 的目标阶段处理，必然能收到事件）。
     chartEl.value.addEventListener('mousedown', onYDown);
+    chartEl.value.addEventListener('mousemove', onYMove, true);
+    chartEl.value.addEventListener('mouseup', onYUp, true);
     chartEl.value.addEventListener('dblclick', () => {
       yPan = 0; // 双击重置价格轴平移
       render();
@@ -1366,7 +1391,8 @@ function render() {
   }
 
   // 网格：K线框与所有副图面板左右对齐（VPVR 嵌入 K 线框内重叠展示，数值全部靠右对齐）
-  const grids = gridTop.map((g) => ({ left: 64, right: 150, top: g.top, height: g.height }));
+  // 图表内部左右只留一点点边距（左侧 8px，右侧 60px 仅容纳价格标签），K 线区域更宽
+  const grids = gridTop.map((g) => ({ left: 8, right: 60, top: g.top, height: g.height }));
 
   chart.setOption(
     {
@@ -1452,8 +1478,6 @@ function applyYPan() {
 function onYDown(e: MouseEvent) {
   if (e.button !== 0) return;
   yDrag = { startY: e.clientY, startPan: yPan };
-  window.addEventListener('mousemove', onYMove);
-  window.addEventListener('mouseup', onYUp);
 }
 function onYMove(e: MouseEvent) {
   if (!yDrag) return;
@@ -1472,8 +1496,6 @@ function onYMove(e: MouseEvent) {
 }
 function onYUp() {
   yDrag = null;
-  window.removeEventListener('mousemove', onYMove);
-  window.removeEventListener('mouseup', onYUp);
 }
 
 // ---------- 历史分页：往右拖拽（向更早数据）到已加载边界时按页加载 ----------
@@ -1527,6 +1549,7 @@ function onZoom() {
   const s = arr[0]?.start;
   const e = arr[0]?.end;
   if (s == null || e == null) return;
+  userAdjusted = true; // 用户手动拖拽/缩放：自动刷新不再跟随最新 K 线
   zoomStart = s;
   zoomEnd = e;
   if (!candles.value.length) return;
@@ -1687,10 +1710,13 @@ watch(() => accountStore.selectedId, () => {
 });
 
 // ---------- 生命周期 ----------
-// 自动刷新默认开启（30 秒增量更新最新 K 线），无需开关
+// 自动刷新默认开启：周期取设置页「行情刷新周期」（1–60 秒，默认 1 秒）。
+// 单次 klines 请求权重很低（≤1000 根=权重 5），1 秒一次 ≈ 60 次/分 ≈ 300 权重/分，远低于币安限流；
+// 数据无变化时 refreshLatest 直接跳过，不重绘不额外开销；另有 refreshingLatest 防重入。
 function startAutoRefresh() {
   if (timer) return;
-  timer = setInterval(() => refreshLatest(), 30_000);
+  const sec = Math.max(1, Math.min(60, Number(localStorage.getItem('aw-market-refresh')) || 1));
+  timer = setInterval(() => refreshLatest(), sec * 1000);
 }
 
 onMounted(() => {
@@ -1709,8 +1735,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
   if (resizeHandler) window.removeEventListener('resize', resizeHandler);
-  window.removeEventListener('mousemove', onYMove);
-  window.removeEventListener('mouseup', onYUp);
   chart?.dispose();
   chart = null;
 });
@@ -1718,6 +1742,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .tv-card :deep(.el-card__body) { padding: 0; }
+/* 行情图表左右占满内容区：抵消 .content 的 20px 左右内边距，不留白、不设 margin */
+.tv-card.fullbleed {
+  margin-left: -20px;
+  margin-right: -20px;
+  border-radius: 0 !important; /* 覆盖全局 .el-card 圆角 */
+  border-left: none;
+  border-right: none;
+}
 .dim { color: var(--text-dim); font-size: 12px; }
 .mono { font-family: var(--mono); }
 .up { color: #67c23a; }
@@ -1811,7 +1843,7 @@ onBeforeUnmount(() => {
 .lg-x { pointer-events: auto; cursor: pointer; color: var(--text-dim); font-size: 12px; line-height: 1; padding: 0 2px; border-radius: 3px; }
 .lg-x:hover { color: #f56c6c; background: rgba(245,108,108,0.15); }
 .lg-x-col { position: absolute; top: 1px; right: 2px; }
-.drag-handle { position: absolute; left: 60px; right: 10px; height: 7px; cursor: row-resize; z-index: 6; border-top: 1px dashed transparent; }
+.drag-handle { position: absolute; left: 6px; right: 54px; height: 7px; cursor: row-resize; z-index: 6; border-top: 1px dashed transparent; }
 .drag-handle:hover { border-top: 1px dashed var(--accent); }
 /* 悬停 OHLC 浮窗 */
 .hover-tip { position: absolute; z-index: 7; background: rgba(17,22,29,0.92); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 11px; pointer-events: none; min-width: 152px; }
@@ -1826,7 +1858,7 @@ onBeforeUnmount(() => {
 .hl-low { color: #f56c6c; border-color: rgba(245,108,108,0.55); }
 .hl-low::after { content: ''; position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); width: 1px; height: 5px; background: rgba(245,108,108,0.8); }
 /* POC 价格标记：右侧价格列（网格右缘往右 6px），与价格标签一起显示 */
-.poc-mark { position: absolute; left: calc(100% - 150px + 6px); transform: translateY(-50%); z-index: 6; font-size: 10px; color: #e6c55a; padding: 1px 4px; border-radius: 3px; background: rgba(17,22,29,0.85); border: 1px solid rgba(230,197,90,0.35); pointer-events: none; white-space: nowrap; line-height: 1.4; }
+.poc-mark { position: absolute; left: auto; right: 4px; transform: translateY(-50%); z-index: 6; font-size: 10px; color: #e6c55a; padding: 1px 4px; border-radius: 3px; background: rgba(17,22,29,0.85); border: 1px solid rgba(230,197,90,0.35); pointer-events: none; white-space: nowrap; line-height: 1.4; }
 /* 右侧价格列：最高/最低（与 POC 同列同式样，仅颜色区分） */
 .poc-mark.hl-r-h { color: #67c23a; border-color: rgba(103,194,58,0.55); }
 .poc-mark.hl-r-l { color: #f56c6c; border-color: rgba(245,108,108,0.55); }
