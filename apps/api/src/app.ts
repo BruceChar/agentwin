@@ -4,6 +4,7 @@ import sensible from '@fastify/sensible';
 import { createServices, closeServices, type AppServices } from './services.ts';
 import { PaperManager } from './paper-manager.ts';
 import { registerRoutes } from './routes.ts';
+import { PriceWsServer } from './price-ws.ts';
 import type { AppConfig } from './config.ts';
 
 export interface AppHandle {
@@ -23,11 +24,15 @@ export async function buildApp(config: AppConfig): Promise<AppHandle> {
   });
   const paper = new PaperManager(services);
   registerRoutes(app, services, paper);
+  // 实时价格 WebSocket（全站共享，顶栏价格等），随代理配置变化自动重连
+  const priceWs = new PriceWsServer(services.proxySettings.config);
+  priceWs.attach(app);
   return {
     app,
     services,
     close: async () => {
       await paper.stop();
+      priceWs.close();
       await app.close();
     },
   };

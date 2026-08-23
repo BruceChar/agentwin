@@ -74,12 +74,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { api } from './api.ts';
 import AiChat from './components/AiChat.vue';
 import { loadAccounts } from './store.ts';
 import { deriveStatus, type TradeJournal } from './lib/journal.ts';
+import { latestPrice, subscribePrice } from './lib/prices.ts';
 
 const route = useRoute();
 
@@ -132,14 +133,16 @@ const crumbTitle = computed(() => (route.meta.title as string) ?? '仪表盘');
 
 /** 顶栏 BTCUSDT 实时价格 */
 const btcUp = computed(() => btcChg.value >= 0);
+/** 顶栏价格：统一两位小数（与行情页 fmtPrice 一致） */
 function fmtBtc(v: number | null): string {
   if (v === null || !Number.isFinite(v)) return '—';
-  return v >= 1000 ? v.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : v.toFixed(2);
+  return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function fmtBtcChg(v: number): string {
   if (!Number.isFinite(v)) return '—';
   return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
 }
+/** 初始价格（一次性）：后续由共享 WebSocket（/api/ws/prices）实时推送 */
 async function refreshPrice() {
   try {
     const r = await api.get<{ tickers: { symbol: string; lastPrice: number; priceChangePercent?: number }[] }>('/market/tickers?market=SPOT').catch(() => null);
@@ -217,11 +220,25 @@ async function refreshStatus() {
   }
 }
 
+let unsubPrice: (() => void) | null = null;
 onMounted(() => {
   refreshStatus();
-  refreshPrice();
+  refreshPrice(); // 初始值（一次性拉取）
+  // 实时价格：全站共享的 WebSocket 推送（单一连接，多订阅者），替代轮询
+  const t0 = latestPrice('BTCUSDT');
+  if (t0) {
+    btcPrice.value = t0.lastPrice;
+    btcChg.value = t0.priceChangePercent;
+  }
+  unsubPrice = subscribePrice('BTCUSDT', (t) => {
+    btcPrice.value = t.lastPrice;
+    btcChg.value = t.priceChangePercent;
+  });
   setInterval(refreshStatus, 15000);   // 15s：连接状态快速同步
-  setInterval(refreshPrice, 5000);
+});
+
+onBeforeUnmount(() => {
+  unsubPrice?.();
 });
 </script>
 

@@ -80,9 +80,13 @@ export const SYMBOL_KEYWORDS: Record<string, string[]> = {
   ADA: ['cardano', 'ada'],
 };
 
-/** 判断标题/正文是否与某币种相关 */
+/** 判断标题/正文是否与某币种相关（symbol 支持 BTCUSDT / BTC-USDT / BTC 三种写法） */
 export function isRelevant(symbol: string, item: { title: string; description?: string }): boolean {
-  const keys = SYMBOL_KEYWORDS[symbol] ?? [symbol.toLowerCase()];
+  const base = symbol
+    .toUpperCase()
+    .replace(/-(USDT|USDC|BUSD|FDUSD|TUSD|DAI|BTC|ETH)$/, '')
+    .replace(/(USDT|USDC|BUSD|FDUSD|TUSD|DAI)$/, '');
+  const keys = SYMBOL_KEYWORDS[base] ?? [base.toLowerCase()];
   const text = (item.title + ' ' + (item.description ?? '')).toLowerCase();
   return keys.some((k) => text.includes(k.trim().toLowerCase()));
 }

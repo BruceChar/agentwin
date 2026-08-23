@@ -1,6 +1,7 @@
 import type { SentimentLabel } from '@agentwin/shared';
 
-const BULLISH_WORDS = [
+/** 乐观/悲观词典（供前端聚合与关键词云情感着色复用） */
+export const BULLISH_WORDS = [
   'surge', 'rally', 'soar', 'gain', 'upgrade', 'adopt', 'launch', 'partnership',
   'etf', 'approval', 'record high', 'bullish', 'breakout', 'halving', 'institutional',
   'all-time high', 'integration', 'milestone', 'positive', 'growth', 'support',
@@ -21,4 +22,12 @@ export function heuristicScore(title: string, body?: string): { score: number; l
   const clamped = Math.max(-1, Math.min(1, score));
   const label: SentimentLabel = clamped > 0.15 ? 'bullish' : (clamped < -0.15 ? 'bearish' : 'neutral');
   return { score: Math.round(clamped * 100) / 100, label, keywords: [...bullish, ...bearish].slice(0, 10) };
+}
+
+/** 判断单个关键词的情感倾向：'positive' | 'negative' | 'neutral' */
+export function wordSentiment(word: string): 'positive' | 'negative' | 'neutral' {
+  const w = word.toLowerCase();
+  if (BULLISH_WORDS.includes(w)) return 'positive';
+  if (BEARISH_WORDS.includes(w)) return 'negative';
+  return 'neutral';
 }

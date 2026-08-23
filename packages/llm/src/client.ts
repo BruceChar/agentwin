@@ -28,12 +28,18 @@ export interface LLMServiceOptions {
  */
 export class LLMService {
   private models = builtinModels();
-  private readonly provider: string;
-  private readonly modelId: string;
+  private provider: string;
+  private modelId: string;
 
   constructor(opts: LLMServiceOptions = {}) {
     this.provider = opts.provider ?? process.env.LLM_PROVIDER ?? 'deepseek';
     this.modelId = opts.model ?? process.env.LLM_MODEL ?? 'deepseek-v4-flash';
+  }
+
+  /** 运行时切换 provider / model（设置页 LLM 配置即时生效） */
+  configure(opts: { provider?: string; model?: string }): void {
+    if (opts.provider) this.provider = opts.provider;
+    if (opts.model) this.modelId = opts.model;
   }
 
   get model(): string {

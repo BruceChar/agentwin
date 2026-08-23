@@ -15,10 +15,10 @@
     </div>
 
     <Transition name="tab-switch" mode="out-in">
-      <div :key="active" class="dc-body">
-        <Market v-if="active === 'market'" />
-        <Sentiment v-else />
-      </div>
+      <!-- KeepAlive：切换舆情/行情时保留行情页状态（拖拽位置/缩放/数据），不重新加载 -->
+      <KeepAlive>
+        <component :is="active === 'market' ? Market : Sentiment" class="dc-body" />
+      </KeepAlive>
     </Transition>
   </div>
 </template>

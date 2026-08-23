@@ -524,6 +524,27 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     return sentiment.aggregate(symbol, num((req.query as Body)['hours'], 24));
   });
 
+  // ---------------- LLM 设置 ----------------
+  // 当前 LLM 配置（provider / model / apiKey 掩码）
+  app.get('/api/settings/llm', async () => services.llmSettings.get());
+
+  // 修改 LLM 配置：立即写入环境变量（鉴权）并同步给 LLMService，持久化重启后继续生效
+  app.post('/api/settings/llm', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    try {
+      services.llmSettings.apply({
+        provider: b['provider'] !== undefined ? str(b['provider']) : undefined,
+        model: b['model'] !== undefined ? str(b['model']) : undefined,
+        apiKey: b['apiKey'] !== undefined ? str(b['apiKey']) : undefined,
+      });
+      const cfg = services.llmSettings.get();
+      services.llm.configure({ provider: cfg.provider, model: cfg.model });
+      return cfg;
+    } catch (e) {
+      return app.httpErrors.badRequest(e instanceof Error ? e.message : String(e));
+    }
+  });
+
   // ---------------- 存储路径设置 ----------------
   // 当前存储路径（JSONL 主存储 / SQLite 辅助库，绝对路径）
   app.get('/api/settings/storage', async () => services.storageSettings.get());

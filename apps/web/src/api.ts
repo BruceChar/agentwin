@@ -58,5 +58,22 @@ export interface BacktestResult {
   equityCurve: EquityPoint[]; trades: { side: string; entryPrice: number; exitPrice: number; pnl: number; reason: string }[];
 }
 export interface Trade { id: string; symbol: string; side: string; qty: number; price: number; fee: number; realizedPnl?: number; tradedAt: number; strategyId?: string }
-export interface SentimentRecord { id: string; source: string; symbol: string; headline: string; score: number; label: string; createdAt: number }
+export interface SentimentRecord {
+  id: string; source: string; symbol: string; headline: string; body?: string; url?: string;
+  publishedAt?: number; score: number; label: string; keywords: string[]; model?: string; createdAt: number;
+}
+/** 舆情聚合（后端 /api/sentiment/:symbol 返回） */
+export interface SentimentAggregate {
+  symbol: string;
+  averageScore: number;
+  label: string;
+  count: number;
+  latest: SentimentRecord[];
+  distribution: { bullish: number; neutral: number; bearish: number };
+  sources: Record<string, number>;
+  keywords: { word: string; count: number; sentiment: 'positive' | 'negative' | 'neutral'; score: number }[];
+  topics: { topic: string; count: number; score: number }[];
+  series: { t: number; score: number | null; count: number }[];
+  lastAt: number | null;
+}
 export interface JournalEntry { id: string; kind: string; title: string; body: string; tags: string[]; createdAt: number }

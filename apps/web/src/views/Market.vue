@@ -233,12 +233,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue';
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
 import { ArrowLeft, DataAnalysis, DataLine, Delete, EditPen, Histogram, Odometer, PieChart, Top, TrendCharts, View } from '@element-plus/icons-vue';
 import { api } from '../api.ts';
 import { accountStore } from '../store.ts';
+import { subscribePrice } from '../lib/prices.ts';
 import {
   aggregateCandles,
   ema,
@@ -559,8 +560,18 @@ function resetHoverLegends() {
   updateLegends(hoverLatestIdx, hoverMa, hoverMacd, hoverRsi, hoverVolMa);
 }
 
-function onSymbol(v: string) { symbol.value = v; load(true); }
-function onMarket(v: string) { market.value = v; load(true); }
+let unsubTicker: (() => void) | null = null;
+/** 订阅当前品种的 24h 涨跌幅（共享 WS，与顶栏同源一致）；切换品种时重订 */
+function bindTicker() {
+  unsubTicker?.();
+  unsubTicker = subscribePrice(symbol.value, (t) => {
+    lastUp.value = t.priceChangePercent >= 0;
+    lastChangePct.value = (t.priceChangePercent >= 0 ? '+' : '') + t.priceChangePercent.toFixed(2) + '%';
+  });
+}
+
+function onSymbol(v: string) { symbol.value = v; load(true); bindTicker(); }
+function onMarket(v: string) { market.value = v; load(true); bindTicker(); }
 function changeInterval(v: string) {
   if (interval.value === v) return;
   interval.value = v;
@@ -980,10 +991,8 @@ async function refreshLatest() {
     lastVisible = visible;
     lastRealFrom = realFrom;
     const last = cs[cs.length - 1]!;
-    const prevC = cs.length > 1 ? cs[cs.length - 2]!.close : last.open;
     lastPrice.value = last.close;
-    lastUp.value = last.close >= prevC;
-    lastChangePct.value = prevC > 0 ? (((last.close - prevC) / prevC) * 100 >= 0 ? '+' : '') + (((last.close - prevC) / prevC) * 100).toFixed(2) + '%' : '';
+    // 顶栏/行情页统一的 24h 涨跌幅由共享 WS 推送驱动（bindTicker），此处不再按 K 线覆盖
   } catch {
     /* 自动刷新失败静默，等待下次 */
   } finally {
@@ -1729,12 +1738,23 @@ onMounted(() => {
   loadSettings();
   loadIvSettings();
   load();
+  bindTicker();
   startAutoRefresh();
+});
+
+// 数据中心 Tab（行情↔舆情）用 KeepAlive 保留状态：切走暂停刷新，切回恢复
+onDeactivated(() => {
+  if (timer) { clearInterval(timer); timer = null; }
+});
+onActivated(() => {
+  chart?.resize(); // 隐藏期间容器尺寸可能变化，恢复时校正
+  if (!timer) startAutoRefresh();
 });
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
   if (resizeHandler) window.removeEventListener('resize', resizeHandler);
+  unsubTicker?.();
   chart?.dispose();
   chart = null;
 });

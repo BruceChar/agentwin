@@ -178,6 +178,36 @@
           </button>
         </div>
       </div>
+
+      <!-- ============ LLM 设置（通栏） ============ -->
+      <div class="aw-card set-card llm-card">
+        <div class="sc-title">LLM 设置</div>
+        <div class="llm-grid">
+          <div class="llm-field">
+            <span class="llm-label">Provider</span>
+            <el-select v-model="llmProvider" filterable class="llm-input">
+              <el-option v-for="p in llmProviderOptions" :key="p.value" :value="p.value" :label="p.label" />
+            </el-select>
+          </div>
+          <div class="llm-field">
+            <span class="llm-label">模型</span>
+            <el-select v-model="llmModel" filterable allow-create default-first-option class="llm-input">
+              <el-option v-for="m in llmModelOptions" :key="m" :value="m" :label="m" />
+            </el-select>
+          </div>
+          <div class="llm-field llm-key">
+            <span class="llm-label">API Key</span>
+            <el-input v-model="llmApiKey" type="password" show-password class="llm-input mono" placeholder="sk-…（留空则沿用已保存的 Key）" />
+            <span v-if="llmApiKeySet" class="llm-mask dim">当前已配置：{{ llmApiKeyMask }}</span>
+          </div>
+        </div>
+        <div class="set-actions">
+          <button class="aw-btn aw-btn-primary btn-lg" :disabled="llmSaving" @click="saveLlm">
+            <el-icon v-if="llmSaving" class="is-loading"><Loading /></el-icon>保存 LLM 配置
+          </button>
+        </div>
+        <div class="sc-note dim">保存后立即生效（API Key 写入对应环境变量，模型切换即时应用），并持久化到 data/agentwin-llm.json。</div>
+      </div>
     </div>
   </div>
 </template>
@@ -204,6 +234,52 @@ interface StoragePaths { dataDir: string; journalPath: string; dbPath: string }
 const storage = ref<StoragePaths | null>(null);
 const storageInput = ref('');
 const storageSaving = ref(false);
+
+// ---------- LLM 设置 ----------
+interface LlmSettingsView { provider: string; model: string; apiKeySet: boolean; apiKeyMask: string | null }
+const llmProvider = ref('deepseek');
+const llmModel = ref('deepseek-v4-flash');
+const llmApiKey = ref('');
+const llmApiKeySet = ref(false);
+const llmApiKeyMask = ref<string | null>(null);
+const llmSaving = ref(false);
+const llmProviderOptions = [
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'moonshotai', label: 'Moonshot (Kimi)' },
+  { value: 'zai', label: 'Zhipu Z.AI' },
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'xai', label: 'xAI' },
+  { value: 'qwen-token-plan', label: 'Qwen 通义' },
+  { value: 'groq', label: 'Groq' },
+  { value: 'google', label: 'Google Gemini' },
+  { value: 'minimax', label: 'MiniMax' },
+  { value: 'xiaomi', label: '小米 MiMo' },
+  { value: 'nvidia', label: 'NVIDIA' },
+  { value: 'together', label: 'Together AI' },
+  { value: 'mistral', label: 'Mistral' },
+  { value: 'fireworks', label: 'Fireworks' },
+];
+const llmModelSuggestions: Record<string, string[]> = {
+  deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
+  openai: ['gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4-turbo'],
+  anthropic: ['claude-sonnet-4-5', 'claude-opus-4-5', 'claude-haiku-4-5'],
+  moonshotai: ['kimi-k2.5', 'kimi-k2-thinking', 'kimi-k2-0711-preview'],
+  zai: ['glm-5.2', 'glm-5.1', 'glm-5-turbo', 'glm-4.7'],
+  openrouter: ['anthropic/claude-sonnet-4', 'openai/gpt-4o', 'deepseek/deepseek-chat'],
+  xai: ['grok-4.6', 'grok-4.5'],
+  'qwen-token-plan': ['deepseek-v4-flash', 'deepseek-v4-pro', 'glm-5', 'qwen3.7-max'],
+  groq: ['llama-3.3-70b-versatile', 'deepseek-r1-distill-llama-70b'],
+  google: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+  minimax: ['MiniMax-M2.5'],
+  xiaomi: ['mimo-v2.5', 'mimo-v2-pro'],
+  nvidia: ['meta/llama-3.3-70b-instruct'],
+  together: ['deepseek-ai/DeepSeek-V4-Flash-0731'],
+  mistral: ['mistral-large-latest'],
+  fireworks: ['accounts/fireworks/models/llama-v3p1-70b-instruct'],
+};
+const llmModelOptions = computed(() => llmModelSuggestions[llmProvider.value] ?? []);
 const health = ref<{ storage?: string; binance?: { ok?: boolean; detail?: string } } | null>(null);
 const accounts = ref<{ id: string; name: string; type: string }[]>([]);
 const jstat = ref<{ total?: number } | null>(null);
@@ -304,6 +380,13 @@ async function load() {
   jstat.value = await api.get<{ total?: number }>('/journal/trades/stats').catch(() => null);
   storage.value = await api.get<StoragePaths>('/settings/storage').catch(() => null);
   if (storage.value) storageInput.value = storage.value.dataDir;
+  const llm = await api.get<LlmSettingsView>('/settings/llm').catch(() => null);
+  if (llm) {
+    llmProvider.value = llm.provider;
+    llmModel.value = llm.model;
+    llmApiKeySet.value = llm.apiKeySet;
+    llmApiKeyMask.value = llm.apiKeyMask;
+  }
   if (bs.value?.proxy) {
     proxyMode.value = bs.value.proxy.mode === 'off' ? 'off' : 'on';
     proxyUrl.value = bs.value.proxy.url || rememberedProxyUrl();
@@ -380,6 +463,30 @@ async function saveStorage() {
     ElMessage.error((e as Error).message);
   } finally {
     storageSaving.value = false;
+  }
+}
+
+/** 保存 LLM 配置：provider / model / apiKey 立即生效并持久化 */
+async function saveLlm() {
+  if (!llmProvider.value || !llmModel.value.trim()) {
+    ElMessage.warning('请填写 Provider 和模型');
+    return;
+  }
+  llmSaving.value = true;
+  try {
+    const body: Record<string, string> = { provider: llmProvider.value, model: llmModel.value.trim() };
+    if (llmApiKey.value) body.apiKey = llmApiKey.value;
+    const cfg = await api.post<LlmSettingsView>('/settings/llm', body);
+    llmProvider.value = cfg.provider;
+    llmModel.value = cfg.model;
+    llmApiKey.value = '';
+    llmApiKeySet.value = cfg.apiKeySet;
+    llmApiKeyMask.value = cfg.apiKeyMask;
+    ElMessage.success('LLM 配置已更新：' + cfg.provider + '/' + cfg.model);
+  } catch (e) {
+    ElMessage.error((e as Error).message);
+  } finally {
+    llmSaving.value = false;
   }
 }
 
@@ -473,6 +580,15 @@ onMounted(load);
 .proxy-input { width: 100%; max-width: 300px; }
 .exit-line { font-size: 12px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--aw-border); }
 .exit-line b { font-weight: 600; }
+
+/* ---------- LLM 设置（通栏卡片） ---------- */
+.llm-card { grid-column: 1 / -1; }
+.llm-grid { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 14px; align-items: end; }
+@media (max-width: 1100px) { .llm-grid { grid-template-columns: 1fr; } }
+.llm-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.llm-label { font-size: 12px; color: var(--aw-text-dim); }
+.llm-input { width: 100%; }
+.llm-key .llm-mask { font-size: 11px; margin-top: 4px; }
 
 /* ---------- 存储状态 ---------- */
 .storage-edit { display: flex; align-items: center; gap: 8px; }

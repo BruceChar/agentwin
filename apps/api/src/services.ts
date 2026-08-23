@@ -2,6 +2,7 @@ import { createStorage, type StorageAdapter } from '@agentwin/db';
 import { BinanceMarketData, BinanceOfficialMarketData, BinanceRest, MockMarketData, resolveProxyConfig, type MarketDataProvider } from '@agentwin/market';
 import { ProxySettings } from './proxy-settings.ts';
 import { StorageSettings } from './storage-settings.ts';
+import { LlmSettings } from './llm-settings.ts';
 import { registerBuiltinStrategies, builtinRegistry } from '@agentwin/strategy';
 import { LLMService } from '@agentwin/llm';
 import { TradingToolkit } from '@agentwin/llm';
@@ -23,6 +24,8 @@ export interface AppServices {
   proxySettings: ProxySettings;
   /** 存储路径设置（JSONL 主存储可运行时迁移并持久化） */
   storageSettings: StorageSettings;
+  /** LLM 设置（provider / model / apiKey 可运行时修改并持久化） */
+  llmSettings: LlmSettings;
   /** 结构化交易日志（JSONL 主存储 + SQLite 镜像） */
   journalStore: TradeJournalStore;
   journalAutoFill: JournalAutoFill;
@@ -58,7 +61,9 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
       : new BinanceMarketData(baseOpts);
   await marketData.init();
 
-  const llm = new LLMService({ provider: config.llmProvider, model: config.llmModel });
+  const llmSettings = new LlmSettings(config.llmProvider, config.llmModel);
+  const llmCfg = llmSettings.get();
+  const llm = new LLMService({ provider: llmCfg.provider, model: llmCfg.model });
 
   // 模拟（paper/mock）账户：PAPER_ENABLED=0 时关闭，不自动创建
   let paperAccount: Awaited<ReturnType<StorageAdapter['listAccounts']>>[number] | null = null;
@@ -98,7 +103,7 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   await journalStore.init();
   const journalAutoFill = new JournalAutoFill(marketData);
 
-  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, storageSettings, journalStore, journalAutoFill, llm, toolkit, sentiment };
+  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, storageSettings, llmSettings, journalStore, journalAutoFill, llm, toolkit, sentiment };
 
   // 配置了 key 且非 Mock 模式：启动后自动同步一次真实账户（不阻塞启动）
   if (process.env.AGENTWIN_USE_MOCK !== '1' && config.binanceApiKey && config.binanceApiSecret) {

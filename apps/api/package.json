@@ -15,7 +15,11 @@
     "@agentwin/sentiment": "workspace:*",
     "fastify": "^5.12.1",
     "@fastify/cors": "^10.0.0",
-    "@fastify/sensible": "^6.0.0"
+    "@fastify/sensible": "^6.0.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
