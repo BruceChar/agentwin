@@ -23,6 +23,17 @@ export const selectedAccount = computed<AccountOption | null>(
   () => accountStore.accounts.find((a) => a.id === accountStore.selectedId) ?? null,
 );
 
+// ---------- 界面偏好（localStorage 持久化） ----------
+/** 仪表板是否显示账户余额（权益）。设置页「账户余额显示」开关控制，默认显示。 */
+export const uiPrefs = reactive<{ fundsVisible: boolean }>({
+  fundsVisible: localStorage.getItem('aw-show-funds') !== '0',
+});
+
+export function setFundsVisible(v: boolean): void {
+  uiPrefs.fundsVisible = v;
+  localStorage.setItem('aw-show-funds', v ? '1' : '0');
+}
+
 export function accountLabel(a: AccountOption | null): string {
   return a ? (a.type === 'real' ? '真实 · ' : '模拟 · ') + a.name : '未选择账户';
 }

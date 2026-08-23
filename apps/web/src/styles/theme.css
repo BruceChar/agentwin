@@ -142,6 +142,8 @@ body {
 .aw-btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
 .aw-btn-secondary { border-color: rgba(255, 255, 255, 0.1); }
 .aw-btn-secondary:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); border-color: var(--aw-border-hover); }
+.aw-btn-danger { background: var(--aw-down); color: #fff; font-weight: 600; }
+.aw-btn-danger:hover:not(:disabled) { filter: brightness(1.15); }
 .aw-btn-text { color: var(--aw-accent); padding: 0 8px; height: 28px; }
 .aw-btn-text:hover:not(:disabled) { text-decoration: underline; }
 .aw-btn-icon {
