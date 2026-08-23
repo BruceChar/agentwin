@@ -114,6 +114,7 @@
                 <b class="log-sym">{{ r.symbol }}</b>
                 <span class="dir-tag" :class="r.direction === 'LONG' ? 'long' : 'short'">{{ dirLabel(r.direction) }}</span>
                 <span class="aw-status" :class="STATUS_META[stOf(r)].cls"><span class="dot"></span>{{ STATUS_META[stOf(r)].label }}</span>
+                <span class="src-tag">{{ sourceTagOf(r) }}</span>
               </div>
 
               <!-- 计划中 -->
@@ -357,9 +358,22 @@
               <el-form-item label="计划符合度">
                 <el-slider v-model="review.discipline" :min="1" :max="10" :step="1" show-stops />
               </el-form-item>
-              <el-form-item label="标签">
+              <el-form-item label="来源标签（必选）">
+                <div class="seg2">
+                  <button v-for="s in SOURCE_TAGS" :key="s" class="s2" :class="{ active: review.source === s }" @click="review.source = s">{{ s }}</button>
+                </div>
+              </el-form-item>
+              <template v-if="review.source === '无计划'">
+                <el-form-item label="为什么没有按计划执行？（强制归因）">
+                  <el-select v-model="review.noPlanReasons" multiple filterable allow-create collapse-tags placeholder="选择原因" style="width: 100%">
+                    <el-option v-for="o in NO_PLAN_REASONS" :key="o" :value="o" :label="o" />
+                  </el-select>
+                  <el-input v-model="review.noPlanReasonCustom" size="small" placeholder="自定义原因（可选）" style="margin-top: 6px" />
+                </el-form-item>
+              </template>
+              <el-form-item label="自定义标签">
                 <el-select v-model="review.tags" multiple filterable allow-create collapse-tags placeholder="如 趋势跟踪 / 逆势抄底" style="width: 100%">
-                  <el-option v-for="t in TAG_OPTIONS" :key="t" :value="t" :label="t" />
+                  <el-option v-for="t in CUSTOM_TAG_OPTIONS" :key="t" :value="t" :label="t" />
                 </el-select>
               </el-form-item>
             </el-form>
@@ -507,6 +521,18 @@ import {
 } from '../lib/journal.ts';
 
 const TAG_OPTIONS = ['情绪化交易', '执行错误', '系统缺陷', '正常亏损', '正常盈利', '运气成分', '历史导入', '趋势跟踪', '逆势抄底'];
+// 核心标签组：交易来源（系统预设，不可删除）——空心边框样式；自定义标签——常规样式
+const SOURCE_TAGS = ['计划执行', '无计划', '策略信号', '历史导入'];
+// 「无计划」强制归因选项
+const NO_PLAN_REASONS = ['忘记计划', '临时起意', '情绪冲动', '系统/行情突变', '其他'];
+const CUSTOM_TAG_OPTIONS = TAG_OPTIONS.filter((t) => !SOURCE_TAGS.includes(t));
+/** 从记录提取来源标签：命中预设 → 有计划字段 → 计划执行；否则无计划 */
+function sourceTagOf(r: Pick<TradeJournal, 'tags' | 'plannedEntry' | 'plannedStop' | 'plannedTargets'>): string {
+  const hit = (r.tags ?? []).find((t) => SOURCE_TAGS.includes(t));
+  if (hit) return hit;
+  const hasPlan = !!(r.plannedEntry || r.plannedStop || (r.plannedTargets?.length ?? 0) > 0);
+  return hasPlan ? '计划执行' : '无计划';
+}
 const MARKET_OPTIONS = ['现货', 'U本位合约', '币本位合约', '全仓杠杆', '逐仓杠杆'];
 const HOLDING_OPTIONS = ['日内', '波段', '趋势'];
 const REASON_OPTIONS = ['突破', '回调', '止损', '止盈', '情绪', '其他'];
@@ -559,10 +585,11 @@ const f = reactive<{
 
 const review = reactive<{
   entryReasonSel: string[]; entryReason: string; emotion: string; confidence: number;
-  discipline: number; tags: string[]; entryQuality: number; entryQualityNote: string;
+  discipline: number; tags: string[]; source: string; noPlanReasons: string[]; noPlanReasonCustom: string;
+  entryQuality: number; entryQualityNote: string;
   exitQuality: number; exitQualityNote: string; attribution: string[]; improvements: string;
   adjust: boolean | null; adjustStrategy: string; adjustDirection: string;
-}>({ entryReasonSel: [], entryReason: '', emotion: '冷静', confidence: 5, discipline: 5, tags: [], entryQuality: 5, entryQualityNote: '', exitQuality: 5, exitQualityNote: '', attribution: [], improvements: '', adjust: null, adjustStrategy: '', adjustDirection: '' });
+}>({ entryReasonSel: [], entryReason: '', emotion: '冷静', confidence: 5, discipline: 5, tags: [], source: '无计划', noPlanReasons: [], noPlanReasonCustom: '', entryQuality: 5, entryQualityNote: '', exitQuality: 5, exitQualityNote: '', attribution: [], improvements: '', adjust: null, adjustStrategy: '', adjustDirection: '' });
 
 const form = reactive<Record<string, any>>({
   symbol: '', direction: 'LONG', market: '现货', leverage: 1, plannedEntry: undefined, plannedAt: undefined,
@@ -823,7 +850,10 @@ function initReview(r: TradeJournal) {
     emotion: EMOTION_OPTIONS[Math.min(Math.max(Math.round((r.emotionScore ?? 5) / 3) - 1, 0), 3)] ?? '冷静',
     confidence: r.confidenceScore ?? 5,
     discipline: r.disciplineScore ?? 5,
-    tags: [...(r.tags ?? [])].filter((t) => t !== '历史导入'),
+    source: sourceTagOf(r),
+    tags: [...(r.tags ?? [])].filter((t) => !SOURCE_TAGS.includes(t)),
+    noPlanReasons: ((r as any).deviationReason ? String((r as any).deviationReason).split(/[、,，]/).map((s: string) => s.trim()).filter(Boolean) : []),
+    noPlanReasonCustom: '',
     entryQuality: r.entryQuality ?? 5,
     entryQualityNote: (r as any).entryQualityNote ?? '',
     exitQuality: (r as any).exitQuality ?? 5,
@@ -854,6 +884,16 @@ async function loadAll() {
   all.value = j.records;
   const q = route.query;
   if (q.search) { f.symbol = String(q.search); }
+  // 仪表盘/今日动态跳转：sel=ID 选中并高亮该记录
+  if (q.sel) {
+    const target = all.value.find((r) => r.id === String(q.sel));
+    if (target) selectRecord(target);
+  }
+  // 仪表盘计划卡片「编辑」：edit=ID 打开编辑表单
+  if (q.edit) {
+    const target = all.value.find((r) => r.id === String(q.edit));
+    if (target) openEdit(target);
+  }
   renderRing();
 }
 
@@ -893,12 +933,15 @@ async function closeRecord(r: TradeJournal) {
 async function saveLog() {
   if (!detail.value) return;
   const reason = review.entryReasonSel.length ? review.entryReasonSel.join(', ') : review.entryReason;
+  const noPlan = [...review.noPlanReasons];
+  if (review.noPlanReasonCustom) noPlan.push(review.noPlanReasonCustom);
   const patch = {
     entryReason: reason || undefined,
     emotionScore: EMOTION_OPTIONS.indexOf(review.emotion) * 3 + 2,
     confidenceScore: review.confidence,
     disciplineScore: review.discipline,
-    tags: [...new Set([...(detail.value.tags ?? []).filter((t) => t !== '历史导入'), ...review.tags])],
+    deviationReason: review.source === '无计划' && noPlan.length ? noPlan.join('、') : undefined,
+    tags: [...new Set([...(detail.value.tags ?? []).filter((t) => !SOURCE_TAGS.includes(t)), review.source, ...review.tags])],
   };
   await api.patch('/journal/trades/' + detail.value.id, { patch });
   ElMessage.success('日志已保存，仍为待复盘');
@@ -922,7 +965,10 @@ async function submitReview() {
   if (review.exitQualityNote) patch.exitQualityNote = review.exitQualityNote;
   if (review.attribution.length) patch.attribution = review.attribution.join('、');
   if (review.adjust) patch.strategyAdjustment = { strategy: review.adjustStrategy, direction: review.adjustDirection };
-  patch.tags = [...new Set([...(detail.value.tags ?? []), ...review.tags])];
+  const noPlan = [...review.noPlanReasons];
+  if (review.noPlanReasonCustom) noPlan.push(review.noPlanReasonCustom);
+  if (review.source === '无计划' && noPlan.length) patch.deviationReason = noPlan.join('、');
+  patch.tags = [...new Set([...(detail.value.tags ?? []).filter((t) => !SOURCE_TAGS.includes(t)), review.source, ...review.tags])];
   await api.patch('/journal/trades/' + detail.value.id, { patch });
   ElMessage.success('复盘已提交，转入已复盘');
   await loadAll(); detail.value = null;
@@ -1302,6 +1348,13 @@ onBeforeUnmount(() => {
 .s2:hover { border-color: var(--aw-border-hover); }
 .s2.active { border-color: var(--aw-accent); color: var(--aw-accent); background: var(--aw-accent-dim); }
 .full-form-scroll { max-height: 62vh; overflow-y: auto; }
+
+/* 来源标签（空心边框）——与状态标签（实心底色）视觉区分 */
+.src-tag {
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+  border: 1px solid rgba(6,182,212,0.45); color: #22d3ee;
+  background: transparent; flex: none;
+}
 
 /* 数字变化闪烁 */
 @keyframes aw-num-flash {
