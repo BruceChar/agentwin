@@ -310,6 +310,25 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     });
   });
 
+  // 代理出口连接状态（顶栏实时检测用）：代理开关 + 出口地区 + 是否受限（美国/中国等币安封锁区）
+  app.get('/api/binance/proxy-status', async () => {
+    const proxy = services.proxySettings.get();
+    const base = { enabled: proxy.enabled, mode: proxy.mode, url: proxy.url ?? null };
+    if (!proxy.enabled) return { ...base, exit: null };
+    const proxiedFetch = createProxiedFetch(services.proxySettings.config);
+    if (!proxiedFetch) return { ...base, exit: { success: false, error: '未配置代理' } };
+    try {
+      const res = await proxiedFetch('https://ipwho.is/', { signal: AbortSignal.timeout(5000) });
+      const j = (await res.json()) as { ip?: string; country?: string; country_code?: string; success?: boolean };
+      const country = j.country;
+      const cc = j.country_code;
+      const restricted = Boolean(country && (['United States', 'US', '美国'].includes(country) || cc === 'US' || country === 'China' || cc === 'CN'));
+      return { ...base, exit: { success: j.success !== false, country, countryCode: cc, restricted } };
+    } catch (e) {
+      return { ...base, exit: { success: false, error: e instanceof Error ? e.message : String(e) } };
+    }
+  });
+
   // 网络诊断：代理出口地区 + DNS 污染对比（定位"受限地区"与"DNS 污染"）
   app.get('/api/binance/diagnose', async () => {
     const out: Record<string, unknown> = { proxy: services.proxySettings.get() };
@@ -503,6 +522,27 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   app.get('/api/sentiment/:symbol', async (req) => {
     const symbol = str((req.params as Body)['symbol']).toUpperCase();
     return sentiment.aggregate(symbol, num((req.query as Body)['hours'], 24));
+  });
+
+  // ---------------- 存储路径设置 ----------------
+  // 当前存储路径（JSONL 主存储 / SQLite 辅助库，绝对路径）
+  app.get('/api/settings/storage', async () => services.storageSettings.get());
+
+  // 修改主存储路径：目录输入自动补 trade-journal.jsonl；即时迁移内存记录并持久化，重启后继续生效
+  app.post('/api/settings/storage', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    let next: string;
+    try {
+      next = services.storageSettings.normalize(str(b['journalPath']));
+    } catch (e) {
+      return app.httpErrors.badRequest(e instanceof Error ? e.message : String(e));
+    }
+    try {
+      await services.journalStore.move(next);
+    } catch (e) {
+      return app.httpErrors.badRequest('存储路径不可用：' + (e instanceof Error ? e.message : String(e)));
+    }
+    return services.storageSettings.save(next);
   });
 
   // ---------------- 交易日志 ----------------

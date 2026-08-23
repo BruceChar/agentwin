@@ -1,6 +1,7 @@
 import { createStorage, type StorageAdapter } from '@agentwin/db';
 import { BinanceMarketData, BinanceOfficialMarketData, BinanceRest, MockMarketData, resolveProxyConfig, type MarketDataProvider } from '@agentwin/market';
 import { ProxySettings } from './proxy-settings.ts';
+import { StorageSettings } from './storage-settings.ts';
 import { registerBuiltinStrategies, builtinRegistry } from '@agentwin/strategy';
 import { LLMService } from '@agentwin/llm';
 import { TradingToolkit } from '@agentwin/llm';
@@ -20,6 +21,8 @@ export interface AppServices {
   sync: BinanceAccountSync;
   /** 运行时代理设置（前端可开关） */
   proxySettings: ProxySettings;
+  /** 存储路径设置（JSONL 主存储可运行时迁移并持久化） */
+  storageSettings: StorageSettings;
   /** 结构化交易日志（JSONL 主存储 + SQLite 镜像） */
   journalStore: TradeJournalStore;
   journalAutoFill: JournalAutoFill;
@@ -86,12 +89,16 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   });
   const sync = new BinanceAccountSync(storage, rest, marketData);
 
-  // 结构化交易日志：JSONL 主存储 + SQLite 镜像
-  const journalStore = new TradeJournalStore(process.env.JOURNAL_PATH ?? './data/trade-journal.jsonl', storage);
+  // 结构化交易日志：JSONL 主存储 + SQLite 镜像（主存储路径可运行时修改并持久化）
+  const storageSettings = new StorageSettings(
+    process.env.JOURNAL_PATH ?? './data/trade-journal.jsonl',
+    config.dbPath,
+  );
+  const journalStore = new TradeJournalStore(storageSettings.get().journalPath, storage);
   await journalStore.init();
   const journalAutoFill = new JournalAutoFill(marketData);
 
-  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, journalStore, journalAutoFill, llm, toolkit, sentiment };
+  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, storageSettings, journalStore, journalAutoFill, llm, toolkit, sentiment };
 
   // 配置了 key 且非 Mock 模式：启动后自动同步一次真实账户（不阻塞启动）
   if (process.env.AGENTWIN_USE_MOCK !== '1' && config.binanceApiKey && config.binanceApiSecret) {

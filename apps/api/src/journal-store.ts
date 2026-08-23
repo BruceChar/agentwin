@@ -21,7 +21,7 @@ export interface TradeJournalFilter {
  */
 export class TradeJournalStore {
   private records = new Map<string, TradeJournal>();
-  private readonly filePath: string;
+  private filePath: string;
   private readonly storage: StorageAdapter;
 
   constructor(filePath: string, storage: StorageAdapter) {
@@ -55,6 +55,17 @@ export class TradeJournalStore {
       .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
       .map((j) => JSON.stringify(j));
     writeFileSync(this.filePath, lines.length ? lines.join('\n') + '\n' : '');
+  }
+
+  /** 当前 JSONL 主存储文件路径（绝对/相对均按构造时的原样） */
+  get path(): string {
+    return this.filePath;
+  }
+
+  /** 迁移主存储到新路径：把内存中的全部记录写入新文件，之后的写入都走新路径 */
+  async move(newPath: string): Promise<void> {
+    this.filePath = newPath;
+    this.persistJsonl();
   }
 
   async create(input: NewTradeJournal & { id?: string }): Promise<TradeJournal> {
