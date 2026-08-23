@@ -119,7 +119,7 @@
               <!-- 计划中 -->
               <template v-if="stOf(r) === 'plan'">
                 <div class="log-row2 mono">
-                  <span>计划 {{ r.plannedSize ?? '—' }} · 触发 {{ r.triggerDesc || '—' }}</span>
+                  <span>计划 {{ r.plannedSize ?? '—' }}<template v-if="(r.leverage ?? 0) > 1"> · {{ r.leverage }}x</template> · 触发 {{ r.triggerDesc || '—' }}</span>
                 </div>
                 <div class="log-row3 mono dim">
                   入场 {{ fmtPrice(r.plannedEntry) }} · 止损 {{ fmtPrice(r.plannedStop) }} · 止盈 {{ (r.plannedTargets ?? []).map(fmtPrice).join(' / ') || '—' }}
@@ -183,7 +183,7 @@
 
           <!-- 空状态 -->
           <div v-if="!visibleList.length" class="empty-state">
-            <template v-if="activeTab === 'plan'">暂无交易计划，<a class="link" @click="goPlans">去交易计划页制定 →</a></template>
+            <template v-if="activeTab === 'plan'">暂无交易计划，<a class="link" @click="openNewPlan">去新建计划 →</a></template>
             <template v-else-if="activeTab === 'holding'">当前无持仓</template>
             <template v-else-if="activeTab === 'pending'">暂无待复盘记录，保持好节奏</template>
             <template v-else-if="activeTab === 'done'">暂无已复盘记录</template>
@@ -230,7 +230,7 @@
             <div class="gc-row"><span>最早创建</span><b class="mono dim">{{ earliestPlanTime }}</b></div>
             <div class="gc-row"><span>平均风险金额</span><b class="mono">{{ avgPlanRisk }}</b></div>
           </div>
-          <button class="aw-btn aw-btn-secondary full" @click="goPlans">去交易计划页制定 →</button>
+          <button class="aw-btn aw-btn-secondary full" @click="openNewPlan">去新建计划 →</button>
         </template>
 
         <!-- 持仓中：持仓总览 -->
@@ -461,7 +461,9 @@
           <el-form-item label="市场"><el-select v-model="form.market" style="width: 100%">
             <el-option v-for="m in MARKET_OPTIONS" :key="m" :value="m" :label="m" />
           </el-select></el-form-item>
+          <el-form-item label="杠杆"><el-input-number v-model="form.leverage" :min="1" :precision="0" controls-position="right" style="width: 100%" /></el-form-item>
           <el-form-item label="计划开仓价"><el-input-number v-model="form.plannedEntry" :precision="4" controls-position="right" style="width: 100%" /></el-form-item>
+          <el-form-item label="预期执行时间"><el-date-picker v-model="form.plannedAt" type="datetime" value-format="x" style="width: 100%" /></el-form-item>
           <el-form-item label="止损价"><el-input-number v-model="form.plannedStop" :precision="4" controls-position="right" style="width: 100%" /></el-form-item>
           <el-form-item label="止盈目标"><el-input v-model="form.targetsText" placeholder="逗号分隔，如 75000, 78000" /></el-form-item>
           <el-form-item label="仓位"><el-input v-model="form.plannedSize" placeholder="如 0.5 手" /></el-form-item>
@@ -473,6 +475,7 @@
           </el-form-item>
           <el-form-item label="策略名称"><el-input v-model="form.strategyName" placeholder="如 趋势跟踪" /></el-form-item>
           <el-form-item label="策略版本"><el-input v-model="form.strategyVersion" placeholder="如 v2.1" /></el-form-item>
+          <el-form-item label="触发条件"><el-input v-model="form.triggerDesc" type="textarea" :rows="2" placeholder="如：BTC 站稳 71500 且放量突破时入场" /></el-form-item>
           <el-form-item label="失效条件"><el-input v-model="form.invalidation" placeholder="如 跌破 65000 则放弃" /></el-form-item>
           <el-form-item label="入场理由"><el-input v-model="form.entryReason" type="textarea" :rows="2" placeholder="为什么做这笔？" /></el-form-item>
           <el-form-item label="账户">
@@ -562,9 +565,9 @@ const review = reactive<{
 }>({ entryReasonSel: [], entryReason: '', emotion: '冷静', confidence: 5, discipline: 5, tags: [], entryQuality: 5, entryQualityNote: '', exitQuality: 5, exitQualityNote: '', attribution: [], improvements: '', adjust: null, adjustStrategy: '', adjustDirection: '' });
 
 const form = reactive<Record<string, any>>({
-  symbol: '', direction: 'LONG', market: '现货', plannedEntry: undefined, plannedStop: undefined,
-  targetsText: '', plannedSize: '', plannedRiskAmount: undefined, plannedHolding: '日内',
-  strategyName: '', strategyVersion: '', invalidation: '', entryReason: '', accountId: '',
+  symbol: '', direction: 'LONG', market: '现货', leverage: 1, plannedEntry: undefined, plannedAt: undefined,
+  plannedStop: undefined, targetsText: '', plannedSize: '', plannedRiskAmount: undefined, plannedHolding: '日内',
+  strategyName: '', strategyVersion: '', triggerDesc: '', invalidation: '', entryReason: '', accountId: '',
 });
 
 // ---------------- Tab 导航（页面内主导航） ----------------
@@ -635,7 +638,7 @@ const visibleList = computed(() => {
   if (t === 'pending') return [...out].sort((a, b) => Math.abs(b.netPnl ?? 0) - Math.abs(a.netPnl ?? 0));
   if (t === 'holding') return [...out].sort((a, b) => (b.openTime ?? b.createdAt ?? 0) - (a.openTime ?? a.createdAt ?? 0));
   if (t === 'done') return [...out].sort((a, b) => (b.closeTime ?? b.updatedAt ?? 0) - (a.closeTime ?? a.updatedAt ?? 0));
-  if (t === 'plan') return [...out].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  if (t === 'plan') return [...out].sort((a, b) => ((b as any).plannedAt ?? b.createdAt ?? 0) - ((a as any).plannedAt ?? a.createdAt ?? 0));
   // 全部：按时间倒序
   return [...out].sort((a, b) => (cardTime(b) ?? 0) - (cardTime(a) ?? 0));
 });
@@ -788,6 +791,7 @@ function stOf(r: TradeJournal): JournalStatus { return deriveStatus(r); }
 
 function cardTime(r: TradeJournal): number | undefined {
   const st = deriveStatus(r);
+  if (st === 'plan') return (r as any).plannedAt ?? r.createdAt;
   if (st === 'done') return r.closeTime ?? r.updatedAt ?? r.createdAt;
   if (st === 'holding') return r.openTime ?? r.createdAt;
   return r.closeTime ?? r.createdAt;
@@ -843,8 +847,6 @@ function startFirstReview() {
   if (!first) { ElMessage.info('暂无待复盘记录'); return; }
   selectRecord(first); reviewTab.value = 'review';
 }
-
-function goPlans() { router.push({ path: '/plans' }); }
 
 async function loadAll() {
   await loadAccounts();
@@ -939,7 +941,7 @@ async function saveDraft() {
 }
 
 function openNewPlan() {
-  Object.assign(form, { symbol: '', direction: 'LONG', market: '现货', plannedEntry: undefined, plannedStop: undefined, targetsText: '', plannedSize: '', plannedRiskAmount: undefined, plannedHolding: '日内', strategyName: '', strategyVersion: '', invalidation: '', entryReason: '', accountId: accountStore.selectedId || '' });
+  Object.assign(form, { symbol: '', direction: 'LONG', market: '现货', leverage: 1, plannedEntry: undefined, plannedAt: Date.now() + 3600_000, plannedStop: undefined, targetsText: '', plannedSize: '', plannedRiskAmount: undefined, plannedHolding: '日内', strategyName: '', strategyVersion: '', triggerDesc: '', invalidation: '', entryReason: '', accountId: accountStore.selectedId || '' });
   editingId.value = '';
   fullFormVisible.value = true;
 }
@@ -947,13 +949,13 @@ function openNewPlan() {
 function openEdit(r: TradeJournal) {
   editingId.value = r.id;
   Object.assign(form, {
-    symbol: r.symbol, direction: r.direction, market: r.market ?? '现货',
-    plannedEntry: r.plannedEntry, plannedStop: r.plannedStop,
+    symbol: r.symbol, direction: r.direction, market: r.market ?? '现货', leverage: r.leverage ?? 1,
+    plannedEntry: r.plannedEntry, plannedAt: (r as any).plannedAt ?? r.createdAt, plannedStop: r.plannedStop,
     targetsText: (r.plannedTargets ?? []).join(', '),
     plannedSize: r.plannedSize ?? '', plannedRiskAmount: r.plannedRiskAmount,
     plannedHolding: r.plannedHolding ?? '日内', strategyName: r.strategyName ?? '',
-    strategyVersion: r.strategyVersion ?? '', invalidation: r.invalidation ?? '',
-    entryReason: r.entryReason ?? '', accountId: r.accountId ?? (accountStore.selectedId || ''),
+    strategyVersion: r.strategyVersion ?? '', triggerDesc: (r as any).triggerDesc ?? r.entryReason ?? '',
+    invalidation: r.invalidation ?? '', entryReason: r.entryReason ?? '', accountId: r.accountId ?? (accountStore.selectedId || ''),
   });
   fullFormVisible.value = true;
 }
@@ -966,7 +968,9 @@ async function savePlanForm() {
       symbol: form.symbol.toUpperCase(),
       direction: form.direction,
       market: form.market,
+      leverage: form.leverage,
       plannedEntry: form.plannedEntry,
+      plannedAt: form.plannedAt,
       plannedStop: form.plannedStop,
       plannedTargets: targets,
       plannedSize: form.plannedSize || undefined,
@@ -974,6 +978,7 @@ async function savePlanForm() {
       plannedHolding: form.plannedHolding,
       strategyName: form.strategyName || undefined,
       strategyVersion: form.strategyVersion || undefined,
+      triggerDesc: form.triggerDesc || undefined,
       invalidation: form.invalidation || undefined,
       entryReason: form.entryReason || undefined,
       accountId: form.accountId || undefined,
@@ -1094,6 +1099,23 @@ watch(holdingPnlMap, (m, prev) => {
 // ---------------- 生命周期 ----------------
 
 watch(() => accountStore.selectedId, () => loadAll());
+
+// 已在日志页时通过 URL 参数触发（组件不会重新挂载，需 watch）
+watch(() => route.query.new, (v) => {
+  if (v) {
+    openNewPlan();
+    const q = { ...route.query };
+    delete q.new;
+    router.replace({ query: q });
+  }
+});
+
+watch(() => route.query.id, (v) => {
+  if (v && typeof v === 'string') {
+    const found = all.value.find((r) => r.id === v);
+    if (found) selectRecord(found);
+  }
+});
 
 watch(activeTab, async (tab) => {
   if (tab === '') { await nextTick(); renderRing(); }

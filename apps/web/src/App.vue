@@ -56,7 +56,7 @@
             <span class="sync-dot" :class="{ ok: syncOk }"></span>{{ syncOk ? '已连接' : '同步中' }}
           </el-tag>
           <button class="icon-btn" title="AI 助手" @click="go('/llm')"><el-icon><ChatDotRound /></el-icon></button>
-          <button class="icon-btn" title="新建计划" @click="go('/plans?new=1')"><el-icon><Plus /></el-icon></button>
+          <button class="icon-btn" title="新建计划" @click="go('/journal?new=1')"><el-icon><Plus /></el-icon></button>
           <el-popover trigger="click" placement="bottom-end" :width="300">
             <template #reference>
               <button class="acct-btn">{{ acctLabel }} <span class="caret">▾</span></button>
@@ -116,7 +116,6 @@ const navGroups: { title: string; items: NavItem[] }[] = [
     items: [
       { path: '/', label: '仪表盘', icon: 'Odometer' },
       { path: '/journal', label: '交易日志', icon: 'Notebook', badgeKey: 'holding' },
-      { path: '/plans', label: '交易计划', icon: 'Calendar', badgeKey: 'plan' },
       { path: '/review', label: '复盘中心', icon: 'DataAnalysis', badgeKey: 'pending' },
     ],
   },
@@ -158,7 +157,7 @@ function isActive(item: NavItem): boolean {
 
 const crumbGroup = computed(() => {
   const p = route.path;
-  if (p.startsWith('/journal') || p.startsWith('/plans') || p.startsWith('/review')) return '核心工作流';
+  if (p.startsWith('/journal') || p.startsWith('/review')) return '核心工作流';
   if (p.startsWith('/strategies') || p.startsWith('/stats') || p.startsWith('/market')) return '策略与数据';
   if (p.startsWith('/paper') || p.startsWith('/sentiment') || p.startsWith('/llm')) return '工具';
   return '';

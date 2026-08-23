@@ -82,8 +82,8 @@
         </div>
         <div v-else class="aw-empty">
           <svg class="aw-empty-illus" viewBox="0 0 64 48"><rect x="4" y="10" width="56" height="30" rx="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 28 L28 18 L38 26 L50 14" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-          <span>当前无持仓，去交易计划页制定策略</span>
-          <button class="aw-btn aw-btn-text" @click="go('/plans?new=1')">去交易计划 →</button>
+          <span>当前无持仓，去交易日志页制定计划</span>
+          <button class="aw-btn aw-btn-text" @click="go('/journal?new=1')">去新建计划 →</button>
         </div>
       </div>
 
@@ -113,7 +113,7 @@
       <div class="aw-card col">
         <div class="col-head"><b>快速入口</b></div>
         <div class="quick-actions">
-          <button class="aw-btn aw-btn-primary quick" @click="go('/plans?new=1')"><el-icon><Plus /></el-icon>+ 新建计划</button>
+          <button class="aw-btn aw-btn-primary quick" @click="go('/journal?new=1')"><el-icon><Plus /></el-icon>+ 新建计划</button>
           <button class="aw-btn aw-btn-secondary quick" @click="go('/review')"><el-icon><EditPen /></el-icon>+ 补记复盘</button>
           <button class="aw-btn aw-btn-secondary quick" @click="importVisible = true"><el-icon><Upload /></el-icon>+ 历史导入</button>
         </div>
