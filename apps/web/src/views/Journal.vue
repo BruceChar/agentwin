@@ -1,32 +1,11 @@
 <template>
   <div class="journal aw-page">
-    <!-- 左栏：筛选面板 240px -->
+    <!-- 左栏：筛选面板 200px（状态筛选已升级为页内主导航 Tab，不再出现在这里） -->
     <aside class="left-panel">
       <div class="lp-head">
         <b>筛选</b>
         <button class="aw-btn aw-btn-text" @click="clearFilters">重置</button>
       </div>
-      <!-- 已选条件标签 -->
-      <div v-if="activeFilterTags.length" class="sel-tags">
-        <span v-for="t in activeFilterTags" :key="t.key" class="sel-tag">
-          {{ t.label }} <span class="sel-x" @click="removeFilter(t.key)">×</span>
-        </span>
-      </div>
-      <!-- 状态垂直 tab -->
-      <div class="status-tabs">
-        <button
-          v-for="s in statusTabs"
-          :key="s.key"
-          class="st-tab"
-          :class="{ active: f.status === s.key }"
-          @click="toggleStatus(s.key)"
-        >
-          <span class="st-dot" :style="{ background: s.color }"></span>
-          <span>{{ s.label }}</span>
-          <span class="st-count mono">{{ s.count }}</span>
-        </button>
-      </div>
-      <el-divider />
       <div class="lp-filters">
         <div class="lp-label">时间</div>
         <el-date-picker v-model="f.range" type="daterange" value-format="x" size="small" style="width: 100%" @change="applyFilter" />
@@ -66,16 +45,45 @@
       </div>
     </aside>
 
-    <!-- 中栏：日志列表 -->
+    <!-- 中栏：Tab 导航 + 记录列表 -->
     <section class="mid-panel">
-      <div class="list-head">
-        <div class="lh-left">
-          <span v-for="s in STATUS_ORDER" :key="s" class="lh-stat" @click="toggleStatus(s)">
-            <span class="dot" :style="{ background: STATUS_META[s].color }"></span>
-            {{ STATUS_META[s].label }} <b class="mono">{{ groupCount(s) }}</b>
-          </span>
+      <!-- Tab 栏：页面内主导航主轴 -->
+      <div class="tab-bar">
+        <div class="tabs">
+          <button
+            v-for="t in statusTabs"
+            :key="t.key"
+            class="pill"
+            :class="{
+              active: activeTab === t.key,
+              all: t.key === '', plan: t.key === 'plan', holding: t.key === 'holding',
+              pending: t.key === 'pending', done: t.key === 'done',
+              urgent: t.key === 'pending' && t.count > 0 && activeTab !== 'pending',
+              breathing: t.key === 'pending' && pendingUrgent,
+            }"
+            :title="tabHint(t.key)"
+            @click="switchTab(t.key)"
+          >
+            <span class="pill-dot" :style="{ background: t.key === '' && activeTab === '' ? '#fff' : t.color }"></span>
+            <span class="pill-label">{{ t.label }}</span>
+            <span class="pill-count mono" :class="{ zero: t.count === 0, flash: flashKey === t.key }">{{ t.count }}</span>
+          </button>
         </div>
-        <button class="aw-btn aw-btn-primary" @click="openNewPlan"><el-icon><Plus /></el-icon>新建计划</button>
+        <!-- 待复盘 urgency 提醒点 -->
+        <span
+          v-if="counts.pending > 0 && activeTab !== 'pending'"
+          class="remind-dot"
+          :title="'有 ' + counts.pending + ' 条记录待复盘'"
+        ></span>
+        <button class="aw-btn aw-btn-primary new-btn" @click="openNewPlan"><el-icon><Plus /></el-icon>新建</button>
+      </div>
+
+      <!-- 已选条件标签条：Tab 栏下方、记录列表上方 -->
+      <div v-if="activeFilterTags.length" class="sel-tags">
+        <span v-for="t in activeFilterTags" :key="t.key" class="sel-tag">
+          {{ t.label }} <span class="sel-x" @click="removeFilter(t.key)">×</span>
+        </span>
+        <button class="aw-btn aw-btn-text clear-all" @click="clearFilters">清除全部</button>
       </div>
 
       <!-- 批量操作条 -->
@@ -85,90 +93,181 @@
         <button class="aw-btn aw-btn-text" @click="clearSelected">取消</button>
       </div>
 
-      <!-- 分组列表 -->
-      <div v-for="s in STATUS_ORDER" :key="s" class="group" :class="{ collapsed: collapsed[s] }">
-        <div class="group-head" @click="collapsed[s] = !collapsed[s]">
-          <span class="gh-dot" :style="{ background: STATUS_META[s].color }"></span>
-          <b>{{ STATUS_META[s].label }}</b>
-          <span class="mono gh-count">{{ groupCount(s) }}</span>
-          <span class="gh-arrow">{{ collapsed[s] ? '▸' : '▾' }}</span>
-        </div>
-        <div v-if="!collapsed[s]" class="group-body">
+      <!-- 当前 Tab 对应的记录列表（Tab 切换动画） -->
+      <Transition name="tab-switch" mode="out-in">
+        <div :key="activeTab" class="list-area">
           <div
-            v-for="r in grouped[s]"
+            v-for="r in visibleList"
             :key="r.id"
             class="log-card"
-            :class="{ active: detail?.id === r.id, [STATUS_META[s].cls]: true, 'pulse-border': s === 'pending' }"
-            :style="{ border: STATUS_META[s].border }"
+            :class="{ active: detail?.id === r.id, [STATUS_META[stOf(r)].cls]: true }"
+            :style="{ border: STATUS_META[stOf(r)].border }"
             @click="selectRecord(r)"
           >
-            <span class="log-bar" :style="{ background: STATUS_META[s].color }"></span>
+            <span class="log-bar" :style="{ background: STATUS_META[stOf(r)].color }"></span>
             <span class="log-check" @click.stop="toggleSelect(r.id)">
               <span class="cb" :class="{ checked: selected.includes(r.id) }"></span>
             </span>
             <div class="log-main">
               <div class="log-row1">
-                <span class="dim mono">{{ fmtTime(r.closeTime ?? r.createdAt) }}</span>
+                <span class="dim mono">{{ fmtTime(cardTime(r)) }}</span>
                 <b class="log-sym">{{ r.symbol }}</b>
                 <span class="dir-tag" :class="r.direction === 'LONG' ? 'long' : 'short'">{{ dirLabel(r.direction) }}</span>
-                <span class="aw-status" :class="STATUS_META[s].cls"><span class="dot"></span>{{ STATUS_META[s].label }}</span>
+                <span class="aw-status" :class="STATUS_META[stOf(r)].cls"><span class="dot"></span>{{ STATUS_META[stOf(r)].label }}</span>
               </div>
-              <div class="log-row2 mono">
-                <span v-if="r.actualQty">{{ r.actualQty }} @ {{ fmtPrice(r.actualEntry ?? r.plannedEntry) }}</span>
-                <span v-else-if="r.plannedSize">计划 {{ r.plannedSize }}</span>
-                <span v-else>—</span>
-                <span class="log-pnl" :class="(r.netPnl ?? 0) >= 0 ? 'up' : 'down'" v-if="s === 'done' || s === 'pending'">{{ fmtPnl(r.netPnl) }}</span>
-                <span class="log-pnl holding" v-else-if="s === 'holding'">浮盈/亏：{{ fmtPnl(r.netPnl) }}</span>
-              </div>
-              <div class="log-row3" v-if="s === 'pending'">
-                <span class="pending-hint">⚠ {{ pendingHint(r) }}</span>
-              </div>
-              <div class="log-row3" v-else-if="s === 'done'">
-                <span class="done-hint">✓ {{ doneSummary(r) }}</span>
-              </div>
-              <div class="log-row3" v-else-if="s === 'plan'">
-                <span class="dim" v-if="r.plannedEntry">入场计划 {{ fmtPrice(r.plannedEntry) }} · 止损 {{ fmtPrice(r.plannedStop) }}</span>
-              </div>
+
+              <!-- 计划中 -->
+              <template v-if="stOf(r) === 'plan'">
+                <div class="log-row2 mono">
+                  <span>计划 {{ r.plannedSize ?? '—' }} · 触发 {{ r.triggerDesc || '—' }}</span>
+                </div>
+                <div class="log-row3 mono dim">
+                  入场 {{ fmtPrice(r.plannedEntry) }} · 止损 {{ fmtPrice(r.plannedStop) }} · 止盈 {{ (r.plannedTargets ?? []).map(fmtPrice).join(' / ') || '—' }}
+                </div>
+              </template>
+
+              <!-- 持仓中 -->
+              <template v-else-if="stOf(r) === 'holding'">
+                <div class="log-row2 mono">
+                  <span>开仓 {{ fmtPrice(r.actualEntry) }} → 现价 {{ fmtPrice(livePrice(r.symbol)) }}</span>
+                  <span class="log-pnl holding" :class="{ 'pnl-flash': flashPnl[r.id] }">浮盈/亏 {{ fmtPnl(floatPnl(r)) }}</span>
+                </div>
+                <div class="log-row3 mono dim">
+                  持仓 {{ fmtDuration(holdingDuration(r)) }} · {{ r.strategyName || r.tradeNo || '无关联计划' }} · 止损 {{ fmtPrice(r.plannedStop) }}
+                </div>
+              </template>
+
+              <!-- 待复盘 -->
+              <template v-else-if="stOf(r) === 'pending'">
+                <div class="log-row2 mono">
+                  <span>平仓 {{ fmtPrice(r.actualExit) }}</span>
+                  <span class="log-pnl" :class="(r.netPnl ?? 0) >= 0 ? 'up' : 'down'">{{ fmtPnl(r.netPnl) }}</span>
+                </div>
+                <div class="log-row3 mono dim">
+                  平仓于 {{ fmtTime(r.closeTime) }} · 持仓 {{ fmtDuration(holdingDuration(r)) }} · {{ pendingHint(r) }}
+                </div>
+              </template>
+
+              <!-- 已复盘 -->
+              <template v-else>
+                <div class="log-row2 mono">
+                  <span>盈亏 {{ fmtPnl(r.netPnl) }}</span>
+                  <span class="log-pnl" :class="(r.netPnl ?? 0) >= 0 ? 'up' : 'down'">{{ reviewScore(r) }}</span>
+                </div>
+                <div class="log-row3 mono dim">
+                  策略 {{ r.strategyVersion || '—' }} · 复盘于 {{ fmtTime(r.closeTime ?? r.updatedAt) }}
+                </div>
+              </template>
             </div>
+
             <div class="log-actions" @click.stop>
-              <template v-if="s === 'plan'">
+              <template v-if="stOf(r) === 'plan'">
                 <button class="aw-btn aw-btn-text" @click="execRecord(r)">执行</button>
                 <button class="aw-btn aw-btn-text" @click="openEdit(r)">编辑</button>
                 <button class="aw-btn aw-btn-text danger" @click="removeRecord(r)">删除</button>
               </template>
-              <template v-else-if="s === 'holding'">
+              <template v-else-if="stOf(r) === 'holding'">
                 <button class="aw-btn aw-btn-text" @click="closeRecord(r)">平仓</button>
-                <button class="aw-btn aw-btn-text" @click="selectRecord(r)">查看</button>
+                <button class="aw-btn aw-btn-text" @click="selectRecord(r)">查看详情</button>
               </template>
-              <template v-else-if="s === 'pending'">
-                <button class="aw-btn aw-btn-text" @click="openReview(r)">补记/复盘</button>
+              <template v-else-if="stOf(r) === 'pending'">
+                <button class="aw-btn aw-btn-text" @click="openReview(r)">补记</button>
                 <button class="aw-btn aw-btn-text" @click="quickReview(r)">快速复盘</button>
               </template>
               <template v-else>
-                <button class="aw-btn aw-btn-text" @click="selectRecord(r)">查看</button>
+                <button class="aw-btn aw-btn-text" @click="selectRecord(r)">查看复盘报告</button>
                 <button class="aw-btn aw-btn-text" @click="toStrategy(r)">加入策略分析</button>
               </template>
             </div>
           </div>
-          <div v-if="!grouped[s].length" class="group-empty dim">暂无{{ STATUS_META[s].label }}记录</div>
+
+          <!-- 空状态 -->
+          <div v-if="!visibleList.length" class="empty-state">
+            <template v-if="activeTab === 'plan'">暂无交易计划，<a class="link" @click="goPlans">去交易计划页制定 →</a></template>
+            <template v-else-if="activeTab === 'holding'">当前无持仓</template>
+            <template v-else-if="activeTab === 'pending'">暂无待复盘记录，保持好节奏</template>
+            <template v-else-if="activeTab === 'done'">暂无已复盘记录</template>
+            <template v-else>无匹配记录</template>
+          </div>
         </div>
-      </div>
+      </Transition>
     </section>
 
     <!-- 右栏：详情/编辑面板 360px -->
     <aside class="right-panel">
-      <!-- 未选中：引导 + 环形统计 -->
+      <!-- 未选中：按当前 Tab 显示引导 -->
       <div v-if="!detail" class="rp-guide">
-        <div class="rp-guide-title">交易日志</div>
-        <div class="rp-guide-desc dim">选择一条记录查看详情，或按状态快速操作</div>
-        <div ref="ringChart" class="ring-chart"></div>
-        <div class="ring-legend">
-          <div v-for="s in STATUS_ORDER" :key="s" class="rl-item">
-            <span class="rl-dot" :style="{ background: STATUS_META[s].color }"></span>
-            <span>{{ STATUS_META[s].label }}</span>
-            <b class="mono">{{ counts[s] }}</b>
+        <!-- 全部：今日流转迷你图 + 状态分布环形图 -->
+        <template v-if="activeTab === ''">
+          <div class="rp-guide-title">交易日志</div>
+          <div class="rp-guide-desc dim">选择一条记录查看详情，或按状态快速操作</div>
+          <div class="today-flow">
+            <div class="tf-item"><b class="mono">{{ todayFlow.plan }}</b><span>计划</span></div>
+            <span class="tf-arrow">→</span>
+            <div class="tf-item"><b class="mono">{{ todayFlow.holding }}</b><span>持仓</span></div>
+            <span class="tf-arrow">→</span>
+            <div class="tf-item"><b class="mono">{{ todayFlow.pending }}</b><span>待复盘</span></div>
+            <span class="tf-arrow">→</span>
+            <div class="tf-item"><b class="mono">{{ todayFlow.done }}</b><span>已复盘</span></div>
           </div>
-        </div>
+          <div class="tf-caption dim">今日流转</div>
+          <div ref="ringChart" class="ring-chart"></div>
+          <div class="ring-legend">
+            <div v-for="s in STATUS_ORDER" :key="s" class="rl-item">
+              <span class="rl-dot" :style="{ background: STATUS_META[s].color }"></span>
+              <span>{{ STATUS_META[s].label }}</span>
+              <b class="mono">{{ counts[s] }}</b>
+            </div>
+          </div>
+        </template>
+
+        <!-- 计划中：计划待执行提示 + 今日计划摘要 -->
+        <template v-else-if="activeTab === 'plan'">
+          <div class="rp-guide-title">计划待执行</div>
+          <div class="rp-guide-desc dim">共 {{ counts.plan }} 条计划待执行，筛选条件在当前状态内进一步过滤</div>
+          <div class="guide-card">
+            <div class="gc-row"><span>今日新建</span><b class="mono">{{ todayPlanCount }} 条</b></div>
+            <div class="gc-row"><span>最早创建</span><b class="mono dim">{{ earliestPlanTime }}</b></div>
+            <div class="gc-row"><span>平均风险金额</span><b class="mono">{{ avgPlanRisk }}</b></div>
+          </div>
+          <button class="aw-btn aw-btn-secondary full" @click="goPlans">去交易计划页制定 →</button>
+        </template>
+
+        <!-- 持仓中：持仓总览 -->
+        <template v-else-if="activeTab === 'holding'">
+          <div class="rp-guide-title">持仓总览</div>
+          <div class="rp-guide-desc dim">共 {{ counts.holding }} 笔持仓，浮盈亏实时刷新</div>
+          <div class="guide-card">
+            <div class="gc-row"><span>持仓品种</span><b class="mono">{{ holdingDist.length }}</b></div>
+            <div class="gc-row"><span>总浮盈亏</span><b class="mono" :class="(holdingTotalPnl ?? 0) >= 0 ? 'up' : 'down'">{{ fmtPnl(holdingTotalPnl) }}</b></div>
+          </div>
+          <div class="pos-dist">
+            <div v-for="p in holdingDist" :key="p.symbol" class="pd-item">
+              <span class="pd-sym">{{ p.symbol }}</span><span class="pd-n mono">{{ p.count }} 笔</span>
+            </div>
+          </div>
+        </template>
+
+        <!-- 待复盘：补记引导（核心工作 Tab） -->
+        <template v-else-if="activeTab === 'pending'">
+          <div class="rp-guide-title">补记引导</div>
+          <div class="rp-guide-desc">
+            有 <b class="mono accent">{{ counts.pending }}</b> 条记录待复盘，开始补记 →
+          </div>
+          <button class="aw-btn aw-btn-primary full" @click="startFirstPending">开始补记</button>
+          <button class="aw-btn aw-btn-secondary full" style="margin-top: 8px" @click="startFirstReview">快速复盘</button>
+        </template>
+
+        <!-- 已复盘：复盘统计 -->
+        <template v-else>
+          <div class="rp-guide-title">复盘统计</div>
+          <div class="rp-guide-desc dim">保持节奏，及时沉淀每一笔交易</div>
+          <div class="guide-card">
+            <div class="gc-row"><span>本周复盘</span><b class="mono">{{ doneStats.weekCount }} 条</b></div>
+            <div class="gc-row"><span>平均评分</span><b class="mono">{{ doneStats.avg !== undefined ? doneStats.avg.toFixed(1) + ' / 10' : '—' }}</b></div>
+            <div class="gc-row"><span>累计复盘</span><b class="mono">{{ doneStats.total }} 条</b></div>
+          </div>
+        </template>
       </div>
 
       <!-- 已选中：按状态展示 -->
@@ -188,6 +287,7 @@
             <el-descriptions :column="1" size="small">
               <el-descriptions-item label="品种/方向">{{ detail.symbol }} · {{ dirLabel(detail.direction) }}</el-descriptions-item>
               <el-descriptions-item label="入场计划">{{ fmtPrice(detail.plannedEntry) }}</el-descriptions-item>
+              <el-descriptions-item label="触发条件">{{ detail.triggerDesc || '—' }}</el-descriptions-item>
               <el-descriptions-item label="止损">{{ fmtPrice(detail.plannedStop) }}</el-descriptions-item>
               <el-descriptions-item label="止盈目标">{{ (detail.plannedTargets ?? []).map(fmtPrice).join(' / ') || '—' }}</el-descriptions-item>
               <el-descriptions-item label="盈亏比">{{ detail.plannedRR ?? '—' }}</el-descriptions-item>
@@ -211,10 +311,13 @@
             <el-descriptions :column="1" size="small">
               <el-descriptions-item label="品种/方向">{{ detail.symbol }} · {{ dirLabel(detail.direction) }}</el-descriptions-item>
               <el-descriptions-item label="开仓价">{{ fmtPrice(detail.actualEntry) }}</el-descriptions-item>
+              <el-descriptions-item label="当前价"><span class="mono">{{ fmtPrice(livePrice(detail.symbol)) }}</span></el-descriptions-item>
               <el-descriptions-item label="数量">{{ detail.actualQty ?? '—' }}</el-descriptions-item>
               <el-descriptions-item label="杠杆">{{ detail.leverage ?? '—' }}x</el-descriptions-item>
               <el-descriptions-item label="开仓时间">{{ fmtFullTime(detail.openTime) }}</el-descriptions-item>
-              <el-descriptions-item label="当前浮盈/亏"><span class="mono" :class="(detail.netPnl ?? 0) >= 0 ? 'up' : 'down'">{{ fmtPnl(detail.netPnl) }}</span></el-descriptions-item>
+              <el-descriptions-item label="持仓时长">{{ fmtDuration(holdingDuration(detail)) }}</el-descriptions-item>
+              <el-descriptions-item label="当前浮盈/亏"><span class="mono" :class="(floatPnl(detail) ?? 0) >= 0 ? 'up' : 'down'">{{ fmtPnl(floatPnl(detail)) }}</span></el-descriptions-item>
+              <el-descriptions-item label="止损/止盈">{{ fmtPrice(detail.plannedStop) }} / {{ (detail.plannedTargets ?? []).map(fmtPrice).join('、') || '—' }}</el-descriptions-item>
               <el-descriptions-item label="关联计划">{{ detail.strategyName || detail.tradeNo || '—' }}</el-descriptions-item>
             </el-descriptions>
           </div>
@@ -311,6 +414,7 @@
               <el-descriptions-item label="品种/方向">{{ detail.symbol }} · {{ dirLabel(detail.direction) }}</el-descriptions-item>
               <el-descriptions-item label="开仓">{{ fmtPrice(detail.actualEntry) }} → {{ fmtPrice(detail.actualExit) }}</el-descriptions-item>
               <el-descriptions-item label="净盈亏"><span class="mono" :class="(detail.netPnl ?? 0) >= 0 ? 'up' : 'down'">{{ fmtPnl(detail.netPnl) }}</span></el-descriptions-item>
+              <el-descriptions-item label="复盘评分">{{ reviewScore(detail) }}</el-descriptions-item>
               <el-descriptions-item label="R 倍数">{{ fmtNum(detail.rMultiple, 2) }}</el-descriptions-item>
               <el-descriptions-item label="时间">{{ fmtFullTime(detail.openTime) }} → {{ fmtFullTime(detail.closeTime) }}</el-descriptions-item>
               <el-descriptions-item label="计划符合度">{{ detail.planExecution === 'complete' ? '完全' : detail.planExecution === 'partial' ? '部分' : '未执行' }}</el-descriptions-item>
@@ -387,7 +491,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import * as echarts from 'echarts';
 import { ElMessage, ElMessageBox } from 'element-plus';
@@ -396,7 +500,7 @@ import { accountStore, loadAccounts } from '../store.ts';
 import type { TradeJournal } from '../lib/journal.ts';
 import {
   STATUS_META, STATUS_ORDER, deriveStatus, fmtPnl, fmtNum, fmtPrice, fmtTime, fmtFullTime,
-  dirLabel, pendingHint, doneSummary, type JournalStatus,
+  dirLabel, pendingHint, holdingDuration, fmtDuration, type JournalStatus,
 } from '../lib/journal.ts';
 
 const TAG_OPTIONS = ['情绪化交易', '执行错误', '系统缺陷', '正常亏损', '正常盈利', '运气成分', '历史导入', '趋势跟踪', '逆势抄底'];
@@ -406,23 +510,17 @@ const REASON_OPTIONS = ['突破', '回调', '止损', '止盈', '情绪', '其�
 const EMOTION_OPTIONS = ['冷静', '贪婪', '恐惧', '犹豫'];
 const ATTRIBUTION_OPTIONS = ['技术', '运气', '计划执行', '情绪'];
 
+/** 中文市场名 → 行情 API 的 Market 枚举 */
+const MARKET_TO_ENUM: Record<string, string> = {
+  '现货': 'SPOT', 'U本位合约': 'USDT_M', '币本位合约': 'COIN_M', '全仓杠杆': 'MARGIN', '逐仓杠杆': 'MARGIN_ISOLATED',
+};
+const TAB_HINT: Record<string, string> = { '': '1', plan: '2', holding: '3', pending: '4', done: '5' };
+
 const route = useRoute();
 const router = useRouter();
 
 const all = ref<TradeJournal[]>([]);
 const detail = ref<TradeJournal | null>(null);
-const collapsed = reactive<Record<JournalStatus, boolean>>({ plan: false, holding: false, pending: false, done: true });
-const f = reactive<{
-  status: '' | JournalStatus;
-  range: [number, number] | null;
-  symbol: string;
-  direction: string;
-  result: string;
-  strategy: string;
-  tags: string[];
-  planExec: string;
-  imported: '' | boolean;
-}>({ status: '', range: null, symbol: '', direction: '', result: '', strategy: '', tags: [], planExec: '', imported: '' });
 const selected = ref<string[]>([]);
 const batchTagVisible = ref(false);
 const batchTag = ref<string[]>([]);
@@ -433,6 +531,28 @@ let ringE: echarts.ECharts | null = null;
 const fullFormVisible = ref(false);
 const editingId = ref('');
 const saving = ref(false);
+
+/** 实时价格（持仓标的轮询） */
+const livePrices = ref<Record<string, number>>({});
+/** 角标数字闪烁 */
+const flashKey = ref<string | null>(null);
+const flashPnl = reactive<Record<string, boolean>>({});
+let flashTimer: number | undefined;
+let pnlFlashTimer: number | undefined;
+let tickerTimer: number | undefined;
+let reloadTimer: number | undefined;
+let reloading = false;
+
+const f = reactive<{
+  range: [number, number] | null;
+  symbol: string;
+  direction: string;
+  result: string;
+  strategy: string;
+  tags: string[];
+  planExec: string;
+  imported: '' | boolean;
+}>({ range: null, symbol: '', direction: '', result: '', strategy: '', tags: [], planExec: '', imported: '' });
 
 const review = reactive<{
   entryReasonSel: string[]; entryReason: string; emotion: string; confidence: number;
@@ -447,6 +567,42 @@ const form = reactive<Record<string, any>>({
   strategyName: '', strategyVersion: '', invalidation: '', entryReason: '', accountId: '',
 });
 
+// ---------------- Tab 导航（页面内主导航） ----------------
+
+function tabFromQuery(q: string | null): '' | JournalStatus {
+  if (q === 'plan' || q === 'holding' || q === 'pending' || q === 'done') return q;
+  return '';
+}
+const activeTab = ref<'' | JournalStatus>(tabFromQuery(typeof route.query.tab === 'string' ? route.query.tab : null));
+
+function tabHint(key: '' | JournalStatus): string {
+  const n = TAB_HINT[key];
+  return n ? (key === '' ? '全部（快捷键 ' + n + '）' : STATUS_META[key].label + '（快捷键 ' + n + '）') : '';
+}
+
+function switchTab(key: '' | JournalStatus) {
+  if (activeTab.value === key) return;
+  activeTab.value = key;
+  detail.value = null;
+  router.replace({ query: { ...route.query, tab: key === '' ? 'all' : key } });
+}
+
+watch(() => route.query.tab, (q) => {
+  const k = tabFromQuery(typeof q === 'string' ? q : null);
+  if (k !== activeTab.value) { activeTab.value = k; detail.value = null; }
+});
+
+function onKeydown(e: KeyboardEvent) {
+  if (fullFormVisible.value || batchTagVisible.value) return;
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  const map: Record<string, '' | JournalStatus> = { '1': '', '2': 'plan', '3': 'holding', '4': 'pending', '5': 'done' };
+  const k = map[e.key];
+  if (k !== undefined) switchTab(k);
+}
+
+// ---------------- 派生数据 ----------------
+
 const counts = computed(() => {
   const c = { plan: 0, holding: 0, pending: 0, done: 0 };
   for (const r of all.value) c[deriveStatus(r)]++;
@@ -460,7 +616,6 @@ const statusTabs = computed(() => [
 
 const filtered = computed(() => {
   let out = all.value;
-  if (f.status) out = out.filter((r) => deriveStatus(r) === f.status);
   if (f.range?.[0] && f.range?.[1]) { const [from, to] = f.range; out = out.filter((r) => (r.closeTime ?? r.createdAt ?? 0) >= from && (r.closeTime ?? r.createdAt ?? 0) <= to); }
   if (f.symbol) out = out.filter((r) => r.symbol.toUpperCase().includes(f.symbol.toUpperCase()));
   if (f.direction) out = out.filter((r) => r.direction === f.direction);
@@ -472,54 +627,184 @@ const filtered = computed(() => {
   return out;
 });
 
-const grouped = computed(() => {
-  const g: Record<JournalStatus, TradeJournal[]> = { plan: [], holding: [], pending: [], done: [] };
-  for (const r of filtered.value) g[deriveStatus(r)].push(r);
-  // 待复盘按盈亏绝对值降序
-  g.pending.sort((a, b) => Math.abs(b.netPnl ?? 0) - Math.abs(a.netPnl ?? 0));
-  return g;
+/** 当前 Tab 展示的列表：Tab 过滤 + 各自排序 */
+const visibleList = computed(() => {
+  let out = filtered.value;
+  if (activeTab.value) out = out.filter((r) => deriveStatus(r) === activeTab.value);
+  const t = activeTab.value;
+  if (t === 'pending') return [...out].sort((a, b) => Math.abs(b.netPnl ?? 0) - Math.abs(a.netPnl ?? 0));
+  if (t === 'holding') return [...out].sort((a, b) => (b.openTime ?? b.createdAt ?? 0) - (a.openTime ?? a.createdAt ?? 0));
+  if (t === 'done') return [...out].sort((a, b) => (b.closeTime ?? b.updatedAt ?? 0) - (a.closeTime ?? a.updatedAt ?? 0));
+  if (t === 'plan') return [...out].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  // 全部：按时间倒序
+  return [...out].sort((a, b) => (cardTime(b) ?? 0) - (cardTime(a) ?? 0));
 });
 
-function groupCount(s: JournalStatus): number {
-  return grouped.value[s].length;
-}
+const pendingRecords = computed(() =>
+  [...filtered.value.filter((r) => deriveStatus(r) === 'pending')].sort((a, b) => Math.abs(b.netPnl ?? 0) - Math.abs(a.netPnl ?? 0)),
+);
 
 const activeFilterTags = computed(() => {
   const t: { key: string; label: string }[] = [];
-  if (f.status) t.push({ key: 'status', label: '状态：' + STATUS_META[f.status].label });
   if (f.range?.[0]) t.push({ key: 'range', label: '时间范围' });
-  if (f.symbol) t.push({ key: 'symbol', label: f.symbol });
-  if (f.direction) t.push({ key: 'direction', label: f.direction === 'LONG' ? '做多' : '做空' });
-  if (f.result) t.push({ key: 'result', label: f.result === 'win' ? '盈利' : '亏损' });
-  if (f.strategy) t.push({ key: 'strategy', label: f.strategy });
-  for (const tag of f.tags) t.push({ key: 'tag:' + tag, label: tag });
-  if (f.planExec) t.push({ key: 'planExec', label: f.planExec === 'complete' ? '完全执行' : f.planExec === 'partial' ? '部分执行' : '未执行' });
+  if (f.symbol) t.push({ key: 'symbol', label: '品种：' + f.symbol });
+  if (f.direction) t.push({ key: 'direction', label: '方向：' + (f.direction === 'LONG' ? '做多' : '做空') });
+  if (f.result) t.push({ key: 'result', label: '结果：' + (f.result === 'win' ? '盈利' : '亏损') });
+  if (f.strategy) t.push({ key: 'strategy', label: '策略：' + f.strategy });
+  for (const tag of f.tags) t.push({ key: 'tag:' + tag, label: '标签：' + tag });
+  if (f.planExec) t.push({ key: 'planExec', label: '符合度：' + (f.planExec === 'complete' ? '完全执行' : f.planExec === 'partial' ? '部分执行' : '未执行') });
+  if (f.imported !== '') t.push({ key: 'imported', label: '来源：' + (f.imported === true ? '历史导入' : '手动记录') });
   return t;
 });
 
 function removeFilter(key: string) {
-  if (key === 'status') f.status = '';
-  else if (key === 'range') f.range = null;
+  if (key === 'range') f.range = null;
   else if (key === 'symbol') f.symbol = '';
   else if (key === 'direction') f.direction = '';
   else if (key === 'result') f.result = '';
   else if (key === 'strategy') f.strategy = '';
   else if (key.startsWith('tag:')) f.tags = f.tags.filter((t) => t !== key.slice(4));
   else if (key === 'planExec') f.planExec = '';
+  else if (key === 'imported') f.imported = '';
 }
 
 function clearFilters() {
-  Object.assign(f, { status: '', range: null, symbol: '', direction: '', result: '', strategy: '', tags: [], planExec: '', imported: '' });
+  Object.assign(f, { range: null, symbol: '', direction: '', result: '', strategy: '', tags: [], planExec: '', imported: '' });
 }
 function applyFilter() {}
-function toggleStatus(key: '' | JournalStatus) {
-  f.status = f.status === key ? '' : key;
-}
 
 const strategyOptions = computed(() => [...new Set(all.value.map((r) => r.strategyVersion).filter(Boolean))] as string[]);
 const strategyNameOptions = computed(() => [...new Set(all.value.map((r) => r.strategyName).filter(Boolean))] as string[]);
 
 const detailStatus = computed<JournalStatus>(() => (detail.value ? deriveStatus(detail.value) : 'plan'));
+
+// ---------------- 实时行情 / 浮盈亏 ----------------
+
+function livePrice(sym: string): number | undefined { return livePrices.value[sym]; }
+
+function floatPnl(r: TradeJournal): number | undefined {
+  const p = livePrices.value[r.symbol];
+  if (p !== undefined && r.actualEntry !== undefined && Number.isFinite(r.actualEntry) && (r.actualQty ?? 0) > 0) {
+    const qty = r.actualQty as number;
+    return (p - r.actualEntry) * qty * (r.direction === 'SHORT' ? -1 : 1);
+  }
+  return r.netPnl;
+}
+
+const holdingPnlMap = computed(() => {
+  const m = new Map<string, number>();
+  for (const r of all.value) {
+    if (deriveStatus(r) === 'holding') { const p = floatPnl(r); if (p !== undefined) m.set(r.id, p); }
+  }
+  return m;
+});
+
+const holdingDist = computed(() => {
+  const m = new Map<string, number>();
+  for (const r of all.value) if (deriveStatus(r) === 'holding') m.set(r.symbol, (m.get(r.symbol) ?? 0) + 1);
+  return [...m.entries()].map(([symbol, count]) => ({ symbol, count }));
+});
+
+const holdingTotalPnl = computed(() => {
+  let sum = 0; let any = false;
+  for (const r of all.value) {
+    if (deriveStatus(r) === 'holding') { const p = floatPnl(r); if (p !== undefined) { sum += p; any = true; } }
+  }
+  return any ? sum : undefined;
+});
+
+async function refreshTickers() {
+  const holding = all.value.filter((r) => deriveStatus(r) === 'holding');
+  const symbols = [...new Set(holding.map((r) => r.symbol))];
+  if (!symbols.length) { if (Object.keys(livePrices.value).length) livePrices.value = {}; return; }
+  const markets = [...new Set(holding.map((r) => MARKET_TO_ENUM[r.market ?? ''] ?? 'USDT_M'))];
+  const results = await Promise.all(markets.map((m) =>
+    api.get<{ tickers: { symbol: string; lastPrice: number }[] }>('/market/tickers?market=' + encodeURIComponent(m)).catch(() => null),
+  ));
+  const map: Record<string, number> = {};
+  for (const res of results) if (res) for (const t of res.tickers) if (symbols.includes(t.symbol)) map[t.symbol] = t.lastPrice;
+  livePrices.value = map;
+}
+
+// ---------------- 右侧面板引导统计 ----------------
+
+function dayStart(): number { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function weekStart(): number {
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  const day = d.getDay() || 7; // 周一=1 … 周日=7
+  d.setDate(d.getDate() - (day - 1));
+  return d.getTime();
+}
+
+const todayFlow = computed(() => {
+  const t = dayStart();
+  const s = { plan: 0, holding: 0, pending: 0, done: 0 };
+  for (const r of all.value) {
+    const st = deriveStatus(r);
+    if (st === 'plan' && (r.createdAt ?? 0) >= t) s.plan++;
+    else if (st === 'holding' && (r.openTime ?? 0) >= t) s.holding++;
+    else if (st === 'pending' && (r.closeTime ?? 0) >= t) s.pending++;
+    else if (st === 'done' && (r.closeTime ?? 0) >= t) s.done++;
+  }
+  return s;
+});
+
+const todayPlanCount = computed(() => {
+  const t = dayStart();
+  return all.value.filter((r) => deriveStatus(r) === 'plan' && (r.createdAt ?? 0) >= t).length;
+});
+
+const earliestPlanTime = computed(() => {
+  const plans = all.value.filter((r) => deriveStatus(r) === 'plan');
+  const ts = plans.reduce((m, r) => Math.min(m, r.createdAt ?? Infinity), Infinity);
+  return Number.isFinite(ts) ? fmtTime(ts) : '—';
+});
+
+const avgPlanRisk = computed(() => {
+  const plans = all.value.filter((r) => deriveStatus(r) === 'plan');
+  const rs = plans.map((r) => r.plannedRiskAmount).filter((n): n is number => n !== undefined && Number.isFinite(n));
+  if (!rs.length) return '—';
+  return fmtNum(rs.reduce((a, b) => a + b, 0) / rs.length);
+});
+
+const doneStats = computed(() => {
+  const ws = weekStart();
+  const done = all.value.filter((r) => deriveStatus(r) === 'done');
+  const weekCount = done.filter((r) => (r.closeTime ?? r.updatedAt ?? 0) >= ws).length;
+  const scores = done.map((r) => scoreNum(r)).filter((n): n is number => n !== undefined);
+  const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : undefined;
+  return { weekCount, avg, total: done.length };
+});
+
+/** 待复盘超 24 小时未处理 → 呼吸红 */
+const pendingUrgent = computed(() => {
+  const cutoff = Date.now() - 24 * 3600 * 1000;
+  return all.value.some((r) => deriveStatus(r) === 'pending' && (r.closeTime ?? 0) > 0 && (r.closeTime as number) < cutoff);
+});
+
+// ---------------- 记录工具 ----------------
+
+function stOf(r: TradeJournal): JournalStatus { return deriveStatus(r); }
+
+function cardTime(r: TradeJournal): number | undefined {
+  const st = deriveStatus(r);
+  if (st === 'done') return r.closeTime ?? r.updatedAt ?? r.createdAt;
+  if (st === 'holding') return r.openTime ?? r.createdAt;
+  return r.closeTime ?? r.createdAt;
+}
+
+function scoreNum(r: TradeJournal): number | undefined {
+  const q = r.entryQuality; const x = r.exitQuality;
+  if (q !== undefined && x !== undefined) return (q + x) / 2;
+  return q ?? x ?? r.disciplineScore;
+}
+
+function reviewScore(r: TradeJournal): string {
+  const base = scoreNum(r);
+  return base !== undefined ? '评分 ' + base.toFixed(1) + '/10' : '—';
+}
+
+// ---------------- 交互 ----------------
 
 function selectRecord(r: TradeJournal) {
   detail.value = r;
@@ -545,6 +830,22 @@ function initReview(r: TradeJournal) {
   });
 }
 
+function openReview(r: TradeJournal) { selectRecord(r); reviewTab.value = 'log'; }
+function quickReview(r: TradeJournal) { selectRecord(r); reviewTab.value = 'review'; }
+
+function startFirstPending() {
+  const first = pendingRecords.value[0];
+  if (!first) { ElMessage.info('暂无待复盘记录'); return; }
+  selectRecord(first); reviewTab.value = 'log';
+}
+function startFirstReview() {
+  const first = pendingRecords.value[0];
+  if (!first) { ElMessage.info('暂无待复盘记录'); return; }
+  selectRecord(first); reviewTab.value = 'review';
+}
+
+function goPlans() { router.push({ path: '/plans' }); }
+
 async function loadAll() {
   await loadAccounts();
   const j = await api.get<{ records: TradeJournal[] }>('/journal/trades?limit=1000').catch(() => ({ records: [] }));
@@ -552,6 +853,19 @@ async function loadAll() {
   const q = route.query;
   if (q.search) { f.symbol = String(q.search); }
   renderRing();
+}
+
+async function silentReload() {
+  if (reloading) return;
+  reloading = true;
+  try {
+    const j = await api.get<{ records: TradeJournal[] }>('/journal/trades?limit=1000').catch(() => null);
+    if (j) {
+      all.value = j.records;
+      if (detail.value) detail.value = all.value.find((r) => r.id === detail.value!.id) ?? null;
+      refreshTickers();
+    }
+  } finally { reloading = false; }
 }
 
 async function execRecord(r: TradeJournal) {
@@ -623,9 +937,6 @@ async function saveDraft() {
   ElMessage.success('草稿已保存，状态不变');
   await loadAll();
 }
-
-function openReview(r: TradeJournal) { selectRecord(r); reviewTab.value = 'review'; }
-function quickReview(r: TradeJournal) { selectRecord(r); reviewTab.value = 'review'; }
 
 function openNewPlan() {
   Object.assign(form, { symbol: '', direction: 'LONG', market: '现货', plannedEntry: undefined, plannedStop: undefined, targetsText: '', plannedSize: '', plannedRiskAmount: undefined, plannedHolding: '日内', strategyName: '', strategyVersion: '', invalidation: '', entryReason: '', accountId: accountStore.selectedId || '' });
@@ -726,11 +1037,20 @@ async function doBatchTag() {
   }
 }
 
-function renderRing() {
-  if (!ringChart.value) return;
+// ---------------- 环形图 ----------------
+
+function ensureRing(): boolean {
+  if (!ringChart.value) return false;
+  if (ringE && !ringE.getDom().isConnected) { try { ringE.dispose(); } catch { /* ignore */ } ringE = null; }
   if (!ringE) ringE = echarts.init(ringChart.value);
+  return true;
+}
+
+function renderRing() {
+  if (!ensureRing()) return;
+  ringE!.resize();
   const c = counts.value;
-  ringE.setOption({
+  ringE!.setOption({
     tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
     series: [{
       type: 'pie', radius: ['55%', '75%'], center: ['50%', '50%'],
@@ -740,11 +1060,57 @@ function renderRing() {
   });
 }
 
+function onResize() {
+  if (ringE && ringE.getDom().isConnected) ringE.resize();
+}
+
+// ---------------- 数字闪烁 ----------------
+
+watch(counts, (c, prev) => {
+  if (!prev) return;
+  const changed = STATUS_ORDER.find((s) => c[s] !== prev[s]);
+  if (changed) {
+    flashKey.value = changed;
+    clearTimeout(flashTimer);
+    flashTimer = window.setTimeout(() => { flashKey.value = null; }, 400);
+  }
+});
+
+watch(holdingPnlMap, (m, prev) => {
+  if (!prev) return;
+  let any = false;
+  for (const [id, v] of m) {
+    const p = prev.get(id);
+    if (p !== undefined && p !== v) { flashPnl[id] = true; any = true; }
+  }
+  if (any) {
+    clearTimeout(pnlFlashTimer);
+    pnlFlashTimer = window.setTimeout(() => {
+      for (const k of Object.keys(flashPnl)) delete flashPnl[k];
+    }, 400);
+  }
+});
+
+// ---------------- 生命周期 ----------------
+
 watch(() => accountStore.selectedId, () => loadAll());
+
+watch(activeTab, async (tab) => {
+  if (tab === '') { await nextTick(); renderRing(); }
+});
+
+watch(detail, async () => {
+  await nextTick();
+  if (!detail.value && activeTab.value === '') renderRing();
+});
 
 onMounted(async () => {
   await loadAll();
-  window.addEventListener('resize', () => ringE?.resize());
+  window.addEventListener('resize', onResize);
+  window.addEventListener('keydown', onKeydown);
+  refreshTickers();
+  tickerTimer = window.setInterval(refreshTickers, 15_000);
+  reloadTimer = window.setInterval(silentReload, 60_000);
   const q = route.query;
   if (q.new) openNewPlan();
   if (q.id) {
@@ -752,51 +1118,93 @@ onMounted(async () => {
     if (found) selectRecord(found);
   }
 });
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize);
+  window.removeEventListener('keydown', onKeydown);
+  clearInterval(tickerTimer);
+  clearInterval(reloadTimer);
+  clearTimeout(flashTimer);
+  clearTimeout(pnlFlashTimer);
+  ringE?.dispose();
+  ringE = null;
+});
 </script>
 
 <style scoped>
-.journal { display: grid; grid-template-columns: 240px 1fr 360px; gap: 12px; align-items: start; }
+.journal { display: grid; grid-template-columns: 200px 1fr 360px; gap: 12px; align-items: start; }
 @media (max-width: 1280px) { .journal { grid-template-columns: 200px 1fr; } .right-panel { grid-column: 1 / -1; } }
 
-/* 左栏 */
+/* ---------- 左栏 ---------- */
 .left-panel { background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 12px; padding: 14px; position: sticky; top: 0; }
 .lp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .lp-head b { font-size: 13px; color: var(--aw-text-title); }
-.sel-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
-.sel-tag { font-size: 11px; background: var(--aw-accent-dim); color: var(--aw-accent); border-radius: 4px; padding: 1px 6px; display: inline-flex; align-items: center; gap: 4px; }
-.sel-x { cursor: pointer; font-weight: 700; }
-.status-tabs { display: flex; flex-direction: column; gap: 2px; }
-.st-tab { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--aw-text-body); cursor: pointer; font-size: 12px; font-family: inherit; }
-.st-tab:hover { background: rgba(255,255,255,0.03); }
-.st-tab.active { background: var(--aw-accent-dim); border-color: rgba(6,182,212,0.3); color: var(--aw-accent); }
-.st-dot { width: 7px; height: 7px; border-radius: 50%; }
-.st-count { margin-left: auto; font-size: 12px; color: var(--aw-text-dim); }
 .lp-filters { display: flex; flex-direction: column; gap: 4px; }
 .lp-label { font-size: 11px; color: var(--aw-text-dim); margin-top: 8px; }
 
-/* 中栏 */
+/* ---------- 中栏：Tab 导航 ---------- */
 .mid-panel { min-width: 0; }
-.list-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-.lh-left { display: flex; gap: 14px; flex: 1; flex-wrap: wrap; }
-.lh-stat { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--aw-text-dim); cursor: pointer; }
-.lh-stat .dot { width: 6px; height: 6px; border-radius: 50%; }
-.lh-stat b { color: var(--aw-text-title); }
-.batch-bar { display: flex; align-items: center; gap: 10px; background: var(--aw-accent-dim); border: 1px solid rgba(6,182,212,0.3); border-radius: 10px; padding: 6px 12px; margin-bottom: 10px; }
-.group { margin-bottom: 10px; }
-.group-head { display: flex; align-items: center; gap: 8px; padding: 8px 4px; cursor: pointer; user-select: none; }
-.gh-dot { width: 8px; height: 8px; border-radius: 2px; }
-.group-head b { font-size: 13px; color: var(--aw-text-title); }
-.gh-count { font-size: 12px; color: var(--aw-text-dim); }
-.gh-arrow { margin-left: auto; color: var(--aw-text-dim); font-size: 11px; }
-.group-body { display: flex; flex-direction: column; gap: 6px; }
+.tab-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.tabs { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; }
+.pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 32px; padding: 0 16px; border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent; color: var(--aw-text-dim);
+  cursor: pointer; font-size: 12px; font-family: inherit;
+  transition: all var(--aw-dur-fast) var(--aw-ease);
+}
+.pill:hover { border-color: var(--aw-border-hover); color: var(--aw-text-body); }
+.pill-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.pill-label { white-space: nowrap; }
+.pill-count { font-size: 12px; font-variant-numeric: tabular-nums; }
+.pill-count.zero { color: #6b7280; font-weight: 400; }
+.pill-count:not(.zero) { color: #f9fafb; font-weight: 700; }
+.pill-count.flash { animation: aw-num-flash 400ms var(--aw-ease); }
+
+/* 激活态：填充底色 + 轻微上浮 */
+.pill.active { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); }
+.pill.active.all { background: #06b6d4; border-color: #06b6d4; color: #fff; }
+.pill.active.plan { background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.55); color: #f59e0b; }
+.pill.active.holding { background: rgba(6, 182, 212, 0.15); border-color: rgba(6, 182, 212, 0.55); color: #06b6d4; }
+.pill.active.pending { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.55); color: #ef4444; }
+.pill.active.done { background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.55); color: #10b981; }
+
+/* 待复盘 urgency：未激活且有量 → 猩红呼吸边框 */
+.pill.urgent { border-color: rgba(239, 68, 68, 0.6); animation: aw-pulse 2s infinite; }
+/* 超 24 小时未复盘 → 呼吸红（含激活态） */
+.pill.breathing { border-color: rgba(239, 68, 68, 0.7); animation: aw-pulse 1.8s infinite; }
+
+.remind-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: #f59e0b;
+  animation: aw-remind 1.6s infinite;
+}
+.new-btn { flex: none; }
+
+/* 已选条件标签条（Tab 栏下方） */
+.sel-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.sel-tag { font-size: 11px; background: var(--aw-accent-dim); color: var(--aw-accent); border-radius: 4px; padding: 2px 8px; display: inline-flex; align-items: center; gap: 4px; }
+.sel-x { cursor: pointer; font-weight: 700; }
+.clear-all { height: 24px; font-size: 11px; }
+
+.batch-bar { display: flex; align-items: center; gap: 10px; background: var(--aw-accent-dim); border: 1px solid rgba(6, 182, 212, 0.3); border-radius: 10px; padding: 6px 12px; margin-bottom: 10px; }
+
+/* Tab 切换动画 */
+.tab-switch-enter-active, .tab-switch-leave-active { transition: opacity 150ms var(--aw-ease), transform 150ms var(--aw-ease); }
+.tab-switch-enter-from { opacity: 0; transform: translateY(4px); }
+.tab-switch-leave-to { opacity: 0; transform: translateY(-4px); }
+
+.list-area { display: flex; flex-direction: column; gap: 6px; }
+
+/* 记录卡片 */
 .log-card {
   position: relative; display: flex; border-radius: 10px; background: var(--aw-bg-card);
   padding: 10px 12px; cursor: pointer; transition: all var(--aw-dur-fast) var(--aw-ease); overflow: hidden;
 }
 .log-card:hover { border-color: var(--aw-border-hover) !important; }
 .log-card.active { box-shadow: 0 0 0 1px var(--aw-accent); }
-.log-card.pulse-border { animation: aw-pulse 2.4s infinite; }
-.log-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+.log-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
 .log-check { display: flex; align-items: center; padding: 0 8px 0 2px; }
 .cb { width: 14px; height: 14px; border: 1.5px solid var(--aw-text-disabled); border-radius: 4px; display: inline-block; transition: all var(--aw-dur-fast) var(--aw-ease); flex: none; }
 .cb.checked { background: var(--aw-accent); border-color: var(--aw-accent); position: relative; }
@@ -805,27 +1213,54 @@ onMounted(async () => {
 .log-row1 { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
 .log-sym { color: var(--aw-text-title); font-size: 13px; }
 .dir-tag { font-size: 10px; padding: 1px 6px; border-radius: 4px; }
-.dir-tag.long { background: rgba(239,68,68,0.15); color: #f87171; }
-.dir-tag.short { background: rgba(16,185,129,0.15); color: #34d399; }
-.log-row2 { display: flex; justify-content: space-between; margin-top: 4px; font-size: 12px; color: var(--aw-text-body); }
+.dir-tag.long { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+.dir-tag.short { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.log-row2 { display: flex; justify-content: space-between; margin-top: 4px; font-size: 12px; color: var(--aw-text-body); gap: 8px; }
+.log-row3 { margin-top: 2px; font-size: 11px; color: var(--aw-text-dim); }
 .log-pnl { font-weight: 700; }
 .log-pnl.holding { color: var(--aw-info); }
-.log-row3 { margin-top: 2px; font-size: 11px; }
-.pending-hint { color: var(--aw-down); }
-.done-hint { color: var(--aw-up); }
+.log-pnl.pnl-flash { animation: aw-num-flash 400ms var(--aw-ease); }
 .log-actions { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 2px; padding-left: 8px; }
 .aw-btn-text.danger { color: var(--aw-down); }
-.group-empty { padding: 10px 4px; font-size: 12px; }
 
-/* 右栏 */
+/* 空状态 */
+.empty-state {
+  padding: 40px 16px; text-align: center; color: var(--aw-text-dim); font-size: 12px;
+  border: 1px dashed var(--aw-border); border-radius: 10px;
+}
+.empty-state .link { color: var(--aw-accent); cursor: pointer; }
+.empty-state .link:hover { text-decoration: underline; }
+
+/* ---------- 右栏 ---------- */
 .right-panel { background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 12px; padding: 16px; position: sticky; top: 0; max-height: calc(100vh - 100px); overflow-y: auto; }
 .rp-guide-title { font-size: 15px; font-weight: 600; color: var(--aw-text-title); }
 .rp-guide-desc { font-size: 12px; margin: 4px 0 12px; }
+.rp-guide-desc .accent { color: var(--aw-accent); font-size: 14px; }
+
+/* 今日流转迷你图 */
+.today-flow { display: flex; align-items: center; gap: 6px; background: var(--aw-bg); border-radius: 10px; padding: 10px 12px; margin: 8px 0 2px; }
+.tf-item { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 44px; flex: 1; }
+.tf-item b { font-size: 14px; color: var(--aw-text-title); }
+.tf-item span { font-size: 10px; color: var(--aw-text-dim); }
+.tf-arrow { color: var(--aw-text-disabled); font-size: 12px; flex: none; }
+.tf-caption { font-size: 10px; color: var(--aw-text-dim); text-align: center; margin-bottom: 8px; }
+
+/* 引导统计卡 */
+.guide-card { background: var(--aw-bg); border-radius: 10px; padding: 10px 12px; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.gc-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--aw-text-body); gap: 8px; }
+.gc-row b { color: var(--aw-text-title); }
+
+.pos-dist { display: flex; flex-direction: column; gap: 4px; }
+.pd-item { display: flex; justify-content: space-between; font-size: 12px; padding: 6px 10px; background: var(--aw-bg); border-radius: 8px; }
+.pd-sym { color: var(--aw-text-title); font-family: var(--aw-mono); }
+.pd-n { color: var(--aw-text-dim); }
+
 .ring-chart { height: 180px; }
 .ring-legend { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
 .rl-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--aw-text-body); }
 .rl-dot { width: 8px; height: 8px; border-radius: 2px; }
 .rl-item b { margin-left: auto; }
+
 .rp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .rp-title { display: flex; align-items: center; gap: 8px; }
 .rp-title b { font-size: 15px; color: var(--aw-text-title); }
@@ -845,4 +1280,15 @@ onMounted(async () => {
 .s2:hover { border-color: var(--aw-border-hover); }
 .s2.active { border-color: var(--aw-accent); color: var(--aw-accent); background: var(--aw-accent-dim); }
 .full-form-scroll { max-height: 62vh; overflow-y: auto; }
+
+/* 数字变化闪烁 */
+@keyframes aw-num-flash {
+  0% { color: #fff; text-shadow: 0 0 10px currentColor; }
+  100% { color: inherit; text-shadow: none; }
+}
+@keyframes aw-remind {
+  0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45); }
+  70% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+}
 </style>
