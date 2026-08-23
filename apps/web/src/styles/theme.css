@@ -1,0 +1,217 @@
+/* ============================================================
+   AgentWin 设计规范 v3.2 — 简洁科技风 全局主题
+   背景层级：页面 #0B0F19 > 侧边栏 #080C14 > 卡片 #111827 > 悬浮 #1A1F2E
+   主色：#06B6D4  状态：盈利 #10B981 / 亏损 #EF4444 / 待办 #F59E0B / 信息 #3B82F6
+   ============================================================ */
+:root {
+  /* 背景层级 */
+  --aw-bg: #0b0f19;
+  --aw-bg-sidebar: #080c14;
+  --aw-bg-card: #111827;
+  --aw-bg-elev: #1a1f2e;
+  --aw-bg-hover: rgba(255, 255, 255, 0.04);
+
+  /* 主色与状态色 */
+  --aw-accent: #06b6d4;
+  --aw-accent-dim: rgba(6, 182, 212, 0.12);
+  --aw-up: #10b981;
+  --aw-down: #ef4444;
+  --aw-todo: #f59e0b;
+  --aw-info: #3b82f6;
+
+  /* 文字 */
+  --aw-text-title: #f9fafb;
+  --aw-text-body: #d1d5db;
+  --aw-text-dim: #6b7280;
+  --aw-text-disabled: #374151;
+
+  /* 边框 */
+  --aw-border: rgba(255, 255, 255, 0.06);
+  --aw-border-hover: rgba(255, 255, 255, 0.12);
+
+  /* 状态色（语义） */
+  --aw-status-plan: #f59e0b;    /* 计划中：琥珀 */
+  --aw-status-holding: #06b6d4; /* 持仓中：科技蓝 */
+  --aw-status-pending: #ef4444; /* 待复盘：猩红 */
+  --aw-status-done: #10b981;    /* 已复盘：翠绿 */
+
+  /* 字体 */
+  --aw-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', Consolas, monospace;
+
+  /* 动效 */
+  --aw-dur-fast: 150ms;
+  --aw-dur-num: 400ms;
+  --aw-dur-panel: 200ms;
+  --aw-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* 布局 */
+  --aw-sidebar-w: 200px;
+  --aw-topbar-h: 48px;
+
+  /* 旧视图兼容别名（Market/Paper/Sentiment/Settings/Trades 等） */
+  --bg: var(--aw-bg);
+  --bg-card: var(--aw-bg-card);
+  --bg-elev: var(--aw-bg-elev);
+  --border: var(--aw-border);
+  --text: var(--aw-text-body);
+  --text-dim: var(--aw-text-dim);
+  --accent: var(--aw-accent);
+  --up: var(--aw-up);
+  --down: var(--aw-down);
+  --mono: var(--aw-mono);
+
+  /* Element Plus 主题映射（深色科技风） */
+  --el-color-primary: var(--aw-accent);
+  --el-color-primary-light-3: #22d3ee;
+  --el-color-primary-light-5: #67e8f9;
+  --el-color-primary-light-7: #a5f3fc;
+  --el-color-primary-light-8: rgba(6, 182, 212, 0.35);
+  --el-color-primary-light-9: var(--aw-accent-dim);
+  --el-color-primary-dark-2: #0891b2;
+  --el-color-success: var(--aw-up);
+  --el-color-warning: var(--aw-todo);
+  --el-color-danger: var(--aw-down);
+  --el-color-error: var(--aw-down);
+  --el-color-info: var(--aw-info);
+  --el-bg-color: var(--aw-bg-card);
+  --el-bg-color-overlay: var(--aw-bg-elev);
+  --el-bg-color-page: var(--aw-bg);
+  --el-fill-color-blank: var(--aw-bg-card);
+  --el-fill-color-light: var(--aw-bg-elev);
+  --el-fill-color-lighter: rgba(255, 255, 255, 0.04);
+  --el-fill-color-extra-light: rgba(255, 255, 255, 0.02);
+  --el-border-color: var(--aw-border);
+  --el-border-color-light: rgba(255, 255, 255, 0.08);
+  --el-border-color-lighter: rgba(255, 255, 255, 0.06);
+  --el-border-color-extra-light: rgba(255, 255, 255, 0.04);
+  --el-text-color-primary: var(--aw-text-title);
+  --el-text-color-regular: var(--aw-text-body);
+  --el-text-color-secondary: var(--aw-text-dim);
+  --el-text-color-placeholder: var(--aw-text-disabled);
+  --el-text-color-disabled: var(--aw-text-disabled);
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --el-box-shadow-light: 0 4px 16px rgba(0, 0, 0, 0.25);
+  --el-font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+}
+
+/* ---------- 基础 ---------- */
+html, body, #app { height: 100%; margin: 0; }
+body {
+  background: var(--aw-bg);
+  color: var(--aw-text-body);
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+::selection { background: rgba(6, 182, 212, 0.35); color: #fff; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- 通用工具类 ---------- */
+.mono { font-family: var(--aw-mono); }
+.up { color: var(--aw-up); }
+.down { color: var(--aw-down); }
+.dim { color: var(--aw-text-dim); }
+.title { color: var(--aw-text-title); }
+
+/* 卡片（设计规范：12px 圆角，1px 边框，无阴影） */
+.aw-card {
+  background: var(--aw-bg-card);
+  border: 1px solid var(--aw-border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  transition: border-color var(--aw-dur-fast) var(--aw-ease), background var(--aw-dur-fast) var(--aw-ease);
+}
+.aw-card.hoverable:hover { border-color: var(--aw-border-hover); background: rgba(255, 255, 255, 0.02); }
+
+/* 按钮层级 */
+.aw-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid transparent;
+  font-size: 13px; cursor: pointer; white-space: nowrap; user-select: none;
+  transition: all var(--aw-dur-fast) var(--aw-ease);
+  background: transparent; color: var(--aw-text-body); font-family: inherit;
+}
+.aw-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.aw-btn-primary { background: var(--aw-accent); color: #fff; font-weight: 600; }
+.aw-btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+.aw-btn-secondary { border-color: rgba(255, 255, 255, 0.1); }
+.aw-btn-secondary:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); border-color: var(--aw-border-hover); }
+.aw-btn-text { color: var(--aw-accent); padding: 0 8px; height: 28px; }
+.aw-btn-text:hover:not(:disabled) { text-decoration: underline; }
+.aw-btn-icon {
+  width: 36px; height: 36px; padding: 0; border-radius: 50%;
+  border: 1px solid transparent; background: transparent; color: var(--aw-text-dim);
+  cursor: pointer; transition: all var(--aw-dur-fast) var(--aw-ease);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 15px;
+}
+.aw-btn-icon:hover { background: rgba(255, 255, 255, 0.05); color: var(--aw-text-title); }
+
+/* 状态标签 */
+.aw-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 2px 10px; border-radius: 999px;
+  border: 1px solid; line-height: 18px; white-space: nowrap;
+}
+.aw-status .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.aw-status-plan { color: var(--aw-status-plan); border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.08); }
+.aw-status-holding { color: var(--aw-status-holding); border-color: rgba(6, 182, 212, 0.4); background: rgba(6, 182, 212, 0.08); }
+.aw-status-pending { color: var(--aw-status-pending); border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.08); }
+.aw-status-done { color: var(--aw-status-done); border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.08); }
+
+/* KPI 数字 */
+.aw-kpi-num { font-family: var(--aw-mono); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* 页面切换淡入 */
+.aw-page { animation: aw-fade var(--aw-dur-fast) var(--aw-ease); }
+@keyframes aw-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* 数字 countUp 过渡 */
+.aw-count { transition: color var(--aw-dur-num) var(--aw-ease); }
+
+/* 待复盘脉冲边框 */
+@keyframes aw-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35); }
+  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+.aw-pulse-border { animation: aw-pulse 2s infinite; }
+
+/* 空状态 */
+.aw-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 32px 16px; color: var(--aw-text-dim); font-size: 12px; }
+.aw-empty-illus { width: 64px; height: 48px; opacity: 0.35; }
+
+/* 顶部标题栏 */
+.aw-topbar { height: var(--aw-topbar-h); display: flex; align-items: center; gap: 14px; padding: 0 20px; border-bottom: 1px solid var(--aw-border); background: var(--aw-bg); position: sticky; top: 0; z-index: 20; }
+.aw-crumb { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--aw-text-dim); }
+.aw-crumb b { color: var(--aw-text-title); font-weight: 600; }
+.aw-search {
+  margin-left: auto; display: flex; align-items: center; gap: 6px;
+  background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 8px;
+  padding: 0 10px; height: 30px; width: 240px; color: var(--aw-text-dim); font-size: 12px;
+  transition: border-color var(--aw-dur-fast) var(--aw-ease), width var(--aw-dur-fast) var(--aw-ease);
+}
+.aw-search:focus-within { border-color: var(--aw-accent); width: 280px; }
+.aw-search input { background: transparent; border: none; outline: none; color: var(--aw-text-body); font-size: 12px; flex: 1; font-family: inherit; }
+
+/* Element Plus 细节修正 */
+.el-card { --el-card-border-color: var(--aw-border); --el-card-bg-color: var(--aw-bg-card); border-radius: 12px !important; }
+.el-drawer { --el-drawer-bg-color: var(--aw-bg-elev); }
+.el-dialog { --el-dialog-bg-color: var(--aw-bg-elev); border-radius: 12px !important; }
+.el-popper { --el-bg-color-overlay: var(--aw-bg-elev); }
+.el-table { --el-table-bg-color: transparent; --el-table-tr-bg-color: transparent; --el-table-header-bg-color: rgba(255,255,255,0.03); --el-table-border-color: var(--aw-border); --el-table-row-hover-bg-color: rgba(255,255,255,0.04); --el-table-header-text-color: var(--aw-text-dim); }
+.el-table th.el-table__cell { font-weight: 500; font-size: 12px; }
+.el-tag { --el-tag-bg-color: transparent; }
+.el-tabs__item { color: var(--aw-text-dim); }
+.el-tabs__item.is-active { color: var(--aw-accent); }
+.el-tabs__active-bar { background-color: var(--aw-accent); }
+.el-input__wrapper, .el-select__wrapper, .el-textarea__inner {
+  background: var(--aw-bg-card) !important; box-shadow: 0 0 0 1px var(--aw-border) inset !important;
+}
+.el-input__wrapper.is-focus, .el-select__wrapper.is-focused { box-shadow: 0 0 0 1px var(--aw-accent) inset !important; }
+.el-input-number { --el-input-number-controls-bg-color: transparent; }

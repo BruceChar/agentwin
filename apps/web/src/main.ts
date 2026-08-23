@@ -5,11 +5,10 @@ import 'element-plus/theme-chalk/dark/css-vars.css';
 import * as Icons from '@element-plus/icons-vue';
 import App from './App.vue';
 import { router } from './router.ts';
+import './styles/theme.css';
 
-// 主题：默认深色，可切换浅色（设置里）
-const savedTheme = localStorage.getItem('aw-theme');
-if (savedTheme === 'light') document.documentElement.classList.remove('dark');
-else document.documentElement.classList.add('dark');
+// 设计规范 v3.2：固定深色科技风
+document.documentElement.classList.add('dark');
 
 const app = createApp(App);
 for (const [name, comp] of Object.entries(Icons)) {

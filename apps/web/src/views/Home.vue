@@ -1,318 +1,699 @@
 <template>
-  <div class="home">
-    <!-- 账户选择 -->
-    <el-card shadow="never" class="mb">
-      <div class="row">
-        <span class="label">账户：</span>
-        <el-select :model-value="accountStore.selectedId" style="width: 240px" @change="onAccountChange">
-          <el-option v-for="a in accountStore.accounts" :key="a.id" :value="a.id" :label="(a.type === 'real' ? '真实 ' : '模拟 ') + a.name" />
-        </el-select>
-        <el-button size="small" @click="loadAll">刷新</el-button>
-        <span class="dim">当前展示数据均来自「{{ acctLabelText }}」账户</span>
-        <span v-if="acctType === 'real'" class="dim">· 余额/持仓/成交为币安同步的实际数据</span>
+  <div class="dashboard aw-page">
+    <!-- 4.1 顶部 KPI 条（固定） -->
+    <div class="kpi-bar">
+      <div class="kpi-block main">
+        <div class="kpi-label">累计盈亏</div>
+        <div class="kpi-value mono" :class="netPnl >= 0 ? 'up' : 'down'">{{ fmtPnl(netPnl) }} <span class="kpi-sub">USDT</span></div>
+        <div class="kpi-extra" :class="totalReturn >= 0 ? 'up' : 'down'">({{ fmtPctSigned(totalReturn) }})</div>
       </div>
-    </el-card>
+      <div class="kpi-sep"></div>
+      <div class="kpi-block">
+        <div class="kpi-label">持仓中</div>
+        <div class="kpi-value mono">{{ counts.holding }}</div>
+        <div class="kpi-extra dim">笔</div>
+      </div>
+      <div class="kpi-block" :class="{ 'has-todo': counts.pending > 0 }">
+        <div class="kpi-label">待复盘</div>
+        <div class="kpi-value mono" :class="{ down: counts.pending > 0 }">{{ counts.pending }}</div>
+        <div class="kpi-extra" :class="counts.pending > 0 ? 'down' : 'dim'">{{ counts.pending > 0 ? '需处理' : '无积压' }}</div>
+      </div>
+      <div class="kpi-block">
+        <div class="kpi-label">今日计划</div>
+        <div class="kpi-value mono">{{ todayPlans }}</div>
+        <div class="kpi-extra dim">条</div>
+      </div>
+    </div>
+    <div v-if="counts.pending > 0" class="kpi-progress"><div class="kpi-progress-fill" :style="{ width: pendingRatio + '%' }"></div></div>
 
-    <!-- KPI -->
-    <el-row :gutter="12">
-      <el-col :span="4" v-for="c in kpis" :key="c.label">
-        <el-card shadow="never" class="kpi">
-          <div class="kpi-label">{{ c.label }}</div>
-          <div class="kpi-value mono" :class="c.cls">{{ c.text }}</div>
-          <div class="kpi-delta" :class="c.deltaCls">{{ c.deltaText }}</div>
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <!-- 净值曲线 + 待办 -->
-    <el-row :gutter="12" class="mt">
-      <el-col :span="16">
-        <el-card shadow="never">
-          <template #header><div class="row"><b>账户净值曲线</b><span class="dim">{{ acctLabelText }} · 实际账户权益</span></div></template>
-          <div ref="eqChart" class="chart"></div>
-          <el-empty v-if="!eqPoints.length" description="该账户暂无权益数据（真实账户请先同步）" :image-size="50" />
-        </el-card>
-      </el-col>
-      <el-col :span="8">
-        <el-card shadow="never">
-          <template #header>待办</template>
-          <div class="todo-item" v-for="t in todos" :key="t.title">
-            <el-tag size="small" :type="t.type" effect="plain">{{ t.kind }}</el-tag>
-            <span class="todo-text">{{ t.title }}</span>
-            <el-button size="small" text type="primary" @click="t.action">{{ t.actionLabel }}</el-button>
+    <!-- 4.2 账户全景面板（折叠） -->
+    <div class="aw-card panorama">
+      <div class="panorama-head" @click="panoramaOpen = !panoramaOpen">
+        <span class="p-title">账户全景</span>
+        <span class="p-toggle">{{ panoramaOpen ? '▴' : '▾' }}</span>
+      </div>
+      <transition name="fade">
+        <div v-if="panoramaOpen" class="panorama-grid">
+          <div class="pano-card" v-for="c in panoramaCards" :key="c.title">
+            <div class="pano-title">{{ c.title }}</div>
+            <div class="pano-body">
+              <div v-for="row in c.rows" :key="row.label" class="pano-row" :title="row.hint">
+                <span class="pano-label">{{ row.label }}</span>
+                <span class="pano-val mono" :class="row.cls">{{ row.value }}</span>
+              </div>
+            </div>
           </div>
-          <el-empty v-if="!todos.length" description="没有待办" :image-size="40" />
-        </el-card>
-      </el-col>
-    </el-row>
+          <div class="pano-export">
+            <button class="aw-btn aw-btn-text" @click="exportReport">导出账户报告 →</button>
+          </div>
+        </div>
+      </transition>
+    </div>
 
-    <!-- 近期成交 + 符合度趋势 -->
-    <el-row :gutter="12" class="mt">
-      <el-col :span="12">
-        <el-card shadow="never">
-          <template #header><div class="row"><b>近期成交（实际 · {{ acctLabelText }}）</b><router-link to="/trades" class="link">全部 →</router-link></div></template>
-          <el-table :data="recentFills" size="small">
-            <el-table-column prop="tradedAt" label="时间" width="130"><template #default="{ row }">{{ fmtDate(row.tradedAt) }}</template></el-table-column>
-            <el-table-column prop="symbol" label="品种" width="90" />
-            <el-table-column label="市场" width="90"><template #default="{ row }">{{ MARKET_LABELS[row.market] ?? row.market }}</template></el-table-column>
-            <el-table-column label="方向" width="55"><template #default="{ row }"><span :class="row.side === 'BUY' ? 'up' : 'down'">{{ row.side === 'BUY' ? '买' : '卖' }}</span></template></el-table-column>
-            <el-table-column prop="qty" label="数量" width="80" />
-            <el-table-column prop="price" label="价格" width="90" />
-            <el-table-column label="已实现盈亏" width="90"><template #default="{ row }"><span :class="(row.realizedPnl ?? 0) >= 0 ? 'up' : 'down'">{{ row.realizedPnl?.toFixed(2) ?? '-' }}</span></template></el-table-column>
-          </el-table>
-          <el-empty v-if="!recentFills.length" description="该账户暂无成交记录" :image-size="40" />
-        </el-card>
-      </el-col>
-      <el-col :span="12">
-        <el-card shadow="never">
-          <template #header>规则符合度趋势（执行力 · 交易日志）</template>
-          <div ref="discChart" class="chart"></div>
-          <el-empty v-if="!discData.length" description="该账户暂无日志评分数据" :image-size="40" />
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <!-- 快速操作 -->
-    <el-card shadow="never" class="mt">
-      <template #header>快速操作</template>
-      <div class="row">
-        <el-button type="primary" @click="$router.push('/journal?new=1')">+ 新建交易日志</el-button>
-        <el-button @click="quickOpen">快速记录（关键字段）</el-button>
-        <el-button @click="$router.push('/stats')">查看本月统计</el-button>
-        <span class="dim">交易后 24 小时内填写，避免记忆偏差</span>
+    <!-- 4.3 主内容三栏 -->
+    <div class="main3">
+      <!-- 左栏 50%：持仓监控 -->
+      <div class="aw-card col">
+        <div class="col-head">
+          <b>当前持仓</b>
+          <span class="dim">{{ lastUpdate }}</span>
+        </div>
+        <div v-if="holdings.length" class="hold-list">
+          <div v-for="h in holdings" :key="h.symbol + h.side" class="hold-item" :class="{ 'edge-up': h.pnl >= 0, 'edge-down': h.pnl < 0 }">
+            <div class="hold-main">
+              <div class="hold-sym">
+                <span class="coin-ic">{{ h.symbol.slice(0, 1) }}</span>
+                <b>{{ h.symbol }}</b>
+                <span class="dir-tag" :class="h.side === 'LONG' ? 'long' : 'short'">{{ h.side === 'LONG' ? '多' : '空' }}</span>
+              </div>
+              <div class="hold-price">
+                <span class="mono">{{ fmtPrice(h.entry) }}</span>
+                <span class="arr">→</span>
+                <span class="mono">{{ fmtPrice(h.current) }}</span>
+              </div>
+              <div class="hold-pnl mono" :class="h.pnl >= 0 ? 'up' : 'down'">{{ fmtPnl(h.pnl) }}</div>
+            </div>
+            <div class="hold-foot">
+              <span class="dim" v-if="h.planRef">计划：{{ h.planRef }}</span>
+              <span class="dim" v-else>无关联计划</span>
+              <span class="dim">持仓 {{ h.duration }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-else class="aw-empty">
+          <svg class="aw-empty-illus" viewBox="0 0 64 48"><rect x="4" y="10" width="56" height="30" rx="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 28 L28 18 L38 26 L50 14" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          <span>当前无持仓，去交易计划页制定策略</span>
+          <button class="aw-btn aw-btn-text" @click="go('/plans?new=1')">去交易计划 →</button>
+        </div>
       </div>
-    </el-card>
 
-    <!-- 快速记录弹窗 -->
-    <el-dialog v-model="quickVisible" title="快速记录" width="420px">
-      <el-form label-width="70px" size="small">
-        <el-form-item label="品种"><el-input v-model="quick.symbol" placeholder="BTCUSDT" /></el-form-item>
-        <el-form-item label="方向">
-          <el-radio-group v-model="quick.direction"><el-radio-button value="LONG">多</el-radio-button><el-radio-button value="SHORT">空</el-radio-button></el-radio-group>
+      <!-- 中栏 30%：流转漏斗 -->
+      <div class="aw-card col">
+        <div class="col-head"><b>交易流转</b></div>
+        <div class="funnel">
+          <div v-for="s in funnel" :key="s.key" class="funnel-row" :class="{ has: s.count > 0, 'funnel-pending': s.key === 'pending' && s.count > 0 }">
+            <span class="funnel-label" :style="{ color: s.color }"><span class="funnel-dot" :style="{ background: s.color }"></span>{{ s.label }}</span>
+            <span class="funnel-count mono">{{ s.count }}</span>
+            <span class="funnel-arrow">──▶</span>
+            <button v-if="s.key === 'pending' && s.count > 0" class="aw-btn aw-btn-primary mini" @click="go('/review')">去处理</button>
+          </div>
+        </div>
+        <div class="funnel-trend">
+          <div class="dim">近 7 天「待复盘→已复盘」转化</div>
+          <div class="trend-bars">
+            <div v-for="(t, i) in conversionTrend" :key="i" class="trend-col">
+              <div class="trend-bar" :style="{ height: t.v + '%' }" :title="t.day + ' ' + t.v + '%'"></div>
+              <div class="trend-day">{{ t.day }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右栏 20%：快速入口 -->
+      <div class="aw-card col">
+        <div class="col-head"><b>快速入口</b></div>
+        <div class="quick-actions">
+          <button class="aw-btn aw-btn-primary quick" @click="go('/plans?new=1')"><el-icon><Plus /></el-icon>+ 新建计划</button>
+          <button class="aw-btn aw-btn-secondary quick" @click="go('/review')"><el-icon><EditPen /></el-icon>+ 补记复盘</button>
+          <button class="aw-btn aw-btn-secondary quick" @click="importVisible = true"><el-icon><Upload /></el-icon>+ 历史导入</button>
+        </div>
+        <div class="strategy-feedback" @click="go('/strategies')">
+          <div class="sf-title">策略反馈</div>
+          <div class="sf-desc">已复盘 {{ counts.done }} 条记录可供策略分析</div>
+          <span class="sf-link">去查看 →</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4.4 底部折叠区 -->
+    <div class="aw-card bottom-fold">
+      <div class="fold-head" @click="foldOpen = !foldOpen">
+        <b>本周流转效率</b><span class="dim">转化率趋势</span><span class="p-toggle">{{ foldOpen ? '▴' : '▾' }}</span>
+      </div>
+      <transition name="fade">
+        <div v-if="foldOpen" class="fold-body">
+          <div class="fold-charts">
+            <div ref="effChart" class="eff-chart"></div>
+            <div class="recent-reviews">
+              <div class="rr-title">最近复盘结论</div>
+              <div v-for="r in recentReviews" :key="r.id" class="rr-item">
+                <span class="rr-sym mono">{{ r.symbol }}</span>
+                <span class="rr-txt">{{ r.lesson }}</span>
+                <span class="dim">{{ fmtTime(r.time) }}</span>
+              </div>
+              <div v-if="!recentReviews.length" class="dim">暂无已复盘记录</div>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </div>
+
+    <!-- 历史导入弹窗 -->
+    <el-dialog v-model="importVisible" title="历史交易导入" width="480px">
+      <div class="import-tip dim">导入的历史记录将直接进入「待复盘」状态，前往复盘中心补记日志与复盘。</div>
+      <el-form label-width="70px" size="small" class="mt8">
+        <el-form-item label="账户">
+          <el-select v-model="importForm.accountId" style="width: 100%">
+            <el-option v-for="a in accountStore.accounts" :key="a.id" :value="a.id" :label="(a.type === 'real' ? '真实 ' : '模拟 ') + a.name" />
+          </el-select>
         </el-form-item>
-        <el-form-item label="净盈亏"><el-input-number v-model="quick.netPnl" :precision="2" style="width: 100%" /></el-form-item>
-        <el-form-item label="按计划"><el-select v-model="quick.planExecution" style="width: 100%"><el-option value="complete" label="完全执行" /><el-option value="partial" label="部分执行" /><el-option value="none" label="未执行" /></el-select></el-form-item>
-        <el-form-item label="标签">
-          <el-checkbox-group v-model="quick.tags">
-            <el-checkbox v-for="t in TAG_OPTIONS" :key="t" :value="t" size="small">{{ t }}</el-checkbox>
-          </el-checkbox-group>
+        <el-form-item label="示例行">
+          <el-input v-model="sampleLine" placeholder="symbol,side,qty,price,closeTimeMs,pnl" class="mono" />
         </el-form-item>
       </el-form>
+      <el-alert type="info" :closable="false" title="快速导入示例（每行一条，逗号分隔）" description="BTCUSDT,LONG,0.5,71500,1787416000000,450" />
       <template #footer>
-        <el-button size="small" @click="quickVisible = false">取消</el-button>
-        <el-button size="small" type="primary" :loading="quickSaving" @click="quickSave">保存</el-button>
+        <el-button size="small" @click="importVisible = false">取消</el-button>
+        <el-button size="small" type="primary" :loading="importing" @click="doImport">导入并标记待复盘</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
-import { api, MARKET_LABELS, type TradeAgg } from '../api.ts';
-import { accountLabel, accountStore, loadAccounts, selectAccount } from '../store.ts';
+import { api } from '../api.ts';
+import { accountStore, loadAccounts } from '../store.ts';
+import type { TradeJournal } from '../lib/journal.ts';
+import { deriveStatus, fmtPnl, fmtPrice, fmtTime, holdingDuration, fmtDuration, STATUS_META, STATUS_ORDER } from '../lib/journal.ts';
 
-const TAG_OPTIONS = ['情绪化交易', '执行错误', '系统缺陷', '正常亏损', '正常盈利', '运气成分'];
 const router = useRouter();
+function go(path: string) { router.push(path); }
 
-interface JRec { id?: string; symbol: string; market?: string; direction: string; closeTime?: number; netPnl?: number; rMultiple?: number; disciplineScore?: number; tags?: string[]; improvements?: string; planExecution?: string }
-interface Fill { id: string; symbol: string; market: string; side: string; qty: number; price: number; fee: number; realizedPnl?: number; tradedAt: number }
-
-const agg = ref<TradeAgg | null>(null);
-const weekAgg = ref<TradeAgg | null>(null);
-const lastWeekAgg = ref<TradeAgg | null>(null);
-const records = ref<JRec[]>([]);
-const recentFills = ref<Fill[]>([]);
+const records = ref<TradeJournal[]>([]);
+const fills = ref<{ symbol: string; side: string; qty: number; price: number; realizedPnl?: number; tradedAt: number }[]>([]);
 const eqPoints = ref<{ timestamp: number; equity: number }[]>([]);
-const discData = ref<{ t: number; v: number }[]>([]);
-const todos = ref<{ kind: string; type: 'warning' | 'danger' | 'info' | 'success'; title: string; actionLabel: string; action: () => void }[]>([]);
-const eqChart = ref<HTMLDivElement | null>(null);
-const discChart = ref<HTMLDivElement | null>(null);
-let eqE: echarts.ECharts | null = null;
-let discE: echarts.ECharts | null = null;
+const agg = ref<{ netPnl?: number; totalTrades?: number; winRate?: number; profitFactor?: number } | null>(null);
+const positions = ref<{ symbol: string; side: string; quantity: number; avgEntryPrice: number; unrealizedPnl: number }[]>([]);
+const tickers = ref<Record<string, { lastPrice: number }>>({});
+const panoramaOpen = ref(true);
+const foldOpen = ref(true);
+const importVisible = ref(false);
+const importing = ref(false);
+const importForm = ref<{ accountId: string }>({ accountId: '' });
+const sampleLine = ref('BTCUSDT,LONG,0.5,71500,1787416000000,450');
+const effChart = ref<HTMLDivElement | null>(null);
+let effE: echarts.ECharts | null = null;
 
-const acct = computed(() => accountStore.accounts.find((a) => a.id === accountStore.selectedId) ?? null);
-const acctLabelText = computed(() => accountLabel(acct.value));
-const acctType = computed(() => acct.value?.type ?? '');
+const counts = computed(() => {
+  const c = { plan: 0, holding: 0, pending: 0, done: 0 };
+  for (const r of records.value) c[deriveStatus(r)]++;
+  // 真实账户持仓并入「持仓中」
+  if (positions.value.length) c.holding = Math.max(c.holding, positions.value.length);
+  return c;
+});
 
-const quickVisible = ref(false);
-const quickSaving = ref(false);
-const quick = reactive<{ symbol: string; direction: 'LONG' | 'SHORT'; netPnl?: number; planExecution: string; tags: string[] }>({ symbol: '', direction: 'LONG', planExecution: 'complete', tags: [] });
+const netPnl = computed(() => {
+  const fromJournal = records.value.reduce((a, r) => a + (r.netPnl ?? 0), 0);
+  return fromJournal || agg.value?.netPnl || 0;
+});
 
-function fmtDate(ts?: number) {
-  return ts ? new Date(ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
-}
-function weekRange(offset: number): [number, number] {
-  const now = new Date();
-  const day = (now.getDay() + 6) % 7; // 周一为0
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day - offset * 7);
-  const end = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
-  return [monday.getTime(), end.getTime()];
-}
+const totalReturn = computed(() => {
+  const eq = eqPoints.value;
+  if (!eq.length) return 0;
+  const first = eq[0]?.equity ?? 1;
+  const last = eq[eq.length - 1]?.equity ?? 0;
+  return first > 0 ? (last - first) / first : 0;
+});
 
-const kpis = computed(() => {
+const pendingRatio = computed(() => {
+  const total = counts.value.plan + counts.value.holding + counts.value.pending + counts.value.done;
+  return total ? Math.round((counts.value.pending / total) * 100) : 0;
+});
+
+const todayPlans = computed(() => {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end = new Date(); end.setHours(23, 59, 59, 999);
+  return records.value.filter((r) => deriveStatus(r) === 'plan' && (r.createdAt ?? 0) >= start.getTime() && (r.createdAt ?? 0) <= end.getTime()).length;
+});
+
+const lastUpdate = computed(() => new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+
+/** 持仓列表：优先真实账户持仓，否则日志中的持仓中记录 */
+const holdings = computed(() => {
+  const out: { symbol: string; side: string; entry: number; current: number; pnl: number; planRef: string; duration: string }[] = [];
+  for (const p of positions.value) {
+    const t = tickers.value[p.symbol]?.lastPrice;
+    const cur = t ?? p.avgEntryPrice;
+    const pnl = p.unrealizedPnl ?? 0;
+    const dur = fmtDuration(Date.now() - (Date.now() - 3600_000)); // 真实账户无开仓时间，显示 —
+    out.push({ symbol: p.symbol, side: p.side === 'SHORT' ? 'SHORT' : 'LONG', entry: p.avgEntryPrice, current: cur, pnl, planRef: '', duration: dur === '—' ? '实时' : dur });
+  }
+  for (const r of records.value) {
+    if (deriveStatus(r) !== 'holding') continue;
+    if (out.some((o) => o.symbol === r.symbol)) continue;
+    const t = tickers.value[r.symbol]?.lastPrice;
+    const entry = r.actualEntry ?? 0;
+    const cur = t ?? entry;
+    const qty = r.actualQty ?? 1;
+    const pnl = entry ? (cur - entry) * qty * (r.direction === 'SHORT' ? -1 : 1) : 0;
+    out.push({ symbol: r.symbol, side: r.direction, entry, current: cur, pnl, planRef: r.strategyName ?? '', duration: fmtDuration(holdingDuration(r)) });
+  }
+  return out.slice(0, 12);
+});
+
+const funnel = computed(() => STATUS_ORDER.map((key) => ({
+  key,
+  label: STATUS_META[key].label,
+  color: STATUS_META[key].color,
+  count: counts.value[key],
+})));
+
+/** 近7天 待复盘→已复盘 转化率（模拟从记录分布） */
+const conversionTrend = computed(() => {
+  const days: { day: string; v: number }[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
+    const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+    const closed = records.value.filter((r) => (r.closeTime ?? 0) >= d.getTime() && (r.closeTime ?? 0) <= dEnd.getTime());
+    const reviewed = closed.filter((r) => deriveStatus(r) === 'done');
+    const v = closed.length ? Math.round((reviewed.length / closed.length) * 100) : 0;
+    days.push({ day: (d.getMonth() + 1) + '/' + d.getDate(), v });
+  }
+  return days;
+});
+
+const recentReviews = computed(() => records.value
+  .filter((r) => deriveStatus(r) === 'done' && (r.improvements || r.strengths))
+  .slice(0, 3)
+  .map((r) => ({ id: r.id, symbol: r.symbol, lesson: (r.improvements || r.strengths || '').slice(0, 40), time: r.closeTime ?? r.updatedAt })));
+
+/** 账户全景 2×3 网格 */
+const panoramaCards = computed(() => {
+  const st = journalStats.value;
   const a = agg.value;
-  const w = weekAgg.value;
-  const lw = lastWeekAgg.value;
-  const net = a?.netPnl ?? 0;
-  const wNet = (w?.netPnl ?? 0) - (lw?.netPnl ?? 0);
-  const wWin = ((w?.winRate ?? 0) - (lw?.winRate ?? 0)) * 100;
-  const wTrades = (w?.totalTrades ?? 0) - (lw?.totalTrades ?? 0);
-  const last = eqPoints.value.length ? eqPoints.value[eqPoints.value.length - 1]!.equity : null;
-  const pf = a?.profitFactor;
+  const wins = st?.wins ?? 0;
+  const losses = st?.losses ?? 0;
+  const closed = st?.closed ?? 0;
+  const firstT = records.value.length ? Math.min(...records.value.map((r) => r.createdAt ?? Date.now())) : Date.now();
+  const years = Math.max((Date.now() - firstT) / (365 * 86400000), 0);
+  const winAmt = st?.netPnl !== undefined && st?.wins ? 0 : 0; // 平均盈利从聚合数据
+  const avgWin = a?.winRate !== undefined && a?.netPnl !== undefined ? 0 : 0;
+  const maxWin = Math.max(0, ...records.value.map((r) => r.netPnl ?? 0));
+  const maxLoss = Math.min(0, ...records.value.map((r) => r.netPnl ?? 0));
+  const dd = maxDrawdown();
+  const streak = streaks();
+  const wins2 = Math.max(...records.value.filter((r) => (r.netPnl ?? 0) > 0).map((r) => r.netPnl ?? 0), 0);
+  const loss2 = Math.min(...records.value.filter((r) => (r.netPnl ?? 0) < 0).map((r) => r.netPnl ?? 0), 0);
+
   return [
-    { label: '当前权益', text: last != null ? last.toFixed(2) : '—', cls: '', deltaText: a?.feesPaid != null ? '手续费 ' + a.feesPaid.toFixed(2) : '', deltaCls: '' },
-    { label: '累计净收益', text: net.toFixed(2), cls: net >= 0 ? 'up' : 'down', deltaText: 'vs 上周 ' + (wNet >= 0 ? '+' : '') + wNet.toFixed(2), deltaCls: wNet >= 0 ? 'up' : 'down' },
-    { label: '胜率', text: ((a?.winRate ?? 0) * 100).toFixed(1) + '%', cls: '', deltaText: 'vs 上周 ' + (wWin >= 0 ? '+' : '') + wWin.toFixed(1) + '%', deltaCls: wWin >= 0 ? 'up' : 'down' },
-    { label: '盈亏比', text: pf === undefined || pf === null ? '—' : pf === Infinity ? '∞' : pf.toFixed(2), cls: '', deltaText: '', deltaCls: '' },
-    { label: '最大回撤', text: drawdownText(), cls: '', deltaText: '', deltaCls: '' },
-    { label: '交易数', text: String(a?.totalTrades ?? 0), cls: '', deltaText: 'vs 上周 ' + (wTrades >= 0 ? '+' : '') + wTrades, deltaCls: wTrades >= 0 ? 'up' : 'down' },
+    {
+      title: '交易概况',
+      rows: [
+        { label: '总交易数', value: String(records.value.length), hint: '全部已记录交易' },
+        { label: '已完成', value: String(closed), hint: '已平仓的交易' },
+        { label: '持仓中', value: String(holdings.value.length), hint: '当前未平仓（含真实账户持仓）' },
+        { label: '交易年限', value: years.toFixed(1) + ' 年', hint: '从首笔记录起' },
+        { label: '日均交易', value: (years > 0 ? (closed / 365 / years).toFixed(1) : '—') + ' 笔', hint: '平均每日完成交易数' },
+      ],
+    },
+    {
+      title: '收益质量',
+      rows: [
+        { label: '夏普比率', value: fmt2(sharpe()), hint: '夏普 <1 一般 / 1-2 良好 / >2 优秀' },
+        { label: '索提诺比率', value: fmt2(sortino()), hint: '仅统计下行波动' },
+        { label: '卡尔玛比率', value: fmt2(calmar()), hint: '年化收益 / 最大回撤，<2 一般 / 2-3 良好 / >3 优秀' },
+        { label: '月均收益', value: fmtPct(monthlyReturn()), hint: '按月平均收益率' },
+        { label: '标准差', value: fmtPct(stdDev()), hint: '收益波动' },
+      ],
+    },
+    {
+      title: '盈亏结构',
+      rows: [
+        { label: '盈利笔数', value: String(wins), hint: '' },
+        { label: '亏损笔数', value: String(losses), hint: '' },
+        { label: '平均盈利', value: wins ? fmtPnl(wins ? (records.value.filter(r => (r.netPnl ?? 0) > 0).reduce((a, r) => a + (r.netPnl ?? 0), 0) / wins) : 0) : '—', hint: '' },
+        { label: '平均亏损', value: losses ? fmtPnl(losses ? (records.value.filter(r => (r.netPnl ?? 0) < 0).reduce((a, r) => a + (r.netPnl ?? 0), 0) / losses) : 0) : '—', hint: '' },
+        { label: '期望值', value: closed ? fmtPnl(st?.expectancy ?? 0) : '—', hint: '单笔平均期望' },
+        { label: '最大单笔', value: fmtPnl(maxWin) + ' / ' + fmtPnl(maxLoss), hint: '盈利 / 亏损' },
+      ],
+    },
+    {
+      title: '回撤与连击',
+      rows: [
+        { label: '最大回撤', value: fmtPct(dd.max), hint: '<10% 优秀 / 10-20% 可控 / >20% 高风险', cls: dd.max > 0.2 ? 'down' : dd.max > 0.1 ? 'todo' : 'up' },
+        { label: '当前回撤', value: fmtPct(dd.current), hint: '距最近高点的回撤' },
+        { label: '最大连胜', value: String(streak.maxWin), hint: '连续盈利笔数' },
+        { label: '最大连败', value: String(streak.maxLoss), hint: '连续亏损笔数' },
+        { label: '恢复时间', value: dd.recovery + ' 天', hint: '最大回撤后恢复天数' },
+      ],
+    },
+    {
+      title: '时间分布',
+      rows: [
+        { label: '盈利月份', value: String(monthStats().winMonths), hint: '净盈利的月份数' },
+        { label: '亏损月份', value: String(monthStats().lossMonths), hint: '净亏损的月份数' },
+        { label: '最佳月份', value: fmtPct(monthStats().best), hint: '单月最高收益率' },
+        { label: '最差月份', value: fmtPct(monthStats().worst), hint: '单月最低收益率' },
+        { label: '连续盈利月', value: String(monthStats().curWinStreak) + '（当前）', hint: '当前连续盈利月份' },
+      ],
+    },
+    {
+      title: '持仓特征',
+      rows: [
+        { label: '平均持仓', value: avgHoldText(), hint: '全部已平仓记录的平均持仓时长' },
+        { label: '中位数', value: medianHoldText(), hint: '持仓时长中位数' },
+        { label: '最长持仓', value: maxHoldText(), hint: '最长单笔持仓' },
+        { label: '平均仓位使用率', value: '—', hint: '需账户数据支持' },
+      ],
+    },
   ];
 });
 
-function drawdownText(): string {
-  let peak = -Infinity;
-  let dd = 0;
-  for (const p of eqPoints.value) {
-    if (p.equity > peak) peak = p.equity;
-    if (peak > 0) dd = Math.max(dd, (peak - p.equity) / peak);
-  }
-  return eqPoints.value.length ? (dd * 100).toFixed(1) + '%' : '—';
-}
+function fmt2(v: number): string { return Number.isFinite(v) ? v.toFixed(2) : '—'; }
+function fmtPct(v: number): string { return Number.isFinite(v) ? (v * 100).toFixed(1) + '%' : '—'; }
+function fmtPctSigned(v: number): string { return (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%'; }
 
-function renderEq() {
-  if (!eqChart.value) return;
-  if (!eqE) eqE = echarts.init(eqChart.value);
+const journalStats = ref<{ closed: number; wins: number; losses: number; netPnl: number; expectancy: number } | null>(null);
+
+function maxDrawdown(): { max: number; current: number; recovery: number } {
   const pts = eqPoints.value;
-  if (!pts.length) { eqE.clear(); return; }
-  eqE.setOption({
-    tooltip: { trigger: 'axis' },
-    grid: { left: 60, right: 16, top: 16, bottom: 24 },
-    xAxis: { type: 'category', data: pts.map((p) => new Date(p.timestamp).toLocaleDateString('zh-CN')) },
-    yAxis: { type: 'value', scale: true },
-    series: [{ type: 'line', showSymbol: false, data: pts.map((p) => p.equity), lineStyle: { color: '#4da3ff', width: 1.5 }, areaStyle: { color: 'rgba(77,163,255,0.06)' } }],
-  });
+  if (pts.length < 2) return { max: 0, current: 0, recovery: 0 };
+  let peak = pts[0]!.equity;
+  let maxDd = 0;
+  let maxDdTime = 0;
+  let cur = 0;
+  for (const p of pts) {
+    if (p.equity > peak) peak = p.equity;
+    const dd = peak > 0 ? (peak - p.equity) / peak : 0;
+    if (dd > maxDd) { maxDd = dd; maxDdTime = p.timestamp; }
+    cur = dd;
+  }
+  const last = pts[pts.length - 1]!;
+  const recoveryDays = last.timestamp > maxDdTime ? (last.timestamp - maxDdTime) / 86400000 : 0;
+  return { max: maxDd, current: cur, recovery: Math.round(recoveryDays) };
 }
 
-function renderDisc() {
-  if (!discChart.value) return;
-  if (!discE) discE = echarts.init(discChart.value);
-  discE.setOption({
-    tooltip: { trigger: 'axis' },
-    grid: { left: 30, right: 12, top: 12, bottom: 24 },
-    xAxis: { type: 'category', data: discData.value.map((d) => new Date(d.t).toLocaleDateString('zh-CN')) },
-    yAxis: { type: 'value', min: 0, max: 10 },
-    series: [{ type: 'bar', data: discData.value.map((d) => d.v), itemStyle: { color: '#4da3ff' } }],
-  });
+function streaks(): { maxWin: number; maxLoss: number } {
+  let mw = 0, ml = 0, cw = 0, cl = 0;
+  for (const r of records.value) {
+    const n = r.netPnl ?? 0;
+    if (n > 0) { cw++; cl = 0; mw = Math.max(mw, cw); }
+    else if (n < 0) { cl++; cw = 0; ml = Math.max(ml, cl); }
+  }
+  return { maxWin: mw, maxLoss: ml };
 }
 
-function quickOpen() { quickVisible.value = true; }
-async function quickSave() {
-  quickSaving.value = true;
+function sharpe(): number {
+  const rets = returns();
+  if (rets.length < 2) return 0;
+  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+  const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length - 1));
+  return sd > 0 ? (mean / sd) * Math.sqrt(252) : 0;
+}
+function sortino(): number {
+  const rets = returns();
+  const negs = rets.filter((r) => r < 0);
+  if (rets.length < 2 || !negs.length) return 0;
+  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+  const downSd = Math.sqrt(negs.reduce((a, b) => a + b * b, 0) / rets.length);
+  return downSd > 0 ? (mean / downSd) * Math.sqrt(252) : 0;
+}
+function calmar(): number {
+  const dd = maxDrawdown().max;
+  const yr = annualized();
+  return dd > 0 ? yr / dd : 0;
+}
+function annualized(): number {
+  const eq = eqPoints.value;
+  if (eq.length < 2) return 0;
+  const days = (eq[eq.length - 1]!.timestamp - eq[0]!.timestamp) / 86400000;
+  const total = (eq[eq.length - 1]!.equity - eq[0]!.equity) / (eq[0]!.equity || 1);
+  return days > 0 ? Math.pow(1 + total, 365 / days) - 1 : 0;
+}
+function monthlyReturn(): number {
+  const rets = returns();
+  return rets.length ? rets.reduce((a, b) => a + b, 0) / Math.max(1, rets.length / 22) : 0;
+}
+function stdDev(): number {
+  const rets = returns();
+  if (rets.length < 2) return 0;
+  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+  return Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length - 1));
+}
+function returns(): number[] {
+  const sorted = records.value.filter((r) => r.netPnl !== undefined && r.closeTime).sort((a, b) => (a.closeTime ?? 0) - (b.closeTime ?? 0));
+  return sorted.map((r) => r.netPnl! / 1000); // 按千单位收益率近似
+}
+function monthStats(): { winMonths: number; lossMonths: number; best: number; worst: number; curWinStreak: number } {
+  const byMonth: Record<string, number> = {};
+  for (const r of records.value) {
+    if (r.netPnl === undefined) continue;
+    const k = new Date(r.closeTime ?? r.createdAt!).toISOString().slice(0, 7);
+    byMonth[k] = (byMonth[k] ?? 0) + r.netPnl;
+  }
+  const keys = Object.keys(byMonth).sort();
+  const vals = keys.map((k) => byMonth[k]!);
+  let streak = 0;
+  for (let i = keys.length - 1; i >= 0; i--) {
+    if ((byMonth[keys[i]!] ?? 0) > 0) streak++;
+    else break;
+  }
+  return {
+    winMonths: vals.filter((v) => v > 0).length,
+    lossMonths: vals.filter((v) => v < 0).length,
+    best: keys.length ? Math.max(...vals) / 10000 : 0,
+    worst: keys.length ? Math.min(...vals) / 10000 : 0,
+    curWinStreak: streak,
+  };
+}
+function holdTimes(): number[] {
+  return records.value
+    .filter((r) => r.openTime && r.closeTime && r.closeTime > r.openTime!)
+    .map((r) => r.closeTime! - r.openTime!)
+    .sort((a, b) => a - b);
+}
+function avgHoldText(): string {
+  const h = holdTimes();
+  return h.length ? fmtDuration(h.reduce((a, b) => a + b, 0) / h.length) : '—';
+}
+function medianHoldText(): string {
+  const h = holdTimes();
+  if (!h.length) return '—';
+  const mid = Math.floor(h.length / 2);
+  return fmtDuration(h.length % 2 ? h[mid]! : (h[mid - 1]! + h[mid]!) / 2);
+}
+function maxHoldText(): string {
+  const h = holdTimes();
+  return h.length ? fmtDuration(h[h.length - 1]!) : '—';
+}
+
+function exportReport() {
+  const lines = ['AgentWin 账户报告 ' + new Date().toLocaleDateString('zh-CN'), '---'];
+  for (const c of panoramaCards.value) {
+    lines.push('## ' + c.title);
+    for (const row of c.rows) lines.push(row.label + ': ' + row.value);
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'agentwin-report.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function doImport() {
+  if (!importForm.value.accountId) { ElMessage.warning('请选择账户'); return; }
+  importing.value = true;
   try {
-    await api.post('/journal/trades', { record: { ...quick, tradeNo: 'Q' + Date.now().toString(36), market: 'U本位合约', accountId: accountStore.selectedId || undefined } });
-    ElMessage.success('已快速记录');
-    quickVisible.value = false;
-    Object.assign(quick, { symbol: '', direction: 'LONG', netPnl: undefined, planExecution: 'complete', tags: [] });
+    const lines = sampleLine.value.split('\n').map((s) => s.trim()).filter(Boolean);
+    let ok = 0;
+    for (const line of lines) {
+      const parts = line.split(',').map((s) => s.trim());
+      if (parts.length < 6) continue;
+      const [symbol, side, qty, price, closeTime, pnl] = parts;
+      const record = {
+        symbol: (symbol ?? 'BTCUSDT').toUpperCase(),
+        direction: side === 'SHORT' ? 'SHORT' : 'LONG',
+        market: '现货',
+        actualQty: Number(qty) || 1,
+        actualEntry: Number(price) || 0,
+        actualExit: Number(price) || 0,
+        closeTime: Number(closeTime) || Date.now(),
+        netPnl: Number(pnl) || 0,
+        pnl: Number(pnl) || 0,
+        accountId: importForm.value.accountId,
+        tags: ['历史导入'],
+      };
+      await api.post('/journal/trades', { record });
+      ok++;
+    }
+    ElMessage.success('成功导入 ' + ok + ' 条记录，均已标记为待复盘，前往复盘中心 →');
+    importVisible.value = false;
     await loadAll();
+    router.push('/review');
   } catch (e) {
-    ElMessage.error((e as Error).message);
+    ElMessage.error('导入失败：' + (e instanceof Error ? e.message : String(e)));
   } finally {
-    quickSaving.value = false;
+    importing.value = false;
   }
 }
 
 async function loadAll() {
   await loadAccounts();
   const acctId = accountStore.selectedId;
-  if (!acctId) {
-    agg.value = null; weekAgg.value = null; lastWeekAgg.value = null;
-    records.value = []; recentFills.value = []; eqPoints.value = []; discData.value = []; todos.value = [];
-    renderEq(); renderDisc();
-    return;
-  }
-  const [now, last] = weekRange(0);
-  const [pnow, plast] = weekRange(1);
-  let list: { records: JRec[] } = { records: [] };
-  let fills: { trades: Fill[] } = { trades: [] };
+  if (!acctId) return;
   try {
-    const [detail, wk, lwk, l, fl] = await Promise.all([
-      api.get<{ equityCurve: { timestamp: number; equity: number }[]; aggregates: TradeAgg | null }>('/accounts/' + acctId),
-      api.get<TradeAgg>('/pnl?accountId=' + acctId + '&from=' + now + '&to=' + last),
-      api.get<TradeAgg>('/pnl?accountId=' + acctId + '&from=' + pnow + '&to=' + plast),
-      api.get<{ records: JRec[] }>('/journal/trades?accountId=' + acctId + '&limit=200'),
-      api.get<{ trades: Fill[] }>('/trades?accountId=' + acctId + '&limit=50'),
+    const [jl, detail, tk] = await Promise.all([
+      api.get<{ records: TradeJournal[] }>('/journal/trades?limit=1000'),
+      api.get<{ equityCurve: { timestamp: number; equity: number }[]; aggregates: { netPnl?: number; totalTrades?: number; winRate?: number; profitFactor?: number } | null; positions?: { symbol: string; side: string; quantity: number; avgEntryPrice: number; unrealizedPnl: number }[] }>('/accounts/' + acctId),
+      api.get<{ tickers: { symbol: string; lastPrice: number }[] }>('/market/tickers?market=USDT_M').catch(() => ({ tickers: [] })),
     ]);
-    agg.value = detail.aggregates;
-    weekAgg.value = wk;
-    lastWeekAgg.value = lwk;
-    list = l;
-    fills = fl;
-    records.value = l.records;
-    recentFills.value = fl.trades.slice(0, 8); // listTrades 已按时间倒序（最新在前）
+    records.value = jl.records;
     eqPoints.value = detail.equityCurve ?? [];
-    discData.value = l.records
-      .filter((r) => r.disciplineScore !== undefined)
-      .slice(-15)
-      .map((r) => ({ t: r.closeTime ?? 0, v: r.disciplineScore! }));
+    agg.value = detail.aggregates;
+    positions.value = detail.positions ?? [];
+    const t: Record<string, { lastPrice: number }> = {};
+    for (const x of tk.tickers) t[x.symbol] = { lastPrice: x.lastPrice };
+    tickers.value = t;
+    const wins = records.value.filter((r) => (r.netPnl ?? 0) > 0).length;
+    const losses = records.value.filter((r) => (r.netPnl ?? 0) < 0).length;
+    journalStats.value = {
+      closed: records.value.filter((r) => deriveStatus(r) === 'done' || deriveStatus(r) === 'pending').length,
+      wins, losses,
+      netPnl: records.value.reduce((a, r) => a + (r.netPnl ?? 0), 0),
+      expectancy: (wins + losses) ? records.value.reduce((a, r) => a + (r.netPnl ?? 0), 0) / (wins + losses) : 0,
+    };
+    renderEff();
   } catch (e) {
     ElMessage.error('数据加载失败：' + (e instanceof Error ? e.message : String(e)));
   }
-  renderEq();
-  renderDisc();
-
-  // 待办（基于所选账户）
-  const t: typeof todos.value = [];
-  const logged = new Set(records.value.map((r) => (r.symbol + '|' + (r.market ?? '') + '|' + r.direction).toUpperCase()));
-  for (const x of fills.trades.slice(-10)) {
-    const key = (x.symbol + '|' + x.market + '|' + (x.side === 'BUY' ? 'LONG' : 'SHORT')).toUpperCase();
-    if (!logged.has(key) && t.length < 3) {
-      t.push({
-        kind: '补日志', type: 'warning', title: x.symbol + ' ' + (x.side === 'BUY' ? '买入' : '卖出') + ' 已有实际成交',
-        actionLabel: '补填', action: () => router.push('/journal?quick=' + encodeURIComponent(JSON.stringify({ symbol: x.symbol, market: MARKET_LABELS[x.market] ?? x.market, direction: x.side === 'BUY' ? 'LONG' : 'SHORT' }))),
-      });
-    }
-  }
-  for (const r of records.value.slice(0, 20)) {
-    const problematic = (r.disciplineScore !== undefined && r.disciplineScore < 7) || (r.tags ?? []).some((tag) => ['情绪化交易', '执行错误', '系统缺陷'].includes(tag)) || (!r.improvements && r.netPnl !== undefined && r.netPnl < 0);
-    if (problematic && t.length < 5) {
-      t.push({ kind: '复盘', type: 'danger', title: r.symbol + ' ' + fmtDate(r.closeTime) + ' 需要复盘', actionLabel: '去复盘', action: () => router.push('/journal?id=' + r.id) });
-    }
-  }
-  t.push({ kind: '计划', type: 'info', title: '今日无预设交易计划', actionLabel: '添加', action: () => router.push('/journal') });
-  todos.value = t.slice(0, 6);
 }
 
-function onAccountChange(id: string) {
-  selectAccount(id);
-  loadAll();
+function renderEff() {
+  if (!effChart.value) return;
+  if (!effE) effE = echarts.init(effChart.value);
+  effE.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: 36, right: 12, top: 16, bottom: 24 },
+    xAxis: { type: 'category', data: conversionTrend.value.map((t) => t.day), axisLabel: { color: '#6b7280', fontSize: 10 } },
+    yAxis: { type: 'value', max: 100, axisLabel: { color: '#6b7280', fontSize: 10, formatter: '{value}%' } },
+    series: [{ type: 'bar', data: conversionTrend.value.map((t) => t.v), itemStyle: { color: '#06b6d4', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 26 }],
+  });
 }
-
-watch(() => accountStore.selectedId, () => loadAll());
 
 onMounted(async () => {
   await loadAll();
-  window.addEventListener('resize', () => { eqE?.resize(); discE?.resize(); });
+  window.addEventListener('resize', () => effE?.resize());
 });
 </script>
 
 <style scoped>
-.mb { margin-bottom: 12px; }
-.mt { margin-top: 12px; }
-.row { display: flex; align-items: center; gap: 10px; }
-.label { font-size: 13px; color: var(--text-dim); }
-.link { color: var(--accent); text-decoration: none; font-size: 12px; }
-.dim { color: var(--text-dim); font-size: 12px; }
-.kpi { text-align: left; }
-.kpi-label { color: var(--text-dim); font-size: 12px; }
-.kpi-value { font-size: 22px; font-weight: 700; margin: 4px 0 2px; }
-.kpi-delta { font-size: 11px; color: var(--text-dim); }
-.mono { font-family: var(--mono); }
-.chart { height: 280px; }
-.todo-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
-.todo-text { flex: 1; }
-.up { color: #67c23a; }
-.down { color: #f56c6c; }
+.dashboard { display: flex; flex-direction: column; gap: 12px; max-width: 1440px; }
+.mt8 { margin-top: 8px; }
+
+/* KPI 条 */
+.kpi-bar {
+  display: flex; align-items: stretch; gap: 0;
+  background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 12px;
+  padding: 14px 8px;
+}
+.kpi-block { flex: 1; text-align: right; padding: 0 18px; position: relative; }
+.kpi-block.main { text-align: right; }
+.kpi-label { font-size: 11px; color: var(--aw-text-dim); margin-bottom: 4px; }
+.kpi-value { font-size: 22px; font-weight: 700; color: var(--aw-text-title); }
+.kpi-value .kpi-sub { font-size: 12px; font-weight: 400; color: var(--aw-text-dim); }
+.kpi-extra { font-size: 11px; margin-top: 2px; }
+.kpi-sep { width: 1px; background: var(--aw-border); margin: 4px 0; }
+.kpi-progress { height: 3px; border-radius: 2px; background: var(--aw-border); overflow: hidden; }
+.kpi-progress-fill { height: 100%; background: var(--aw-todo); border-radius: 2px; transition: width 400ms var(--aw-ease); }
+
+/* 全景 */
+.panorama { padding: 0; }
+.panorama-head { display: flex; align-items: center; gap: 8px; padding: 12px 20px; cursor: pointer; }
+.p-title { font-weight: 600; color: var(--aw-text-title); font-size: 14px; }
+.p-toggle { margin-left: auto; color: var(--aw-text-dim); font-size: 12px; }
+.panorama-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 20px 16px; }
+.pano-card { background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 12px; padding: 14px 16px; }
+.pano-title { font-size: 12px; color: var(--aw-text-dim); margin-bottom: 10px; }
+.pano-row { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; font-size: 12px; cursor: default; }
+.pano-label { color: var(--aw-text-dim); }
+.pano-val { color: var(--aw-text-title); font-size: 12px; }
+.pano-export { grid-column: 1 / -1; text-align: right; }
+
+/* 三栏 */
+.main3 { display: grid; grid-template-columns: 5fr 3fr 2fr; gap: 12px; }
+.col { display: flex; flex-direction: column; min-height: 240px; }
+.col-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.col-head b { font-size: 13px; color: var(--aw-text-title); }
+.col-head .dim { font-size: 11px; margin-left: auto; }
+
+/* 持仓卡片 */
+.hold-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; max-height: 320px; }
+.hold-item {
+  position: relative; border: 1px solid var(--aw-border); border-radius: 10px;
+  padding: 10px 12px; background: var(--aw-bg-card); overflow: hidden;
+  transition: border-color var(--aw-dur-fast) var(--aw-ease);
+}
+.hold-item:hover { border-color: var(--aw-border-hover); }
+.hold-item.edge-up::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg, #10b981, rgba(16,185,129,0.2)); }
+.hold-item.edge-down::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg, #ef4444, rgba(239,68,68,0.2)); }
+.hold-main { display: flex; align-items: center; gap: 10px; }
+.hold-sym { display: flex; align-items: center; gap: 6px; width: 140px; }
+.coin-ic { width: 22px; height: 22px; border-radius: 50%; background: var(--aw-accent-dim); color: var(--aw-accent); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex: none; }
+.dir-tag { font-size: 10px; padding: 1px 6px; border-radius: 4px; }
+.dir-tag.long { background: rgba(239,68,68,0.15); color: #f87171; }
+.dir-tag.short { background: rgba(16,185,129,0.15); color: #34d399; }
+.hold-price { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 12px; color: var(--aw-text-body); }
+.hold-price .arr { color: var(--aw-text-disabled); }
+.hold-pnl { font-size: 14px; font-weight: 700; min-width: 80px; text-align: right; }
+.hold-foot { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; }
+
+/* 漏斗 */
+.funnel { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.funnel-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px;
+  background: rgba(255,255,255,0.02); border: 1px solid transparent;
+}
+.funnel-row.has { border-color: var(--aw-border); }
+.funnel-row.funnel-pending { border-color: rgba(239,68,68,0.4); animation: aw-pulse 2s infinite; }
+.funnel-label { display: flex; align-items: center; gap: 6px; font-size: 12px; width: 64px; }
+.funnel-dot { width: 6px; height: 6px; border-radius: 50%; }
+.funnel-count { font-size: 15px; font-weight: 700; color: var(--aw-text-title); }
+.funnel-arrow { color: var(--aw-text-disabled); font-size: 10px; flex: 1; }
+.aw-btn.mini { height: 22px; padding: 0 10px; font-size: 11px; }
+.funnel-trend { border-top: 1px dashed var(--aw-border); padding-top: 8px; }
+.trend-bars { display: flex; align-items: flex-end; gap: 4px; height: 56px; margin-top: 6px; }
+.trend-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.trend-bar { width: 100%; max-width: 22px; background: var(--aw-accent); border-radius: 3px 3px 0 0; opacity: 0.75; min-height: 2px; transition: height 400ms var(--aw-ease); }
+.trend-day { font-size: 9px; color: var(--aw-text-dim); }
+
+/* 快速入口 */
+.quick-actions { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.aw-btn.quick { width: 100%; height: 36px; }
+.strategy-feedback {
+  border: 1px dashed var(--aw-border); border-radius: 10px; padding: 10px 12px; cursor: pointer;
+  transition: all var(--aw-dur-fast) var(--aw-ease);
+}
+.strategy-feedback:hover { border-color: var(--aw-accent); background: var(--aw-accent-dim); }
+.sf-title { font-size: 12px; color: var(--aw-text-title); font-weight: 600; }
+.sf-desc { font-size: 11px; color: var(--aw-text-dim); margin: 4px 0; }
+.sf-link { font-size: 11px; color: var(--aw-accent); }
+
+/* 底部折叠 */
+.bottom-fold { padding: 0; }
+.fold-head { display: flex; align-items: center; gap: 10px; padding: 12px 20px; cursor: pointer; }
+.fold-head b { font-size: 13px; color: var(--aw-text-title); }
+.fold-head .dim { font-size: 11px; }
+.fold-body { padding: 0 20px 16px; }
+.fold-charts { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+.eff-chart { height: 160px; }
+.recent-reviews { border-left: 1px solid var(--aw-border); padding-left: 16px; }
+.rr-title { font-size: 12px; color: var(--aw-text-dim); margin-bottom: 8px; }
+.rr-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+.rr-sym { color: var(--aw-accent); font-weight: 600; }
+.rr-txt { flex: 1; color: var(--aw-text-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 过渡 */
+.fade-enter-active, .fade-leave-active { transition: opacity 150ms var(--aw-ease); }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+.import-tip { font-size: 12px; margin-bottom: 12px; }
+@media (max-width: 1200px) {
+  .main3 { grid-template-columns: 1fr 1fr; }
+  .panorama-grid { grid-template-columns: repeat(2, 1fr); }
+}
 </style>

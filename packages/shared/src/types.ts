@@ -376,15 +376,21 @@ export interface TradeJournal {
   openTime?: number;            // 开仓时间(ms)
   closeTime?: number;           // 平仓时间(ms)
 
-  // B. 交易前计划
-  plannedEntry?: number;        // 计划入场区间/价格
-  plannedStop?: number;         // 计划止损价（必填）
-  plannedTargets?: number[];    // 计划止盈价/目标
-  plannedRR?: string;           // 计划风险回报比，如 "1:3"
-  plannedSize?: string;         // 计划仓位/数量，如 "0.5 手"
+  // B. 交易前计划（按交易计划模板：目标/品种/方向/杠杠/仓位/账户资金/开仓价/止损/止盈/理由/胜率/盈亏比/策略/失效）
+  strategyName?: string;        // 策略名称（与 strategyVersion 拆开，如 趋势跟踪）
+  plannedEntry?: number;        // 计划开仓价格（区间中点）
+  plannedStop?: number;         // 计划止损价（必填；由 plannedStops 首档推导，% 档换算为价格）
+  plannedTargets?: number[];    // 计划止盈价（价格档目标，兼容统计用）
+  plannedRR?: string;           // 目标盈亏比，如 "1:3"
+  plannedSize?: string;         // 仓位/数量，如 "0.5 手"
   plannedRiskAmount?: number;   // 计划最大风险金额
-  plannedRiskPct?: number;      // 计划最大风险百分比（占总资金）
+  plannedRiskPct?: number;      // 计划最大风险百分比（占账户资金）
   plannedHolding?: string;      // 计划持仓周期：日内/波段/趋势
+  estimatedWinRate?: number;    // 预估胜率 0-100
+  /** 止损位：价格或百分比，数组（可分批），每档可带仓位比 */
+  plannedStops?: { mode: 'price' | 'pct'; value?: number; ratio?: number }[];
+  /** 止盈位：价格或百分比，数组（可分批），每档可带仓位比 */
+  plannedTargetsDetail?: { mode: 'price' | 'pct'; value?: number; ratio?: number }[];
   invalidation?: string;        // 失效/取消条件
 
   // C. 实际执行
@@ -439,6 +445,23 @@ export interface TradeJournal {
   indicators?: Record<string, number | string | boolean | null>;
   /** 自动提取结果说明 */
   autoNotes?: string[];
+
+  // H. 四态流转（设计规范 v3.2）：计划中 plan / 持仓中 holding / 待复盘 pending / 已复盘 done
+  status?: 'plan' | 'holding' | 'pending' | 'done';
+  /** 计划预期执行时间（ms） */
+  plannedAt?: number;
+  /** 触发条件文本描述 */
+  triggerDesc?: string;
+  /** 入场质量评分 1-10 */
+  entryQuality?: number;
+  /** 入场质量一句话总结 */
+  entryQualityNote?: string;
+  /** 出场质量评分 1-10 */
+  exitQuality?: number;
+  /** 出场质量一句话总结 */
+  exitQualityNote?: string;
+  /** 策略调整建议（复盘时选择「是」时记录） */
+  strategyAdjustment?: { strategy?: string; direction?: string };
 
   createdAt: number;
   updatedAt: number;

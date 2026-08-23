@@ -17,6 +17,97 @@
         <span v-if="lastPrice != null" class="tv-px mono" :class="lastUp ? 'up' : 'down'">{{ fmtPrice(lastPrice) }}</span>
         <span class="tv-chg mono" :class="lastUp ? 'up' : 'down'">{{ lastChangePct }}</span>
       </div>
+      <!-- 指标菜单（左侧，周期边上）：一级指标列表；点击“均线”进入二级明细 -->
+      <el-popover v-model:visible="indOpen" placement="bottom-end" :width="430" trigger="click" @hide="indLevel = 'root'">
+        <template #reference>
+          <el-button size="small" class="ind-btn" :type="indOpen ? 'primary' : 'default'" title="指标设置"><el-icon><TrendCharts /></el-icon></el-button>
+        </template>
+        <div class="ind-panel">
+          <!-- 一级：指标列表（MA / EMA 收进二级，不默认展示） -->
+          <template v-if="indLevel === 'root'">
+            <div class="ip-list">
+              <div class="ip-item" title="点击进入 MA / EMA 明细" @click="indLevel = 'ma'">
+                <span class="ip-ic" style="color:#f0a35e"><el-icon><DataLine /></el-icon></span>
+                <span class="ip-t">均线 <span class="dim">MA / EMA</span></span>
+                <span class="ip-st">{{ activeLineCount }} 条</span>
+                <span class="ip-arrow">▸</span>
+              </div>
+              <div class="ip-item">
+                <span class="ip-ic" style="color:#67c23a"><el-icon><Histogram /></el-icon></span>
+                <span class="ip-t">成交量</span>
+                <el-switch v-model="volOn" size="small" @change="render" />
+              </div>
+              <div class="ip-item">
+                <span class="ip-ic" style="color:#e6a23c"><el-icon><Odometer /></el-icon></span>
+                <span class="ip-t">MACD</span>
+                <el-switch v-model="macdOn" size="small" @change="render" />
+              </div>
+              <div class="ip-item">
+                <span class="ip-ic" style="color:#4da3ff"><el-icon><DataAnalysis /></el-icon></span>
+                <span class="ip-t">RSI</span>
+                <el-switch v-model="rsiOn" size="small" @change="render" />
+              </div>
+              <div class="ip-item">
+                <span class="ip-ic" style="color:#9254de"><el-icon><PieChart /></el-icon></span>
+                <span class="ip-t">VPVR</span>
+                <el-switch v-model="vpvrOn" size="small" @change="render" />
+              </div>
+            </div>
+          </template>
+          <!-- 二级：均线明细（每条可隐藏/编辑/删除，可添加，可联动编辑） -->
+          <template v-else>
+            <div class="ip-sub">
+              <div class="ip-sub-head">
+                <el-button size="small" text @click="indLevel = 'root'"><el-icon><ArrowLeft /></el-icon>&nbsp;返回</el-button>
+                <span class="ip-sub-title">均线</span>
+                <span class="ip-grp" title="按组显示/隐藏全部均线">
+                  <el-checkbox v-model="emaOn" size="small" @change="render">EMA</el-checkbox>
+                  <el-checkbox v-model="maOn" size="small" @change="render">MA</el-checkbox>
+                </span>
+              </div>
+              <div class="ip-sec-t">MA</div>
+              <div class="ip-lines">
+                <div v-for="ln in maLines" :key="ln.id" class="ip-line" :class="{ off: !ln.on, sel: linkMap[ln.id] }">
+                  <el-checkbox v-model="ln.on" size="small" :title="'显示/隐藏 MA(' + fmtPeriod(ln.period) + ')'" @change="lineChanged(ln)" />
+                  <span class="ip-name" :style="{ color: ln.color }">MA({{ fmtPeriod(ln.period) }})</span>
+                  <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
+                  <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
+                  <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 56px" title="线宽" @change="lineChanged(ln)" />
+                  <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
+                  <button v-if="lines.length > 1" class="del" title="删除该均线" @click="removeLineById(ln.id)">×</button>
+                </div>
+                <div v-if="!maLines.length" class="ip-empty" @click="addLine('ma')">暂无 MA 线，点击添加示例 MA(60)</div>
+              </div>
+              <div class="ip-sec-t">EMA</div>
+              <div class="ip-lines">
+                <div v-for="ln in emaLines" :key="ln.id" class="ip-line" :class="{ off: !ln.on, sel: linkMap[ln.id] }">
+                  <el-checkbox v-model="ln.on" size="small" :title="'显示/隐藏 EMA(' + fmtPeriod(ln.period) + ')'" @change="lineChanged(ln)" />
+                  <span class="ip-name" :style="{ color: ln.color }">EMA({{ fmtPeriod(ln.period) }})</span>
+                  <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
+                  <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
+                  <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 56px" title="线宽" @change="lineChanged(ln)" />
+                  <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
+                  <button v-if="lines.length > 1" class="del" title="删除该均线" @click="removeLineById(ln.id)">×</button>
+                </div>
+                <div v-if="!emaLines.length" class="ip-empty" @click="addLine('ema')">暂无 EMA 线，点击添加示例 EMA(60)</div>
+              </div>
+              <!-- 联动编辑：开启 ⛓ 联动并勾选 ≥2 条时，颜色/粗细应用到所有选中项 -->
+              <div v-if="linkMode && linkCount >= 2" class="ip-link">
+                <span class="ip-link-t">联动编辑 {{ linkCount }} 条</span>
+                <input v-model="linkColor" type="color" class="color" title="应用到所有选中均线" @change="applyLinked" />
+                <el-input-number v-model="linkWidth" :min="0.5" :max="4" :step="0.1" size="small" style="width: 72px" title="应用到所有选中均线" @change="applyLinked" />
+                <el-button size="small" text type="primary" @click="clearLink">取消</el-button>
+              </div>
+              <div class="ip-actions">
+                <el-button size="small" text type="primary" @click="addPeriod">+ 周期（MA+EMA）</el-button>
+                <el-button size="small" text @click="addLine('ma')">+ MA</el-button>
+                <el-button size="small" text @click="addLine('ema')">+ EMA</el-button>
+                <el-button size="small" text :type="linkMode ? 'primary' : ''" @click="linkMode = !linkMode">⛓ 联动</el-button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </el-popover>
       <!-- 时间周期：单个下拉（鼠标悬停自动展开），显示当前激活周期；内置 置顶 / 常用周期 / 自定义 三组 -->
       <div class="tv-intervals">
         <!-- 置顶周期：默认展示 4 个（与下拉内置顶组同步） -->
@@ -59,100 +150,6 @@
         </el-dropdown>
       </div>
       <div class="tv-actions">
-        <!-- 指标菜单（下拉抽屉，logo 图标）：一级指标列表；点击“均线”进入二级明细 -->
-        <el-popover v-model:visible="indOpen" placement="bottom-end" :width="430" trigger="click" @hide="indLevel = 'root'">
-          <template #reference>
-            <el-button size="small" class="ind-btn" :type="indOpen ? 'primary' : 'default'" title="指标设置"><el-icon><TrendCharts /></el-icon></el-button>
-          </template>
-          <div class="ind-panel">
-            <!-- 一级：指标列表（MA / EMA 收进二级，不默认展示） -->
-            <template v-if="indLevel === 'root'">
-              <div class="ip-list">
-                <div class="ip-item" title="点击进入 MA / EMA 明细" @click="indLevel = 'ma'">
-                  <span class="ip-ic" style="color:#f0a35e"><el-icon><DataLine /></el-icon></span>
-                  <span class="ip-t">均线 <span class="dim">MA / EMA</span></span>
-                  <span class="ip-st">{{ activeLineCount }} 条</span>
-                  <span class="ip-arrow">▸</span>
-                </div>
-                <div class="ip-item">
-                  <span class="ip-ic" style="color:#67c23a"><el-icon><Histogram /></el-icon></span>
-                  <span class="ip-t">成交量</span>
-                  <el-switch v-model="volOn" size="small" @change="render" />
-                </div>
-                <div class="ip-item">
-                  <span class="ip-ic" style="color:#e6a23c"><el-icon><Odometer /></el-icon></span>
-                  <span class="ip-t">MACD</span>
-                  <el-switch v-model="macdOn" size="small" @change="render" />
-                </div>
-                <div class="ip-item">
-                  <span class="ip-ic" style="color:#4da3ff"><el-icon><DataAnalysis /></el-icon></span>
-                  <span class="ip-t">RSI</span>
-                  <el-switch v-model="rsiOn" size="small" @change="render" />
-                </div>
-                <div class="ip-item">
-                  <span class="ip-ic" style="color:#9254de"><el-icon><PieChart /></el-icon></span>
-                  <span class="ip-t">VPVR</span>
-                  <el-switch v-model="vpvrOn" size="small" @change="render" />
-                </div>
-              </div>
-            </template>
-            <!-- 二级：均线明细（每条可隐藏/编辑/删除，可添加，可联动编辑） -->
-            <template v-else>
-              <div class="ip-sub">
-                <div class="ip-sub-head">
-                  <el-button size="small" text @click="indLevel = 'root'"><el-icon><ArrowLeft /></el-icon>&nbsp;返回</el-button>
-                  <span class="ip-sub-title">均线</span>
-                  <span class="ip-grp" title="按组显示/隐藏全部均线">
-                    <el-checkbox v-model="emaOn" size="small" @change="render">EMA</el-checkbox>
-                    <el-checkbox v-model="maOn" size="small" @change="render">MA</el-checkbox>
-                  </span>
-                </div>
-                <div class="ip-sec-t">MA</div>
-                <div class="ip-lines">
-                  <div v-for="ln in maLines" :key="ln.id" class="ip-line" :class="{ off: !ln.on, sel: linkMap[ln.id] }">
-                    <el-checkbox v-model="ln.on" size="small" :title="'显示/隐藏 MA(' + fmtPeriod(ln.period) + ')'" @change="lineChanged(ln)" />
-                    <span class="ip-name" :style="{ color: ln.color }">MA({{ fmtPeriod(ln.period) }})</span>
-                    <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
-                    <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
-                    <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 56px" title="线宽" @change="lineChanged(ln)" />
-                    <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
-                    <button v-if="lines.length > 1" class="del" title="删除该均线" @click="removeLineById(ln.id)">×</button>
-                  </div>
-                  <div v-if="!maLines.length" class="ip-empty" @click="addLine('ma')">暂无 MA 线，点击添加示例 MA(60)</div>
-                </div>
-                <div class="ip-sec-t">EMA</div>
-                <div class="ip-lines">
-                  <div v-for="ln in emaLines" :key="ln.id" class="ip-line" :class="{ off: !ln.on, sel: linkMap[ln.id] }">
-                    <el-checkbox v-model="ln.on" size="small" :title="'显示/隐藏 EMA(' + fmtPeriod(ln.period) + ')'" @change="lineChanged(ln)" />
-                    <span class="ip-name" :style="{ color: ln.color }">EMA({{ fmtPeriod(ln.period) }})</span>
-                    <input :value="ln.input" class="period-input" size="5" title="周期（支持小数，如 62.8）" @change="(e: Event) => setLinePeriod(ln, (e.target as HTMLInputElement).value)" @keyup.enter="(e: Event) => (e.target as HTMLInputElement).blur()" />
-                    <input v-model="ln.color" type="color" class="color" :title="'颜色 ' + ln.color" @change="lineChanged(ln)" />
-                    <el-input-number v-model="ln.width" :min="0.5" :max="4" :step="0.1" size="small" style="width: 56px" title="线宽" @change="lineChanged(ln)" />
-                    <el-checkbox v-if="linkMode" v-model="linkMap[ln.id]" size="small" class="ip-linkbox" title="联动编辑勾选" @change="syncLink" />
-                    <button v-if="lines.length > 1" class="del" title="删除该均线" @click="removeLineById(ln.id)">×</button>
-                  </div>
-                  <div v-if="!emaLines.length" class="ip-empty" @click="addLine('ema')">暂无 EMA 线，点击添加示例 EMA(60)</div>
-                </div>
-                <!-- 联动编辑：开启 ⛓ 联动并勾选 ≥2 条时，颜色/粗细应用到所有选中项 -->
-                <div v-if="linkMode && linkCount >= 2" class="ip-link">
-                  <span class="ip-link-t">联动编辑 {{ linkCount }} 条</span>
-                  <input v-model="linkColor" type="color" class="color" title="应用到所有选中均线" @change="applyLinked" />
-                  <el-input-number v-model="linkWidth" :min="0.5" :max="4" :step="0.1" size="small" style="width: 72px" title="应用到所有选中均线" @change="applyLinked" />
-                  <el-button size="small" text type="primary" @click="clearLink">取消</el-button>
-                </div>
-                <div class="ip-actions">
-                  <el-button size="small" text type="primary" @click="addPeriod">+ 周期（MA+EMA）</el-button>
-                  <el-button size="small" text @click="addLine('ma')">+ MA</el-button>
-                  <el-button size="small" text @click="addLine('ema')">+ EMA</el-button>
-                  <el-button size="small" text :type="linkMode ? 'primary' : ''" @click="linkMode = !linkMode">⛓ 联动</el-button>
-                </div>
-              </div>
-            </template>
-          </div>
-        </el-popover>
-        <el-input-number v-model="limit" :min="50" :max="1000" :step="50" size="small" style="width: 96px" @change="load()" />
-        <span class="dim">自动</span>
-        <el-switch v-model="autoRefresh" size="small" />
         <el-button size="small" @click="refreshLatest">刷新</el-button>
       </div>
     </div>
@@ -349,8 +346,7 @@ const pinnedIv = ref<string[]>([...QUICK_INTERVAL_VALUES]);
 const customIvList = ref<{ value: string; label: string }[]>([]);
 const addIvNum = ref('');
 const addIvUnit = ref('m');
-const limit = ref(300);
-const autoRefresh = ref(false);
+const limit = ref(256);
 /** EMA / MA 两组开关：按组显示/隐藏全部均线 */
 const emaOn = ref(true);
 const maOn = ref(true);
@@ -849,12 +845,13 @@ async function refreshLatest() {
     if (!lastNew) return;
     // 无变化（最新 K 线时间与收盘价一致）则跳过
     if (lastPrev && lastPrev.closeTime === lastNew.closeTime && lastPrev.close === lastNew.close) return;
-    // 记录当前可见时间窗口（合并后按时间重新锚定，防聚合分组平移导致视图跳动）
+    // 记录当前可见窗口相对最新 K 线的偏移（根数）：刷新后按同样偏移重新锚定，
+    // 保持拖拽/缩放后的位置不跳动（右侧留空时 rightOff 为负）
     const oldPadded = prevArr.length + rightPadFor(prevArr.length);
     const oldFrom = Math.max(0, Math.floor((oldPadded * zoomStart) / 100));
     const oldTo = Math.min(prevArr.length, Math.max(oldFrom + 1, Math.ceil((oldPadded * zoomEnd) / 100)));
-    const t0 = prevArr[Math.min(prevArr.length - 1, oldFrom)]!.openTime;
-    const t1 = prevArr[Math.min(prevArr.length - 1, oldTo - 1)]!.openTime;
+    const leftOff = prevArr.length - 1 - oldFrom;
+    const rightOff = prevArr.length - 1 - (oldTo - 1);
     // 与已加载缓冲合并（保留左侧历史/预热页）：丢弃与新页重叠的旧尾部，避免缺口
     if (baseCandles.length) {
       const firstFresh = latestBase[0]!.openTime;
@@ -867,13 +864,13 @@ async function refreshLatest() {
     const cs = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
     if (!cs.length) return;
     candles.value = cs;
-    // 按时间重新定位新缓冲中的可见窗口
-    let nf = 0;
-    while (nf < cs.length && cs[nf]!.openTime < t0) nf++;
-    let nt = nf;
-    while (nt < cs.length && cs[nt]!.openTime <= t1) nt++;
-    if (nt <= nf) nt = Math.min(cs.length, nf + 1);
-    anchorZoom(nf, nt);
+    // 按距最新 K 线的偏移重新定位可见窗口（保持拖拽位置）；
+    // 退化场景（如视图整体在右侧留空区/紧贴最新 K 线缩放）保持原缩放百分比，避免跳变复位
+    const nf = Math.max(0, cs.length - 1 - leftOff);
+    const nt = Math.min(cs.length, cs.length - rightOff);
+    if (nf < cs.length && nt > nf + 1) {
+      anchorZoom(nf, nt);
+    }
 
     // 重算指标（含右侧填充）
     const RIGHT_PAD = rightPadFor(cs.length);
@@ -1690,13 +1687,11 @@ watch(() => accountStore.selectedId, () => {
 });
 
 // ---------- 生命周期 ----------
-watch(autoRefresh, (on) => {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
-  }
-  if (on) timer = setInterval(() => refreshLatest(), 30_000);
-});
+// 自动刷新默认开启（30 秒增量更新最新 K 线），无需开关
+function startAutoRefresh() {
+  if (timer) return;
+  timer = setInterval(() => refreshLatest(), 30_000);
+}
 
 onMounted(() => {
   resizeHandler = () => {
@@ -1708,6 +1703,7 @@ onMounted(() => {
   loadSettings();
   loadIvSettings();
   load();
+  startAutoRefresh();
 });
 
 onBeforeUnmount(() => {

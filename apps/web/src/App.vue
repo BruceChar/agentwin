@@ -1,70 +1,98 @@
 <template>
   <div class="shell">
-    <header class="topbar">
-      <div class="brand"><span class="logo-dot"></span> AgentWin <span class="brand-sub">交易系统</span></div>
-      <nav class="nav">
-        <router-link v-for="item in primaryNav" :key="item.path" :to="item.path" class="nav-item" :class="{ active: $route.path === item.path }">{{ item.label }}</router-link>
-        <span class="nav-divider" />
-        <router-link v-for="item in secondaryNav" :key="item.path" :to="item.path" class="nav-item sec" :class="{ active: $route.path === item.path }">{{ item.label }}</router-link>
-      </nav>
-      <div class="top-right">
-        <el-tag size="small" :type="syncOk ? 'success' : 'warning'" effect="plain">{{ syncOk ? '已连接' : '同步中' }}</el-tag>
-        <el-tag v-if="proxyTag" size="small" type="info" effect="plain">{{ proxyTag }}</el-tag>
-        <el-popover trigger="click" placement="bottom-end" :width="320">
-          <template #reference>
-            <button class="acct-btn">{{ acctLabel }} <span class="caret">▾</span></button>
-          </template>
-          <div class="pop">
-            <div class="pop-title">账户（各页面数据跟随所选账户）</div>
-            <div class="acct-list">
-              <div
-                v-for="a in accountStore.accounts"
-                :key="a.id"
-                class="acct-item"
-                :class="{ active: a.id === accountStore.selectedId }"
-                @click="pickAccount(a.id)"
-              >
-                <span class="acct-dot" :class="a.type"></span>
-                <span class="acct-name">{{ a.type === 'real' ? '真实' : '模拟' }} · {{ a.name }}</span>
-                <span v-if="a.id === accountStore.selectedId" class="acct-check">✓</span>
-              </div>
-              <div v-if="!accountStore.accounts.length" class="pop-line dim">暂无账户</div>
-            </div>
-            <div class="pop-row">
-              <span class="dim">所选账户数据</span>
-              <el-button size="small" text type="danger" @click="resetAccountData">清除成交/权益</el-button>
-            </div>
-            <el-divider />
-            <div class="pop-row">
-              <span>代理</span>
-              <el-switch v-model="proxyEnabled" size="small" @change="applyProxy" />
-            </div>
-            <div class="pop-row">
-              <span>主题</span>
-              <el-segmented v-model="themeMode" :options="['深色', '浅色']" size="small" @change="toggleTheme" />
-            </div>
-            <el-divider />
-            <div class="pop-row">
-              <el-button size="small" text @click="go('/settings')">设置</el-button>
-              <el-button size="small" text @click="chatVisible = true">AI 顾问</el-button>
-              <el-button size="small" text @click="go('/journal?new=1')">新建日志</el-button>
-            </div>
-          </div>
-        </el-popover>
+    <!-- 左侧固定侧边栏 200px -->
+    <aside class="sidebar">
+      <div class="side-brand">
+        <span class="logo-dot"></span>
+        <span class="brand-name">AgentWin</span>
+        <span class="brand-sub">交易日志系统</span>
       </div>
-    </header>
-    <main class="content"><router-view /></main>
-    <footer class="statusbar">
-      <span>Agent 运行中</span>
-      <span>存储: JSONL + SQLite</span>
-      <span>最后更新: {{ lastSyncText }}</span>
-    </footer>
+
+      <nav class="side-nav">
+        <div v-for="group in navGroups" :key="group.title" class="nav-group">
+          <div class="nav-group-title">{{ group.title }}</div>
+          <router-link
+            v-for="item in group.items"
+            :key="item.path"
+            :to="item.path"
+            class="nav-item"
+            :class="{ active: isActive(item) }"
+          >
+            <el-icon class="nav-ic"><component :is="item.icon" /></el-icon>
+            <span class="nav-label">{{ item.label }}</span>
+            <span v-if="badgeOf(item) > 0" class="nav-badge">{{ badgeOf(item) }}</span>
+          </router-link>
+        </div>
+      </nav>
+
+      <div class="side-bottom">
+        <div class="side-account">
+          <span class="acct-dot" :class="acct?.type ?? ''"></span>
+          <span class="acct-name">{{ acctLabel }}</span>
+          <span class="acct-caret">▾</span>
+        </div>
+        <router-link to="/settings" class="nav-item flat" :class="{ active: $route.path === '/settings' }">
+          <el-icon class="nav-ic"><Setting /></el-icon>
+          <span class="nav-label">设置</span>
+        </router-link>
+      </div>
+    </aside>
+
+    <!-- 右侧弹性内容区 -->
+    <div class="main">
+      <header class="topbar">
+        <div class="crumb">
+          <span class="crumb-sep" v-if="crumbGroup">/</span>
+          <span class="crumb-dim" v-if="crumbGroup">{{ crumbGroup }}</span>
+          <b>{{ crumbTitle }}</b>
+        </div>
+        <div class="top-right">
+          <div class="search-box">
+            <el-icon class="s-ic"><Search /></el-icon>
+            <input v-model="searchText" placeholder="搜索品种 / 日志 / 计划…" @keyup.enter="doSearch" />
+            <kbd class="s-kbd">↵</kbd>
+          </div>
+          <el-tag size="small" :type="syncOk ? 'success' : 'warning'" effect="dark" class="sync-tag">
+            <span class="sync-dot" :class="{ ok: syncOk }"></span>{{ syncOk ? '已连接' : '同步中' }}
+          </el-tag>
+          <button class="icon-btn" title="AI 助手" @click="go('/llm')"><el-icon><ChatDotRound /></el-icon></button>
+          <button class="icon-btn" title="新建计划" @click="go('/plans?new=1')"><el-icon><Plus /></el-icon></button>
+          <el-popover trigger="click" placement="bottom-end" :width="300">
+            <template #reference>
+              <button class="acct-btn">{{ acctLabel }} <span class="caret">▾</span></button>
+            </template>
+            <div class="pop">
+              <div class="pop-title">账户（各页面数据跟随所选账户）</div>
+              <div class="acct-list">
+                <div
+                  v-for="a in accountStore.accounts"
+                  :key="a.id"
+                  class="acct-item"
+                  :class="{ active: a.id === accountStore.selectedId }"
+                  @click="pickAccount(a.id)"
+                >
+                  <span class="acct-dot" :class="a.type"></span>
+                  <span class="acct-name">{{ a.type === 'real' ? '真实' : '模拟' }} · {{ a.name }}</span>
+                  <span v-if="a.id === accountStore.selectedId" class="acct-check">✓</span>
+                </div>
+                <div v-if="!accountStore.accounts.length" class="pop-line dim">暂无账户</div>
+              </div>
+            </div>
+          </el-popover>
+        </div>
+      </header>
+
+      <main class="content">
+        <router-view v-slot="{ Component }">
+          <transition name="fade" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
+      </main>
+    </div>
 
     <!-- AI 顾问悬浮窗 -->
-    <el-tooltip content="AI 策略顾问" placement="left">
-      <button class="ai-fab" @click="chatVisible = true">AI</button>
-    </el-tooltip>
-    <el-drawer v-model="chatVisible" size="420px" :with-header="false" destroy-on-close>
+    <el-drawer v-model="chatVisible" size="440px" :with-header="false" destroy-on-close>
       <div class="chat-wrap"><AiChat /></div>
     </el-drawer>
   </div>
@@ -72,96 +100,92 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { useRoute, useRouter } from 'vue-router';
 import { api } from './api.ts';
 import AiChat from './components/AiChat.vue';
 import { accountLabel, accountStore, loadAccounts, selectAccount } from './store.ts';
+import { deriveStatus, type TradeJournal } from './lib/journal.ts';
 
+const route = useRoute();
 const router = useRouter();
 
-const primaryNav = [
-  { path: '/', label: '首页' },
-  { path: '/journal', label: '交易日志' },
-  { path: '/stats', label: '统计分析' },
-  { path: '/strategies', label: '策略管理' },
-];
-const secondaryNav = [
-  { path: '/market', label: '行情' },
-  { path: '/paper', label: '模拟交易' },
-  { path: '/sentiment', label: '舆情' },
+type NavItem = { path: string; label: string; icon: string; badgeKey?: string };
+const navGroups: { title: string; items: NavItem[] }[] = [
+  {
+    title: '核心工作流',
+    items: [
+      { path: '/', label: '仪表盘', icon: 'Odometer' },
+      { path: '/journal', label: '交易日志', icon: 'Notebook', badgeKey: 'holding' },
+      { path: '/plans', label: '交易计划', icon: 'Calendar', badgeKey: 'plan' },
+      { path: '/review', label: '复盘中心', icon: 'DataAnalysis', badgeKey: 'pending' },
+    ],
+  },
+  {
+    title: '策略与数据',
+    items: [
+      { path: '/strategies', label: '策略管理', icon: 'SetUp' },
+      { path: '/stats', label: '统计分析', icon: 'TrendCharts' },
+      { path: '/market', label: '行情', icon: 'DataLine' },
+    ],
+  },
+  {
+    title: '工具',
+    items: [
+      { path: '/paper', label: '模拟交易', icon: 'Money' },
+      { path: '/sentiment', label: '舆情', icon: 'ChatDotRound' },
+      { path: '/llm', label: 'AI 助手', icon: 'MagicStick' },
+    ],
+  },
 ];
 
+const counts = ref<Record<string, number>>({ plan: 0, holding: 0, pending: 0, done: 0 });
 const syncOk = ref(false);
-const proxyTag = ref('');
-const proxyEnabled = ref(false);
-const proxyUrl = ref('');
-const lastSyncText = ref('-');
-const acctLabel = computed(() => {
-  const sel = accountStore.accounts.find((a) => a.id === accountStore.selectedId) ?? null;
-  return accountLabel(sel);
-});
-function pickAccount(id: string) {
-  selectAccount(id);
-}
-
-/** 清除所选账户的成交/权益脏数据（并暂停自动同步成交） */
-async function resetAccountData() {
-  const sel = accountStore.accounts.find((a) => a.id === accountStore.selectedId);
-  if (!sel) return;
-  try {
-    await ElMessageBox.confirm(
-      '确认清除「' + (sel.type === 'real' ? '真实' : '模拟') + ' · ' + sel.name + '」的成交记录与权益曲线？' +
-      '\n清除后该账户自动同步成交将暂停（手动同步可恢复）。',
-      '清除账户数据',
-      { type: 'warning', confirmButtonText: '清除', cancelButtonText: '取消' },
-    );
-  } catch {
-    return; // 用户取消
-  }
-  try {
-    const res = await api.post<{ cleared: { trades: number; equity: number } }>('/accounts/' + sel.id + '/reset', { trades: true, equity: true });
-    ElMessage.success('已清除成交 ' + res.cleared.trades + ' 条、权益 ' + res.cleared.equity + ' 点');
-  } catch (err) {
-    ElMessage.error('清除失败：' + (err instanceof Error ? err.message : String(err)));
-  }
-}
+const searchText = ref('');
 const chatVisible = ref(false);
-const themeMode = ref(localStorage.getItem('aw-theme') === 'light' ? '浅色' : '深色');
 
-function go(path: string) {
-  router.push(path);
+const acct = computed(() => accountStore.accounts.find((a) => a.id === accountStore.selectedId) ?? null);
+const acctLabel = computed(() => accountLabel(acct.value));
+
+function badgeOf(item: NavItem): number {
+  if (!item.badgeKey) return 0;
+  return counts.value[item.badgeKey] ?? 0;
 }
 
-function toggleTheme(mode: string | number | boolean) {
-  const light = String(mode) === '浅色';
-  document.documentElement.classList.toggle('dark', !light);
-  localStorage.setItem('aw-theme', light ? 'light' : 'dark');
+function isActive(item: NavItem): boolean {
+  if (item.path === '/') return route.path === '/';
+  return route.path.startsWith(item.path);
 }
 
-async function applyProxy() {
-  try {
-    const cfg = await api.post<{ enabled: boolean; url?: string }>('/binance/proxy', { mode: proxyEnabled.value ? 'on' : 'off', url: proxyUrl.value });
-    proxyEnabled.value = cfg.enabled;
-    proxyTag.value = cfg.enabled ? '代理开' : '直连';
-    ElMessage.success(cfg.enabled ? '代理已开启' : '已切换直连');
-  } catch (e) {
-    ElMessage.error((e as Error).message);
-  }
+const crumbGroup = computed(() => {
+  const p = route.path;
+  if (p.startsWith('/journal') || p.startsWith('/plans') || p.startsWith('/review')) return '核心工作流';
+  if (p.startsWith('/strategies') || p.startsWith('/stats') || p.startsWith('/market')) return '策略与数据';
+  if (p.startsWith('/paper') || p.startsWith('/sentiment') || p.startsWith('/llm')) return '工具';
+  return '';
+});
+const crumbTitle = computed(() => (route.meta.title as string) ?? '仪表盘');
+
+function go(path: string) { router.push(path); }
+
+function pickAccount(id: string) { selectAccount(id); }
+
+function doSearch() {
+  const q = searchText.value.trim();
+  if (!q) return;
+  router.push({ path: '/journal', query: { search: q } });
 }
 
 async function refreshStatus() {
   try {
     await api.get('/health').catch(() => null);
     syncOk.value = true;
-    const bs = await api.get<{ lastSync?: { at?: number }; proxy?: { enabled?: boolean; url?: string } }>('/binance/status').catch(() => null);
-    if (bs?.lastSync?.at) lastSyncText.value = new Date(bs.lastSync.at).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-    if (bs?.proxy) {
-      proxyEnabled.value = bs.proxy.enabled ?? false;
-      proxyUrl.value = bs.proxy.url ?? '';
-      proxyTag.value = bs.proxy.enabled ? '代理开' : '直连';
-    }
     await loadAccounts().catch(() => null);
+    const j = await api.get<{ records: TradeJournal[] }>('/journal/trades?limit=1000').catch(() => null);
+    if (j) {
+      const c = { plan: 0, holding: 0, pending: 0, done: 0 };
+      for (const r of j.records) c[deriveStatus(r)]++;
+      counts.value = c;
+    }
   } catch {
     syncOk.value = false;
   }
@@ -169,79 +193,114 @@ async function refreshStatus() {
 
 onMounted(() => {
   refreshStatus();
-  setInterval(refreshStatus, 30000);
+  setInterval(refreshStatus, 60000);
 });
 </script>
 
-<style>
-:root {
-  --bg: #0b0f14;
-  --bg-card: #11161d;
-  --bg-elev: #161d26;
-  --border: #232c37;
-  --text: #d7dde4;
-  --text-dim: #7b8794;
-  --accent: #4da3ff;
-  --up: #4fbf9f;
-  --down: #e5484d;
-  --mono: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
+<style scoped>
+.shell { display: flex; height: 100%; }
+
+/* ---------- 侧边栏 ---------- */
+.sidebar {
+  width: var(--aw-sidebar-w);
+  flex: none;
+  background: var(--aw-bg-sidebar);
+  border-right: 1px solid var(--aw-border);
+  display: flex;
+  flex-direction: column;
 }
-/* 浅色主题 */
-html:not(.dark) {
-  --bg: #f3f5f8;
-  --bg-card: #ffffff;
-  --bg-elev: #eef1f5;
-  --border: #e3e7ec;
-  --text: #1c2733;
-  --text-dim: #7a8694;
-  --accent: #2563eb;
-  --up: #14805f;
-  --down: #d9551f;
+.side-brand { display: flex; align-items: baseline; gap: 6px; padding: 16px 16px 12px; }
+.logo-dot { width: 9px; height: 9px; border-radius: 2px; background: var(--aw-accent); box-shadow: 0 0 8px var(--aw-accent); align-self: center; }
+.brand-name { font-size: 15px; font-weight: 700; color: var(--aw-text-title); letter-spacing: 0.5px; }
+.brand-sub { font-size: 10px; color: var(--aw-text-dim); }
+
+.side-nav { flex: 1; overflow-y: auto; padding: 4px 0; }
+.nav-group { margin-bottom: 14px; }
+.nav-group-title { padding: 6px 16px 4px; font-size: 10px; color: var(--aw-text-disabled); letter-spacing: 1px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px; color: var(--aw-text-dim); text-decoration: none;
+  font-size: 13px; border-left: 3px solid transparent; position: relative;
+  transition: all var(--aw-dur-fast) var(--aw-ease);
 }
-html.dark {
-  --el-bg-color: var(--bg-card);
-  --el-bg-color-overlay: var(--bg-elev);
-  --el-border-color: var(--border);
-  --el-border-color-light: var(--border);
-  --el-text-color-primary: var(--text);
-  --el-text-color-regular: var(--text);
-  --el-text-color-secondary: var(--text-dim);
-  --el-fill-color-blank: var(--bg-card);
+.nav-item:hover { color: var(--aw-text-body); background: rgba(255,255,255,0.03); }
+.nav-item.active {
+  color: var(--aw-accent);
+  background: rgba(6, 182, 212, 0.08);
+  border-left-color: var(--aw-accent);
 }
-html, body, #app { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif; }
-.shell { display: flex; flex-direction: column; height: 100%; }
-.topbar { display: flex; align-items: center; gap: 20px; height: 52px; padding: 0 20px; background: var(--bg-card); border-bottom: 1px solid var(--border); }
-.brand { font-weight: 700; font-size: 15px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px; }
-.logo-dot { width: 10px; height: 10px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-.brand-sub { color: var(--text-dim); font-weight: 400; font-size: 12px; }
-.nav { display: flex; align-items: center; gap: 4px; flex: 1; overflow-x: auto; }
-.nav-item { padding: 6px 12px; border-radius: 6px; color: var(--text-dim); font-size: 13px; text-decoration: none; white-space: nowrap; }
-.nav-item:hover { color: var(--text); background: var(--bg-elev); }
-.nav-item.active { color: var(--accent); background: rgba(77,163,255,0.12); }
-.nav-item.sec { font-size: 12px; opacity: 0.75; }
-.nav-divider { width: 1px; height: 18px; background: var(--border); margin: 0 6px; }
-.top-right { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
-.acct-btn { display: flex; align-items: center; gap: 4px; background: var(--bg-elev); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: var(--mono); }
-.acct-btn:hover { border-color: var(--accent); }
+.nav-ic { font-size: 16px; }
+.nav-label { flex: 1; }
+.nav-badge {
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--aw-todo); color: #1a1205; font-size: 11px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--aw-mono);
+}
+.side-bottom { border-top: 1px solid var(--aw-border); padding: 8px 0; }
+.side-account {
+  display: flex; align-items: center; gap: 8px; padding: 8px 16px;
+  cursor: pointer; font-size: 12px; color: var(--aw-text-body);
+}
+.side-account:hover { background: rgba(255,255,255,0.03); }
+.acct-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.acct-dot.real { background: #f0a35e; box-shadow: 0 0 6px #f0a35e; }
+.acct-dot.paper { background: var(--aw-up); }
+.acct-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-caret { font-size: 9px; color: var(--aw-text-dim); }
+.nav-item.flat { border-left: 3px solid transparent; }
+
+/* ---------- 主区 ---------- */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+  height: var(--aw-topbar-h); display: flex; align-items: center; gap: 14px;
+  padding: 0 20px; border-bottom: 1px solid var(--aw-border); background: var(--aw-bg);
+}
+.crumb { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.crumb-sep { color: var(--aw-text-disabled); }
+.crumb-dim { color: var(--aw-text-dim); font-size: 12px; }
+.crumb b { color: var(--aw-text-title); font-weight: 600; }
+.top-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.search-box {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 8px;
+  padding: 0 10px; height: 30px; width: 220px; color: var(--aw-text-dim); font-size: 12px;
+  transition: all var(--aw-dur-fast) var(--aw-ease);
+}
+.search-box:focus-within { border-color: var(--aw-accent); width: 260px; }
+.s-ic { font-size: 13px; }
+.search-box input { background: transparent; border: none; outline: none; color: var(--aw-text-body); font-size: 12px; flex: 1; font-family: inherit; }
+.s-kbd { font-size: 10px; color: var(--aw-text-disabled); border: 1px solid var(--aw-border); border-radius: 4px; padding: 0 4px; font-family: var(--aw-mono); }
+.sync-tag { border: none; }
+.sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--aw-todo); display: inline-block; margin-right: 5px; }
+.sync-dot.ok { background: var(--aw-up); }
+.icon-btn {
+  width: 30px; height: 30px; border-radius: 8px; border: 1px solid transparent;
+  background: transparent; color: var(--aw-text-dim); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 15px;
+  transition: all var(--aw-dur-fast) var(--aw-ease);
+}
+.icon-btn:hover { background: var(--aw-bg-card); color: var(--aw-accent); border-color: var(--aw-border); }
+.acct-btn {
+  display: flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px;
+  background: var(--aw-bg-card); border: 1px solid var(--aw-border); color: var(--aw-text-body);
+  border-radius: 8px; font-size: 12px; cursor: pointer; font-family: var(--aw-mono);
+}
+.acct-btn:hover { border-color: var(--aw-accent); }
 .caret { font-size: 9px; }
-.content { flex: 1; overflow-y: auto; padding: 16px; }
-.statusbar { display: flex; gap: 20px; height: 30px; align-items: center; padding: 0 20px; background: var(--bg-card); border-top: 1px solid var(--border); color: var(--text-dim); font-size: 11px; font-family: var(--mono); }
-.ai-fab { position: fixed; right: 20px; bottom: 44px; width: 48px; height: 48px; border-radius: 50%; border: none; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; box-shadow: 0 4px 16px rgba(77,163,255,0.4); z-index: 100; font-size: 14px; }
-.ai-fab:hover { filter: brightness(1.1); }
+
+.content { flex: 1; overflow-y: auto; padding: 16px 20px; }
+
+/* 路由过渡 */
+.fade-enter-active, .fade-leave-active { transition: opacity var(--aw-dur-fast) var(--aw-ease); }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
 .chat-wrap { height: calc(100vh - 40px); }
 .pop-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 .pop-line { font-size: 12px; margin-bottom: 4px; }
-.pop-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 13px; }
 .acct-list { display: flex; flex-direction: column; gap: 2px; }
-.acct-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text); }
-.acct-item:hover { background: var(--bg-elev); }
-.acct-item.active { background: rgba(77,163,255,0.12); color: var(--accent); }
-.acct-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.acct-dot.real { background: #f0a35e; box-shadow: 0 0 6px #f0a35e; }
-.acct-dot.paper { background: #4fbf9f; }
-.acct-name { flex: 1; }
-.acct-check { color: var(--accent); font-weight: 700; }
-.up { color: var(--up); }
-.down { color: var(--down); }
-.el-card { --el-card-border-color: var(--border); background: var(--bg-card); border-radius: 8px; }
+.acct-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--aw-text-body); }
+.acct-item:hover { background: var(--aw-bg-card); }
+.acct-item.active { background: var(--aw-accent-dim); color: var(--aw-accent); }
+.acct-check { color: var(--aw-accent); font-weight: 700; }
 </style>

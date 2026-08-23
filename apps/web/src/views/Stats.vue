@@ -1,6 +1,11 @@
 <template>
-  <div>
-    <el-card shadow="never" class="mb">
+  <div class="stats aw-page">
+    <div class="stats-head">
+      <h2>统计分析</h2>
+      <span class="dim">基于所选账户的实际成交（{{ acctLabelText }}）</span>
+    </div>
+
+    <div class="aw-card filter-bar">
       <div class="row">
         <span class="label">账户：</span>
         <el-select :model-value="accountStore.selectedId" style="width: 200px" @change="onAccountChange">
@@ -13,25 +18,24 @@
           <el-option v-for="(label, m) in MARKET_LABELS" :key="m" :value="m" :label="label" />
         </el-select>
         <el-button size="small" @click="load">刷新</el-button>
-        <span class="dim">统计分析基于所选账户的实际成交（{{ acctLabelText }}）</span>
       </div>
-    </el-card>
+    </div>
 
-    <el-row :gutter="12">
-      <el-col :span="4" v-for="c in cards" :key="c.label">
-        <el-card shadow="never" class="metric"><div class="mlabel">{{ c.label }}</div><div class="mvalue mono" :class="c.cls">{{ c.text }}</div></el-card>
-      </el-col>
-    </el-row>
+    <!-- 指标卡 -->
+    <div class="metric-grid">
+      <div v-for="c in cards" :key="c.label" class="metric-card aw-card">
+        <div class="mlabel">{{ c.label }}</div>
+        <div class="mvalue mono" :class="c.cls">{{ c.text }}</div>
+      </div>
+    </div>
 
-    <el-row :gutter="12" class="mt">
-      <el-col :span="8"><el-card shadow="never"><template #header>按品种盈亏</template><div ref="symChart" class="chart"></div></el-card></el-col>
-      <el-col :span="8"><el-card shadow="never"><template #header>按市场盈亏</template><div ref="mktChart" class="chart"></div></el-card></el-col>
-      <el-col :span="8"><el-card shadow="never"><template #header>按方向盈亏</template><div ref="dirChart" class="chart"></div></el-card></el-col>
-    </el-row>
-    <el-row :gutter="12" class="mt">
-      <el-col :span="12"><el-card shadow="never"><template #header>每日盈亏</template><div ref="dayChart" class="chart"></div></el-card></el-col>
-      <el-col :span="12"><el-card shadow="never"><template #header>累计净收益（实际成交）</template><div ref="cumChart" class="chart"></div></el-card></el-col>
-    </el-row>
+    <div class="chart-grid">
+      <div class="aw-card"><div class="ch-title">按品种盈亏</div><div ref="symChart" class="chart"></div></div>
+      <div class="aw-card"><div class="ch-title">按市场盈亏</div><div ref="mktChart" class="chart"></div></div>
+      <div class="aw-card"><div class="ch-title">按方向盈亏</div><div ref="dirChart" class="chart"></div></div>
+      <div class="aw-card wide"><div class="ch-title">每日盈亏</div><div ref="dayChart" class="chart"></div></div>
+      <div class="aw-card wide"><div class="ch-title">累计净收益（实际成交）</div><div ref="cumChart" class="chart"></div></div>
+    </div>
   </div>
 </template>
 
@@ -87,9 +91,9 @@ function bar(el: HTMLDivElement | null, labels: string[], values: number[], colo
   c.setOption({
     tooltip: { trigger: 'axis' },
     grid: { left: 60, right: 12, top: 12, bottom: 28 },
-    xAxis: { type: 'category', data: labels, axisLabel: { rotate: labels.length > 5 ? 30 : 0, fontSize: 10 } },
-    yAxis: { type: 'value' },
-    series: [{ type: 'bar', data: values, itemStyle: colors ? { color: (p: any) => colors(p.value) } : { color: '#4da3ff' }, barMaxWidth: 40 }],
+    xAxis: { type: 'category', data: labels, axisLabel: { rotate: labels.length > 5 ? 30 : 0, fontSize: 10, color: '#6b7280' } },
+    yAxis: { type: 'value', axisLabel: { color: '#6b7280', fontSize: 10 } },
+    series: [{ type: 'bar', data: values, itemStyle: colors ? { color: (p: any) => colors(p.value) } : { color: '#06b6d4' }, barMaxWidth: 40 }],
   });
 }
 
@@ -99,9 +103,9 @@ function line(el: HTMLDivElement | null, labels: string[], values: number[], fil
   c.setOption({
     tooltip: { trigger: 'axis' },
     grid: { left: 60, right: 12, top: 12, bottom: 28 },
-    xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10 } },
-    yAxis: { type: 'value', scale: true },
-    series: [{ type: 'line', data: values, showSymbol: false, lineStyle: { color: '#4da3ff', width: 1.5 }, areaStyle: fill ? { color: 'rgba(77,163,255,0.08)' } : undefined }],
+    xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10, color: '#6b7280' } },
+    yAxis: { type: 'value', scale: true, axisLabel: { color: '#6b7280', fontSize: 10 } },
+    series: [{ type: 'line', data: values, showSymbol: false, lineStyle: { color: '#06b6d4', width: 1.5 }, areaStyle: fill ? { color: 'rgba(6,182,212,0.08)' } : undefined }],
   });
 }
 
@@ -124,36 +128,31 @@ async function load() {
 
 function render() {
   const fs = fills.value;
-  // 按品种
   const bySym: Record<string, number> = {};
   for (const x of fs) bySym[x.symbol] = (bySym[x.symbol] ?? 0) + (x.realizedPnl ?? 0);
   const symKeys = Object.keys(bySym).sort((a, b) => (bySym[b] ?? 0) - (bySym[a] ?? 0));
-  bar(symChart.value, symKeys, symKeys.map((k) => bySym[k] ?? 0), (v) => (v >= 0 ? '#67c23a' : '#f56c6c'));
+  bar(symChart.value, symKeys, symKeys.map((k) => bySym[k] ?? 0), (v) => (v >= 0 ? '#10b981' : '#ef4444'));
 
-  // 按市场
   const byMkt: Record<string, number> = {};
   for (const x of fs) {
     const k = MARKET_LABELS[x.market] ?? x.market;
     byMkt[k] = (byMkt[k] ?? 0) + (x.realizedPnl ?? 0);
   }
   const mktKeys = Object.keys(byMkt);
-  bar(mktChart.value, mktKeys, mktKeys.map((k) => byMkt[k] ?? 0), (v) => (v >= 0 ? '#67c23a' : '#f56c6c'));
+  bar(mktChart.value, mktKeys, mktKeys.map((k) => byMkt[k] ?? 0), (v) => (v >= 0 ? '#10b981' : '#ef4444'));
 
-  // 按方向
   const byDir: Record<string, number> = { 做多: 0, 做空: 0 };
   for (const x of fs) byDir[x.side === 'BUY' ? '做多' : '做空'] += x.realizedPnl ?? 0;
-  bar(dirChart.value, ['做多', '做空'], [byDir['做多'] ?? 0, byDir['做空'] ?? 0], (v) => (v >= 0 ? '#67c23a' : '#f56c6c'));
+  bar(dirChart.value, ['做多', '做空'], [byDir['做多'] ?? 0, byDir['做空'] ?? 0], (v) => (v >= 0 ? '#10b981' : '#ef4444'));
 
-  // 每日盈亏
   const byDay: Record<string, number> = {};
   for (const x of fs) {
     const k = new Date(x.tradedAt).toLocaleDateString('zh-CN');
     byDay[k] = (byDay[k] ?? 0) + (x.realizedPnl ?? 0);
   }
   const dayKeys = Object.keys(byDay).sort();
-  bar(dayChart.value, dayKeys, dayKeys.map((k) => byDay[k] ?? 0), (v) => (v >= 0 ? '#67c23a' : '#f56c6c'));
+  bar(dayChart.value, dayKeys, dayKeys.map((k) => byDay[k] ?? 0), (v) => (v >= 0 ? '#10b981' : '#ef4444'));
 
-  // 累计净收益
   const sorted = fs.slice().sort((a, b) => a.tradedAt - b.tradedAt);
   let cum = 0;
   const cumPts = sorted.map((x) => { cum += x.realizedPnl ?? 0; return { t: x.tradedAt, v: cum }; });
@@ -174,16 +173,21 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.mb { margin-bottom: 12px; }
-.mt { margin-top: 12px; }
-.row { display: flex; align-items: center; gap: 10px; }
-.label { font-size: 13px; color: var(--text-dim); }
-.dim { color: var(--text-dim); font-size: 12px; }
-.metric { text-align: center; }
-.mlabel { color: var(--text-dim); font-size: 12px; }
-.mvalue { font-size: 18px; font-weight: 700; margin-top: 4px; }
-.mono { font-family: var(--mono); }
-.chart { height: 260px; }
-.up { color: #67c23a; }
-.down { color: #f56c6c; }
+.stats { display: flex; flex-direction: column; gap: 12px; }
+.stats-head { display: flex; align-items: baseline; gap: 12px; }
+.stats-head h2 { margin: 0; font-size: 18px; color: var(--aw-text-title); }
+.stats-head .dim { font-size: 12px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.label { font-size: 13px; color: var(--aw-text-dim); }
+.filter-bar { padding: 12px 16px; }
+.metric-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+@media (max-width: 1200px) { .metric-grid { grid-template-columns: repeat(3, 1fr); } }
+.metric-card { text-align: center; padding: 14px 12px; }
+.mlabel { color: var(--aw-text-dim); font-size: 12px; }
+.mvalue { font-size: 20px; font-weight: 700; margin-top: 4px; }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.chart-grid .aw-card { padding: 14px 16px; }
+.chart-grid .aw-card.wide { grid-column: span 2; }
+.ch-title { font-size: 13px; color: var(--aw-text-title); font-weight: 600; margin-bottom: 8px; }
+.chart { height: 240px; }
 </style>
