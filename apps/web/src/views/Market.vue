@@ -1690,14 +1690,14 @@ function ivSettingsKey(): string {
 }
 function saveIvSettings() {
   try {
-    localStorage.setItem(ivSettingsKey(), JSON.stringify({ pinned: pinnedIv.value, custom: customIvList.value }));
+    localStorage.setItem(ivSettingsKey(), JSON.stringify({ pinned: pinnedIv.value, custom: customIvList.value, iv: interval.value }));
   } catch { /* 存储异常忽略 */ }
 }
 function loadIvSettings() {
   try {
     const raw = localStorage.getItem(ivSettingsKey());
     if (!raw) return;
-    const d = JSON.parse(raw) as { pinned?: unknown; custom?: unknown };
+    const d = JSON.parse(raw) as { pinned?: unknown; custom?: unknown; iv?: unknown };
     if (Array.isArray(d.pinned)) {
       const list = d.pinned.filter((v): v is string => typeof v === 'string');
       if (list.length) pinnedIv.value = list;
@@ -1707,14 +1707,19 @@ function loadIvSettings() {
         .filter((c): c is { value: string; label?: unknown } => !!c && typeof (c as { value?: unknown }).value === 'string')
         .map((c) => ({ value: c.value, label: typeof c.label === 'string' && c.label ? c.label : fmtIntervalLabel(c.value) }));
     }
+    // 恢复当前激活周期（须在 custom 恢复之后校验，覆盖内置 + 自定义；已删除/无效的周期忽略，保持默认）
+    if (typeof d.iv === 'string' && ivItemOf(d.iv)) {
+      interval.value = d.iv;
+    }
   } catch { /* 损坏的存储忽略 */ }
 }
 // 任何指标设置变化自动保存；切换账户时加载对应账户的设置
 watch([emaOn, maOn, volOn, macdOn, rsiOn, vpvrOn, lines], () => saveSettings(), { deep: true });
-watch([pinnedIv, customIvList], () => saveIvSettings(), { deep: true });
+watch([pinnedIv, customIvList, interval], () => saveIvSettings(), { deep: true });
 watch(() => accountStore.selectedId, () => {
   loadSettings();
   loadIvSettings();
+  load(true); // 周期随账户恢复，重新拉对应周期的 K 线
   render();
 });
 
