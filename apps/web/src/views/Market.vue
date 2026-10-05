@@ -411,6 +411,22 @@ const stratParams = reactive<Record<string, number | string | boolean>>({});
 const stratLoading = ref(false);
 const stratErr = ref('');
 const stratPoints = ref<StratPoint[]>([]);
+
+/** 图表 MACD 参数：macd_energy 策略已应用（有标注）时跟随策略当前参数，
+ *  保证图上 MACD 波形与信号标注基于同一周期 + 同一参数；否则默认 12/26/9。 */
+function macdParams(): [number, number, number] {
+  const active = stratSel.value.startsWith('macd_energy') && stratPoints.value.length > 0;
+  const fast = active ? Math.floor(Number(stratParams['fast'] ?? 12)) : 12;
+  const slow = active ? Math.floor(Number(stratParams['slow'] ?? 26)) : 26;
+  const signal = active ? Math.floor(Number(stratParams['signal'] ?? 9)) : 9;
+  return [fast, slow, signal];
+}
+function chartMacd(closes: number[]) {
+  return macd(closes, ...macdParams());
+}
+function macdLabel(): string {
+  return 'MACD(' + macdParams().join(',') + ')';
+}
 /** 策略选择持久化：刷新后自动恢复并重算标注 */
 const STRAT_KEY = 'agentwin.strat';
 function persistStrat() {
@@ -844,7 +860,7 @@ function updateLegends(idx: number, maLines: MaLine[], macdRes: { dif: (number |
     if (d != null) macdItems.push({ name: 'DIF', color: '#f0a35e', value: fmtPrice(d) });
     const de = macdRes.dea[idx];
     if (de != null) macdItems.push({ name: 'DEA', color: '#4da3ff', value: fmtPrice(de) });
-    groups.push({ key: 'macd', label: 'MACD', top: legendTops.macd ?? 0, left: 10, items: macdItems });
+    groups.push({ key: 'macd', label: macdLabel(), top: legendTops.macd ?? 0, left: 10, items: macdItems });
   }
   // RSI
   if (rsiOn.value) {
@@ -1094,7 +1110,7 @@ async function refreshLatest() {
     const RIGHT_PAD = rightPadFor(cs.length);
     const paddedLen = cs.length + RIGHT_PAD;
     const closes = cs.map((c) => c.close);
-    const macdRes = macd(closes);
+    const macdRes = chartMacd(closes);
     const rsiRes = rsi(closes, 14);
     const volMa = sma(cs.map((c) => c.volume), 5);
     const times = [...cs.map((c) => fmtAxisTime(c.openTime, interval.value)), ...Array<string>(RIGHT_PAD).fill('')];
@@ -1530,7 +1546,7 @@ function render() {
     const gi = gridIdx.macd;
     series.push({
       id: 'macd',
-      name: 'MACD',
+      name: macdLabel(),
       type: 'bar',
       xAxisIndex: gi,
       yAxisIndex: gi,
