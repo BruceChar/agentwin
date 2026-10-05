@@ -79,7 +79,12 @@ export class SimulatedPortfolio {
 
   get equity(): number {
     let e = this.cashValue;
-    for (const p of this.positionsMap.values()) e += p.unrealizedPnl;
+    for (const p of this.positionsMap.values()) {
+      e += p.unrealizedPnl;
+      // SPOT 买入时已全额扣减现金，持仓本金（qty×avgEntryPrice）须加回；
+      // USDT-M 合约按名义本金记账（开仓不扣现金），equity = cash + 浮动盈亏 即可。
+      if (this.market === 'SPOT' && p.side === 'LONG') e += p.quantity * p.avgEntryPrice;
+    }
     return e;
   }
 

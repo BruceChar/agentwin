@@ -457,7 +457,7 @@ function clearStrategy() { stratPoints.value = []; stratErr.value = ''; render()
 function invalidateStrat() { stratPoints.value = []; }
 
 /** 时间 → K 线索引：先精确匹配 openTime；不中则取 openTime ≤ t 的最近一根（回测返回的可能是 closeTime） */
-function idxByTimeFallback(t: number, cs: Candle[] = candles.value): number {
+function idxByTimeFallback(t: number, cs: CandleView[] = candles.value): number {
   const exact = cs.findIndex((c) => c.openTime === t);
   if (exact !== -1) return exact;
   let idx = -1;
