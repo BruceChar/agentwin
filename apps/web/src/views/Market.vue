@@ -411,6 +411,20 @@ const stratParams = reactive<Record<string, number | string | boolean>>({});
 const stratLoading = ref(false);
 const stratErr = ref('');
 const stratPoints = ref<StratPoint[]>([]);
+/** 策略选择持久化：刷新后自动恢复并重算标注 */
+const STRAT_KEY = 'agentwin.strat';
+function persistStrat() {
+  try { localStorage.setItem(STRAT_KEY, JSON.stringify({ sel: stratSel.value, params: stratParams })); } catch { /* ignore */ }
+}
+function restoreStrat() {
+  try {
+    const raw = localStorage.getItem(STRAT_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as { sel?: string; params?: Record<string, number | string | boolean> };
+    if (saved.sel) stratSel.value = saved.sel;
+    if (saved.params) for (const [k, v] of Object.entries(saved.params)) stratParams[k] = v;
+  } catch { /* ignore */ }
+}
 
 async function loadStratList() {
   const res = await api.get<{ strategies: StrategyMeta[] }>('/strategies/builtin').catch(() => null);
@@ -421,9 +435,11 @@ function onStratSel(id: string) {
   for (const k of Object.keys(stratParams)) delete stratParams[k];
   if (m) for (const ps of m.paramSpecs) stratParams[ps.name] = ps.default;
   stratErr.value = '';
+  persistStrat();
 }
 async function applyStrategy() {
   if (!stratSel.value) return;
+  if (stratLoading.value) return;
   const cs = candles.value;
   if (cs.length < 50) { stratErr.value = 'K线不足 50 根，无法回测标注'; return; }
   stratLoading.value = true;
@@ -445,6 +461,7 @@ async function applyStrategy() {
       entryPrice: t.entryPrice, exitPrice: t.exitPrice, reason: t.reason, pnl: t.pnl,
     }));
     if (!stratPoints.value.length) stratErr.value = '该区间无交易信号';
+    persistStrat();
     render();
   } catch (e) {
     stratErr.value = '回测失败：' + (e instanceof Error ? e.message : String(e));
@@ -452,7 +469,12 @@ async function applyStrategy() {
     stratLoading.value = false;
   }
 }
-function clearStrategy() { stratPoints.value = []; stratErr.value = ''; render(); }
+function clearStrategy() {
+  stratPoints.value = [];
+  stratErr.value = '';
+  try { localStorage.removeItem(STRAT_KEY); } catch { /* ignore */ }
+  render();
+}
 /** 行情/周期/刷新变化后旧信号不再对应图表，清空标注 */
 function invalidateStrat() { stratPoints.value = []; }
 
@@ -963,6 +985,8 @@ async function load(resetZoom = true) {
       lastChangePct.value = prev > 0 ? ((last.close - prev) / prev) * 100 >= 0 ? '+' + (((last.close - prev) / prev) * 100).toFixed(2) + '%' : (((last.close - prev) / prev) * 100).toFixed(2) + '%' : '';
     }
     render();
+    // 数据整体变化（初始化/切换币种/市场/周期）：若已选策略则自动重算标注，保持信号状态
+    if (stratSel.value) applyStrategy();
   } catch (e) {
     ElMessage.error('行情加载失败：' + (e instanceof Error ? e.message : String(e)));
   } finally {
@@ -1014,7 +1038,7 @@ async function refreshLatest() {
     const cs = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
     if (!cs.length) return;
     candles.value = cs;
-    invalidateStrat(); // 增量数据变化，旧信号不再对应图表
+    // 增量刷新只更新最新 K 线：旧信号按 K 线索引定位仍有效，保留标注不重算
     // 锚定可见窗口：
     // - 用户已调整（拖拽/缩放）→ 保持绝对窗口位置：同一批 K 线原地不动，新 K 线不挤入视野，
     //   右侧原本在填充区时按填充区偏移保持（不再回弹到默认视图）；
@@ -1876,6 +1900,7 @@ onMounted(() => {
   loadSettings();
   loadIvSettings();
   loadStratList();
+  restoreStrat();
   load();
   bindTicker();
   startAutoRefresh();
