@@ -462,6 +462,7 @@ async function applyStrategy() {
     }));
     if (!stratPoints.value.length) stratErr.value = '该区间无交易信号';
     persistStrat();
+    focusStratMarks();
     render();
   } catch (e) {
     stratErr.value = '回测失败：' + (e instanceof Error ? e.message : String(e));
@@ -488,6 +489,27 @@ function idxByTimeFallback(t: number, cs: CandleView[] = candles.value): number 
     else break;
   }
   return idx;
+}
+
+/** 标注可见性：默认视图只显示最近 limit 根（左侧 WARMUP 为指标预热、不参与可见窗口），
+ *  历史标注可能在左侧隐藏区；应用后若标注不在当前可见窗口则自动锚定过去（留边），
+ *  已手动调整过视图且标注在窗口内时不做打扰。 */
+function focusStratMarks() {
+  const cs = candles.value;
+  if (!cs.length || !stratPoints.value.length) return;
+  const idxs = stratPoints.value
+    .flatMap((p) => [p.entryIndex, p.exitIndex])
+    .filter((i) => i >= 0 && i < cs.length);
+  if (!idxs.length) return;
+  const first = Math.min(...idxs);
+  const last = Math.max(...idxs);
+  const paddedLen = cs.length + rightPadFor(cs.length);
+  const from = Math.max(0, Math.floor((paddedLen * zoomStart) / 100));
+  const to = Math.min(paddedLen, Math.max(from + 1, Math.ceil((paddedLen * zoomEnd) / 100)));
+  if (first < from || last > to) {
+    const pad = Math.max(10, Math.round((last - first + 1) * 0.25));
+    anchorZoom(Math.max(0, first - pad), Math.min(cs.length, last + pad));
+  }
 }
 
 /** 由回测成交记录生成 K 线 markPoint（▼ 开仓 ▲ 平仓） */
