@@ -48,23 +48,23 @@ describe('TradingToolkit', () => {
 
   it('runs backtest on mock data via toolkit', async () => {
     const { toolkit } = await makeToolkit();
-    const out = await toolkit.runBacktest({
+    const out = (await toolkit.runBacktest({
       strategy: 'ma_cross', params: { fast: 5, slow: 20 },
       symbol: 'BTCUSDT', market: 'SPOT', interval: '1h', fromDays: 30, initialCapital: 10000,
-    });
+    })) as { metrics: { totalTrades: number; maxDrawdown: number } };
     expect(out).toHaveProperty('metrics');
-    const m = out['metrics'] as { totalTrades: number; maxDrawdown: number };
+    const m = out.metrics;
     expect(m.totalTrades).toBeGreaterThan(0);
     expect(m.maxDrawdown).toBeGreaterThanOrEqual(0);
   });
 
   it('creates LLM strategy draft (disabled)', async () => {
     const { toolkit, storage } = await makeToolkit();
-    const res = await toolkit.createStrategy({
+    const res = (await toolkit.createStrategy({
       strategy: 'rsi', params: { period: 10, oversold: 25 },
       symbol: 'BTCUSDT', market: 'SPOT', interval: '1h', description: '测试草稿',
-    });
-    expect(res['created']).toBe(true);
+    })) as { created: boolean };
+    expect(res.created).toBe(true);
     const saved = await storage.listStrategies();
     expect(saved.length).toBe(1);
     expect(saved[0]?.source).toBe('llm');

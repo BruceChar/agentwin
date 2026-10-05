@@ -61,6 +61,7 @@ function makeFakeRest() {
       }
       return [];
     },
+    income: async () => [],
   } as unknown as BinanceRest;
 }
 
