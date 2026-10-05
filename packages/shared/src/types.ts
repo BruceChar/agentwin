@@ -266,6 +266,10 @@ export interface BacktestTrade {
   index: number;
   entryTime: number;
   exitTime: number;
+  /** 开仓所在 K 线索引（定位标注用，避免时间口径不一致） */
+  entryIndex?: number;
+  /** 平仓所在 K 线索引 */
+  exitIndex?: number;
   side: PositionSide;
   entryPrice: number;
   exitPrice: number;

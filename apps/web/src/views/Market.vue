@@ -402,7 +402,7 @@ const lastChangePct = ref('');
 const chartEl = ref<HTMLDivElement | null>(null);
 
 // ---------- 策略信号标注 ----------
-interface StratPoint { entryTime: number; exitTime: number; side: string; entryPrice: number; exitPrice: number; reason: string; pnl: number }
+interface StratPoint { entryTime: number; exitTime: number; entryIndex: number; exitIndex: number; side: string; entryPrice: number; exitPrice: number; reason: string; pnl: number }
 const stratOpen = ref(false);
 const stratList = ref<StrategyMeta[]>([]);
 const stratSel = ref('');
@@ -438,7 +438,10 @@ async function applyStrategy() {
       candles: cs,
     });
     stratPoints.value = (res.trades ?? []).map((t) => ({
-      entryTime: t.entryTime, exitTime: t.exitTime, side: t.side,
+      entryTime: t.entryTime, exitTime: t.exitTime,
+      entryIndex: t.entryIndex ?? idxByTimeFallback(t.entryTime),
+      exitIndex: t.exitIndex ?? idxByTimeFallback(t.exitTime),
+      side: t.side,
       entryPrice: t.entryPrice, exitPrice: t.exitPrice, reason: t.reason, pnl: t.pnl,
     }));
     if (!stratPoints.value.length) stratErr.value = '该区间无交易信号';
@@ -453,14 +456,25 @@ function clearStrategy() { stratPoints.value = []; stratErr.value = ''; render()
 /** 行情/周期/刷新变化后旧信号不再对应图表，清空标注 */
 function invalidateStrat() { stratPoints.value = []; }
 
+/** 时间 → K 线索引：先精确匹配 openTime；不中则取 openTime ≤ t 的最近一根（回测返回的可能是 closeTime） */
+function idxByTimeFallback(t: number, cs: Candle[] = candles.value): number {
+  const exact = cs.findIndex((c) => c.openTime === t);
+  if (exact !== -1) return exact;
+  let idx = -1;
+  for (let i = 0; i < cs.length; i++) {
+    if (cs[i]!.openTime <= t) idx = i;
+    else break;
+  }
+  return idx;
+}
+
 /** 由回测成交记录生成 K 线 markPoint（▼ 开仓 ▲ 平仓） */
 function stratMarkPoint(): Record<string, unknown> {
   const cs = candles.value;
-  const idxByTime = new Map(cs.map((c, i) => [c.openTime, i] as const));
   const data: Record<string, unknown>[] = [];
   for (const p of stratPoints.value) {
-    const ei = idxByTime.get(p.entryTime);
-    if (ei !== undefined) {
+    const ei = p.entryIndex >= 0 && p.entryIndex < cs.length ? p.entryIndex : -1;
+    if (ei !== -1) {
       data.push({
         coord: [ei, p.entryPrice],
         value: '▼',
@@ -469,8 +483,8 @@ function stratMarkPoint(): Record<string, unknown> {
         label: { show: true, position: 'bottom', fontSize: 9, color: '#22c55e', formatter: '开', backgroundColor: 'rgba(5,46,22,0.7)', borderRadius: 2, padding: [1, 3] },
       });
     }
-    const xi = idxByTime.get(p.exitTime);
-    if (xi !== undefined) {
+    const xi = p.exitIndex >= 0 && p.exitIndex < cs.length ? p.exitIndex : -1;
+    if (xi !== -1) {
       data.push({
         coord: [xi, p.exitPrice],
         value: '▲',

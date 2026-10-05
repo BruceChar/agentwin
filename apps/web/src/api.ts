@@ -55,6 +55,8 @@ export interface BacktestTrade {
   index: number;
   entryTime: number;
   exitTime: number;
+  entryIndex?: number;
+  exitIndex?: number;
   side: string;
   entryPrice: number;
   exitPrice: number;

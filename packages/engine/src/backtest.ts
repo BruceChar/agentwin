@@ -61,6 +61,8 @@ export async function runBacktest(input: RunBacktestInput): Promise<BacktestResu
       index: closedTrades.length,
       entryTime: ledger.firstEntryTime,
       exitTime: fill.tradedAt,
+      entryIndex: ledger.firstEntryIndex,
+      exitIndex: barIndex,
       side: ledger.side,
       entryPrice: ledger.avgPrice,
       exitPrice: fill.price,
