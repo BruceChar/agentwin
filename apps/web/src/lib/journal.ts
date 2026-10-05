@@ -175,6 +175,42 @@ export function dirLabel(d: string | undefined): string {
   return d === 'SHORT' ? '空' : '多';
 }
 
+/** 常见计价币（报价币），匹配时按数组顺序取最长优先 */
+const QUOTE_CURRENCIES = ['USDT', 'USDC', 'BUSD', 'FDUSD', 'TUSD', 'USDP', 'DAI', 'EUR', 'TRY', 'BRL', 'USD'];
+
+/** 合约后缀（拆币对前剥掉）：BTCUSD_PERP → BTCUSD */
+const SYMBOL_SUFFIXES = ['_PERP', '_USDT', '_USDC', '_BUSD', '_FUT'];
+
+/** 拆币对：BTCUSDT → { base: 'BTC', quote: 'USDT' }；BTCUSDC → { base: 'BTC', quote: 'USDC' }；BTCUSD_PERP → { base: 'BTC', quote: 'USD' }；无法识别时报价币默认 USDT */
+export function splitSymbol(symbol: string | undefined): { base: string; quote: string } {
+  let sym = (symbol ?? '').trim().toUpperCase();
+  for (const suf of SYMBOL_SUFFIXES) {
+    if (sym.endsWith(suf) && sym.length > suf.length) { sym = sym.slice(0, -suf.length); break; }
+  }
+  for (const q of QUOTE_CURRENCIES) {
+    if (sym.endsWith(q) && sym.length > q.length) return { base: sym.slice(0, -q.length), quote: q };
+  }
+  return { base: sym, quote: 'USDT' };
+}
+
+/** 价格单位（计价币）：BTCUSDT → USDT，BTCUSDC → USDC */
+export function quoteCurrency(symbol: string | undefined): string {
+  return splitSymbol(symbol).quote;
+}
+
+/**
+ * 仓位 / 风险金额单位：
+ * - 逐仓杠杆以币种计（BTCUSDT → BTC）；
+ * - 其余市场（U本位合约 / 币本位合约 / 现货 / 全仓杠杆）以计价币计（USDT / USDC 等）。
+ */
+export function positionUnit(symbol: string | undefined, market?: string): string {
+  const { base, quote } = splitSymbol(symbol);
+  return market === '逐仓杠杆' ? base : quote;
+}
+
+/** 交易类型（创建计划下拉选项） */
+export const MARKET_OPTIONS = ['现货', 'U本位合约', '币本位合约', '全仓杠杆', '逐仓杠杆'];
+
 /** 期望值/统计工具 */
 export function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v));

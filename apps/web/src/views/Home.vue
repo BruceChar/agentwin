@@ -60,7 +60,7 @@
             <div class="pc-row1">
               <b class="pc-sym">{{ p.symbol }}</b>
               <span class="dir-tag" :class="p.direction === 'LONG' ? 'long' : 'short'">{{ p.direction === 'LONG' ? '多' : '空' }}</span>
-              <span class="pc-size mono">{{ p.plannedSize || (p.leverage && p.leverage > 1 ? p.leverage + 'x' : '—') }}</span>
+              <span class="pc-size mono">{{ p.plannedSize ? p.plannedSize + ' ' + positionUnit(p.symbol, p.market) : (p.leverage && p.leverage > 1 ? p.leverage + 'x' : '—') }}</span>
             </div>
             <div class="pc-trigger" :title="p.triggerDesc || '价格 ' + fmtPrice(p.plannedEntry)">触发：{{ p.triggerDesc || ('价格 ' + fmtPrice(p.plannedEntry)) }}</div>
             <div class="pc-row3 mono dim">
@@ -218,9 +218,14 @@
             <button class="s2" :class="{ active: qf.direction === 'SHORT' }" @click="qf.direction = 'SHORT'">空 ▼</button>
           </div>
         </el-form-item>
+        <el-form-item label="交易类型">
+          <el-select v-model="qf.market" style="width: 100%">
+            <el-option v-for="m in MARKET_OPTIONS" :key="m" :value="m" :label="m" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="仓位">
           <div class="qc-inline">
-            <el-input v-model="qf.size" placeholder="如 0.05" class="mono" />
+            <el-input v-model="qf.size" placeholder="如 0.05" class="mono"><template #suffix>{{ sizeUnit }}</template></el-input>
             <el-input-number v-model="qf.leverage" :min="1" :precision="0" controls-position="right" style="width: 110px" />
             <span class="dim">倍</span>
           </div>
@@ -230,18 +235,17 @@
             <button class="s2" :class="{ active: qf.entryType === 'price' }" @click="qf.entryType = 'price'">价格</button>
             <button class="s2" :class="{ active: qf.entryType === 'indicator' }" @click="qf.entryType = 'indicator'">指标</button>
           </div>
-          <el-input-number
+          <el-input
             v-if="qf.entryType === 'price'"
             v-model="qf.plannedEntry"
-            :precision="4"
-            controls-position="right"
             placeholder="计划开仓价"
+            class="mono"
             style="width: 100%"
-          />
+          ><template #suffix>{{ priceUnit }}</template></el-input>
           <el-input v-else v-model="qf.triggerDesc" type="textarea" :rows="2" placeholder="如：站稳 71500 且放量突破时入场" />
         </el-form-item>
-        <el-form-item label="止损"><el-input-number v-model="qf.plannedStop" :precision="4" controls-position="right" style="width: 100%" /></el-form-item>
-        <el-form-item label="止盈"><el-input v-model="qf.targetsText" placeholder="逗号分隔，如 75000, 78000" class="mono" /></el-form-item>
+        <el-form-item label="止损"><el-input v-model="qf.plannedStop" placeholder="止损价" class="mono" style="width: 100%"><template #suffix>{{ priceUnit }}</template></el-input></el-form-item>
+        <el-form-item label="止盈"><el-input v-model="qf.targetsText" placeholder="逗号分隔，如 75000, 78000" class="mono"><template #suffix>{{ priceUnit }}</template></el-input></el-form-item>
         <el-form-item label="策略版本">
           <el-select v-model="qf.strategyVersion" filterable allow-create clearable placeholder="选择或输入版本" style="width: 100%">
             <el-option v-for="v in strategyVersionOptions" :key="v" :value="v" :label="v" />
@@ -264,7 +268,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { api } from '../api.ts';
 import { accountStore, loadAccounts, uiPrefs } from '../store.ts';
 import type { TradeJournal } from '../lib/journal.ts';
-import { deriveStatus, fmtPnl, fmtPrice, fmtTime, holdingDuration, fmtDuration, STATUS_META, STATUS_ORDER } from '../lib/journal.ts';
+import { deriveStatus, fmtPnl, fmtPrice, fmtTime, holdingDuration, fmtDuration, STATUS_META, STATUS_ORDER, positionUnit, quoteCurrency, MARKET_OPTIONS } from '../lib/journal.ts';
 
 const router = useRouter();
 function go(path: string) { router.push(path); }
@@ -631,9 +635,14 @@ const saving = ref(false);
 const qf = reactive({
   symbol: '', direction: 'LONG' as 'LONG' | 'SHORT', market: 'U本位合约', leverage: 1,
   size: '', entryType: 'price' as 'price' | 'indicator',
-  plannedEntry: undefined as number | undefined, triggerDesc: '',
-  plannedStop: undefined as number | undefined, targetsText: '', strategyVersion: '',
+  plannedEntry: undefined as number | string | undefined, triggerDesc: '',
+  plannedStop: undefined as number | string | undefined, targetsText: '', strategyVersion: '',
 });
+
+/** 价格输入单位（计价币）：BTCUSDT → USDT，BTCUSDC → USDC */
+const priceUnit = computed(() => quoteCurrency(qf.symbol));
+/** 仓位单位：逐仓杠杆为币种，其余为计价币 */
+const sizeUnit = computed(() => positionUnit(qf.symbol, qf.market));
 
 const symbolSuggestions = computed(() => {
   const set = new Set(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT']);
@@ -657,6 +666,13 @@ async function saveQuickPlan(mode: 'plan' | 'exec') {
   saving.value = true;
   try {
     const targets = qf.targetsText.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+    const toNum = (v: unknown): number | undefined => {
+      if (v === undefined || v === null || v === '') return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const entry = toNum(qf.plannedEntry);
+    const stop = toNum(qf.plannedStop);
     const now = Date.now();
     const record: Record<string, unknown> = {
       symbol: sym,
@@ -664,9 +680,9 @@ async function saveQuickPlan(mode: 'plan' | 'exec') {
       market: qf.market,
       leverage: qf.leverage,
       plannedSize: qf.size || undefined,
-      plannedEntry: qf.entryType === 'price' ? qf.plannedEntry : undefined,
-      triggerDesc: qf.entryType === 'indicator' && qf.triggerDesc ? qf.triggerDesc : (qf.entryType === 'price' && qf.plannedEntry ? '价格 ' + qf.plannedEntry : undefined),
-      plannedStop: qf.plannedStop,
+      plannedEntry: qf.entryType === 'price' ? entry : undefined,
+      triggerDesc: qf.entryType === 'indicator' && qf.triggerDesc ? qf.triggerDesc : (qf.entryType === 'price' && entry ? '价格 ' + entry : undefined),
+      plannedStop: stop,
       plannedTargets: targets,
       strategyVersion: qf.strategyVersion || undefined,
       plannedHolding: '日内',
@@ -679,7 +695,7 @@ async function saveQuickPlan(mode: 'plan' | 'exec') {
     if (mode === 'exec') {
       record.status = 'holding';
       record.openTime = now;
-      record.actualEntry = qf.entryType === 'price' ? qf.plannedEntry : undefined;
+      record.actualEntry = qf.entryType === 'price' ? entry : undefined;
     }
     await api.post('/journal/trades', { record });
     ElMessage.success(mode === 'exec' ? '已立即执行，转入日志中心「持仓中」' : '计划已保存，进入日志中心「计划中」');

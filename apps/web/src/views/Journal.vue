@@ -120,7 +120,7 @@
               <!-- 计划中 -->
               <template v-if="stOf(r) === 'plan'">
                 <div class="log-row2 mono">
-                  <span>计划 {{ r.plannedSize ?? '—' }}<template v-if="(r.leverage ?? 0) > 1"> · {{ r.leverage }}x</template> · 触发 {{ r.triggerDesc || '—' }}</span>
+                  <span>计划 {{ r.plannedSize ? r.plannedSize + ' ' + positionUnit(r.symbol, r.market) : '—' }}<template v-if="(r.leverage ?? 0) > 1"> · {{ r.leverage }}x</template> · 触发 {{ r.triggerDesc || '—' }}</span>
                 </div>
                 <div class="log-row3 mono dim">
                   入场 {{ fmtPrice(r.plannedEntry) }} · 止损 {{ fmtPrice(r.plannedStop) }} · 止盈 {{ (r.plannedTargets ?? []).map(fmtPrice).join(' / ') || '—' }}
@@ -292,8 +292,8 @@
               <el-descriptions-item label="止损">{{ fmtPrice(detail.plannedStop) }}</el-descriptions-item>
               <el-descriptions-item label="止盈目标">{{ (detail.plannedTargets ?? []).map(fmtPrice).join(' / ') || '—' }}</el-descriptions-item>
               <el-descriptions-item label="盈亏比">{{ detail.plannedRR ?? '—' }}</el-descriptions-item>
-              <el-descriptions-item label="仓位">{{ detail.plannedSize ?? '—' }}</el-descriptions-item>
-              <el-descriptions-item label="风险金额">{{ fmtNum(detail.plannedRiskAmount) }}</el-descriptions-item>
+              <el-descriptions-item label="仓位">{{ detail.plannedSize ? detail.plannedSize + ' ' + positionUnit(detail.symbol, detail.market) : '—' }}</el-descriptions-item>
+              <el-descriptions-item label="风险金额">{{ detail.plannedRiskAmount !== undefined ? fmtNum(detail.plannedRiskAmount) + ' ' + positionUnit(detail.symbol, detail.market) : '—' }}</el-descriptions-item>
               <el-descriptions-item label="持仓周期">{{ detail.plannedHolding ?? '—' }}</el-descriptions-item>
               <el-descriptions-item label="失效条件">{{ detail.invalidation ?? '—' }}</el-descriptions-item>
               <el-descriptions-item label="策略">{{ detail.strategyName ?? '—' }} {{ detail.strategyVersion ?? '' }}</el-descriptions-item>
@@ -476,12 +476,14 @@
             <el-option v-for="m in MARKET_OPTIONS" :key="m" :value="m" :label="m" />
           </el-select></el-form-item>
           <el-form-item label="杠杆"><el-input-number v-model="form.leverage" :min="1" :precision="0" controls-position="right" style="width: 100%" /></el-form-item>
-          <el-form-item label="计划开仓价"><el-input-number v-model="form.plannedEntry" :precision="4" controls-position="right" style="width: 100%" /></el-form-item>
-          <el-form-item label="预期执行时间"><el-date-picker v-model="form.plannedAt" type="datetime" value-format="x" style="width: 100%" /></el-form-item>
-          <el-form-item label="止损价"><el-input-number v-model="form.plannedStop" :precision="4" controls-position="right" style="width: 100%" /></el-form-item>
-          <el-form-item label="止盈目标"><el-input v-model="form.targetsText" placeholder="逗号分隔，如 75000, 78000" /></el-form-item>
-          <el-form-item label="仓位"><el-input v-model="form.plannedSize" placeholder="如 0.5 手" /></el-form-item>
-          <el-form-item label="风险金额"><el-input-number v-model="form.plannedRiskAmount" :precision="2" controls-position="right" style="width: 100%" /></el-form-item>
+          <el-form-item label="计划开仓价"><el-input v-model="form.plannedEntry" placeholder="计划开仓价" class="mono"><template #suffix>{{ formPriceUnit }}</template></el-input></el-form-item>
+          <el-form-item label="止损价"><el-input v-model="form.plannedStop" placeholder="止损价" class="mono"><template #suffix>{{ formPriceUnit }}</template></el-input></el-form-item>
+          <el-form-item label="止盈目标"><el-input v-model="form.targetsText" placeholder="逗号分隔，如 75000, 78000" class="mono"><template #suffix>{{ formPriceUnit }}</template></el-input></el-form-item>
+          <el-form-item label="仓位"><el-input v-model="form.plannedSize" placeholder="仓位数量" class="mono"><template #suffix>{{ formPosUnit }}</template></el-input></el-form-item>
+          <el-form-item label="风险金额">
+            <el-input v-model="form.plannedRiskAmount" placeholder="风险金额" class="mono"><template #suffix>{{ formPosUnit }}</template></el-input>
+            <div class="dim" style="font-size: 11px; line-height: 1.4; margin-top: 2px">计划可承受亏损，与仓位同单位（{{ formPosUnit }}）</div>
+          </el-form-item>
           <el-form-item label="持仓周期">
             <div class="seg2">
               <button v-for="h in HOLDING_OPTIONS" :key="h" class="s2" :class="{ active: form.plannedHolding === h }" @click="form.plannedHolding = h">{{ h }}</button>
@@ -492,11 +494,6 @@
           <el-form-item label="触发条件"><el-input v-model="form.triggerDesc" type="textarea" :rows="2" placeholder="如：BTC 站稳 71500 且放量突破时入场" /></el-form-item>
           <el-form-item label="失效条件"><el-input v-model="form.invalidation" placeholder="如 跌破 65000 则放弃" /></el-form-item>
           <el-form-item label="入场理由"><el-input v-model="form.entryReason" type="textarea" :rows="2" placeholder="为什么做这笔？" /></el-form-item>
-          <el-form-item label="账户">
-            <el-select v-model="form.accountId" style="width: 100%">
-              <el-option v-for="a in accountStore.accounts" :key="a.id" :value="a.id" :label="(a.type === 'real' ? '真实 ' : '模拟 ') + a.name" />
-            </el-select>
-          </el-form-item>
         </el-form>
       </div>
       <template #footer>
@@ -517,7 +514,8 @@ import { accountStore, loadAccounts } from '../store.ts';
 import type { TradeJournal } from '../lib/journal.ts';
 import {
   STATUS_META, STATUS_ORDER, deriveStatus, fmtPnl, fmtNum, fmtPrice, fmtTime, fmtFullTime,
-  dirLabel, pendingHint, holdingDuration, fmtDuration, type JournalStatus,
+  dirLabel, pendingHint, holdingDuration, fmtDuration, positionUnit, quoteCurrency, MARKET_OPTIONS,
+  type JournalStatus,
 } from '../lib/journal.ts';
 
 const TAG_OPTIONS = ['情绪化交易', '执行错误', '系统缺陷', '正常亏损', '正常盈利', '运气成分', '历史导入', '趋势跟踪', '逆势抄底'];
@@ -533,7 +531,6 @@ function sourceTagOf(r: Pick<TradeJournal, 'tags' | 'plannedEntry' | 'plannedSto
   const hasPlan = !!(r.plannedEntry || r.plannedStop || (r.plannedTargets?.length ?? 0) > 0);
   return hasPlan ? '计划执行' : '无计划';
 }
-const MARKET_OPTIONS = ['现货', 'U本位合约', '币本位合约', '全仓杠杆', '逐仓杠杆'];
 const HOLDING_OPTIONS = ['日内', '波段', '趋势'];
 const REASON_OPTIONS = ['突破', '回调', '止损', '止盈', '情绪', '其他'];
 const EMOTION_OPTIONS = ['冷静', '贪婪', '恐惧', '犹豫'];
@@ -592,10 +589,15 @@ const review = reactive<{
 }>({ entryReasonSel: [], entryReason: '', emotion: '冷静', confidence: 5, discipline: 5, tags: [], source: '无计划', noPlanReasons: [], noPlanReasonCustom: '', entryQuality: 5, entryQualityNote: '', exitQuality: 5, exitQualityNote: '', attribution: [], improvements: '', adjust: null, adjustStrategy: '', adjustDirection: '' });
 
 const form = reactive<Record<string, any>>({
-  symbol: '', direction: 'LONG', market: '现货', leverage: 1, plannedEntry: undefined, plannedAt: undefined,
+  symbol: '', direction: 'LONG', market: '现货', leverage: 1, plannedEntry: undefined,
   plannedStop: undefined, targetsText: '', plannedSize: '', plannedRiskAmount: undefined, plannedHolding: '日内',
   strategyName: '', strategyVersion: '', triggerDesc: '', invalidation: '', entryReason: '', accountId: '',
 });
+
+/** 价格输入单位（计价币）：BTCUSDT → USDT，BTCUSDC → USDC */
+const formPriceUnit = computed(() => quoteCurrency(form.symbol));
+/** 仓位 / 风险金额单位：逐仓杠杆为币种，其余为计价币 */
+const formPosUnit = computed(() => positionUnit(form.symbol, form.market));
 
 // ---------------- Tab 导航（页面内主导航） ----------------
 
@@ -987,7 +989,7 @@ async function saveDraft() {
 }
 
 function openNewPlan() {
-  Object.assign(form, { symbol: '', direction: 'LONG', market: '现货', leverage: 1, plannedEntry: undefined, plannedAt: Date.now() + 3600_000, plannedStop: undefined, targetsText: '', plannedSize: '', plannedRiskAmount: undefined, plannedHolding: '日内', strategyName: '', strategyVersion: '', triggerDesc: '', invalidation: '', entryReason: '', accountId: accountStore.selectedId || '' });
+  Object.assign(form, { symbol: '', direction: 'LONG', market: '现货', leverage: 1, plannedEntry: undefined, plannedStop: undefined, targetsText: '', plannedSize: '', plannedRiskAmount: undefined, plannedHolding: '日内', strategyName: '', strategyVersion: '', triggerDesc: '', invalidation: '', entryReason: '', accountId: accountStore.selectedId || '' });
   editingId.value = '';
   fullFormVisible.value = true;
 }
@@ -996,7 +998,7 @@ function openEdit(r: TradeJournal) {
   editingId.value = r.id;
   Object.assign(form, {
     symbol: r.symbol, direction: r.direction, market: r.market ?? '现货', leverage: r.leverage ?? 1,
-    plannedEntry: r.plannedEntry, plannedAt: (r as any).plannedAt ?? r.createdAt, plannedStop: r.plannedStop,
+    plannedEntry: r.plannedEntry, plannedStop: r.plannedStop,
     targetsText: (r.plannedTargets ?? []).join(', '),
     plannedSize: r.plannedSize ?? '', plannedRiskAmount: r.plannedRiskAmount,
     plannedHolding: r.plannedHolding ?? '日内', strategyName: r.strategyName ?? '',
@@ -1010,17 +1012,22 @@ async function savePlanForm() {
   saving.value = true;
   try {
     const targets = form.targetsText.split(',').map((s: string) => Number(s.trim())).filter((n: number) => Number.isFinite(n));
-    const record = {
+    const toNum = (v: unknown): number | undefined => {
+      if (v === undefined || v === null || v === '') return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    // 计划信息（编辑/新建共用；编辑时只补充信息，绝不改动状态与单号）
+    const planInfo = {
       symbol: form.symbol.toUpperCase(),
       direction: form.direction,
       market: form.market,
       leverage: form.leverage,
-      plannedEntry: form.plannedEntry,
-      plannedAt: form.plannedAt,
-      plannedStop: form.plannedStop,
+      plannedEntry: toNum(form.plannedEntry),
+      plannedStop: toNum(form.plannedStop),
       plannedTargets: targets,
       plannedSize: form.plannedSize || undefined,
-      plannedRiskAmount: form.plannedRiskAmount,
+      plannedRiskAmount: toNum(form.plannedRiskAmount),
       plannedHolding: form.plannedHolding,
       strategyName: form.strategyName || undefined,
       strategyVersion: form.strategyVersion || undefined,
@@ -1028,15 +1035,13 @@ async function savePlanForm() {
       invalidation: form.invalidation || undefined,
       entryReason: form.entryReason || undefined,
       accountId: form.accountId || undefined,
-      tradeNo: 'P' + Date.now().toString(36),
-      status: 'plan',
     };
     if (editingId.value) {
-      await api.patch('/journal/trades/' + editingId.value, { patch: record });
+      await api.patch('/journal/trades/' + editingId.value, { patch: planInfo });
     } else {
-      await api.post('/journal/trades', { record });
+      await api.post('/journal/trades', { record: { ...planInfo, tradeNo: 'P' + Date.now().toString(36), status: 'plan' } });
     }
-    ElMessage.success(editingId.value ? '已保存修改' : '计划已保存（计划中）');
+    ElMessage.success(editingId.value ? '已保存修改（状态不变）' : '计划已保存（计划中）');
     fullFormVisible.value = false;
     await loadAll();
   } catch (e) {
