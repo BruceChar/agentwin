@@ -1720,6 +1720,13 @@ async function loadOlderPage() {
     baseCandles = [...page, ...baseCandles];
     candles.value = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
     const shift = candles.value.length - oldLen;
+    // 历史前置追加使全部 K 线索引右移 shift：已标注信号同步平移，保持与 K 线对齐
+    if (shift > 0 && stratPoints.value.length) {
+      for (const p of stratPoints.value) {
+        p.entryIndex += shift;
+        p.exitIndex += shift;
+      }
+    }
     anchorZoom(realFrom + shift, realTo + shift);
     render();
   } catch {
