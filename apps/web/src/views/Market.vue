@@ -158,7 +158,7 @@
           <div class="strat-panel">
             <div class="strat-head">
               <b>策略信号</b>
-              <span v-if="stratPoints.length" class="dim">已标注 {{ stratPoints.length }} 笔（▼开 ▲平）</span>
+              <span v-if="stratPoints.length" class="dim">已标注 {{ stratPoints.length }} 笔（▼开 ▲信号平 ◆止盈/止损）</span>
               <span v-else class="dim">选择内置策略后应用到当前 K 线</span>
             </div>
             <div class="strat-row">
@@ -529,12 +529,23 @@ function stratMarkPoint(): Record<string, unknown> {
     }
     const xi = p.exitIndex >= 0 && p.exitIndex < cs.length ? p.exitIndex : -1;
     if (xi !== -1) {
+      // 区分平仓原因：风险退出（止盈/止损）用琥珀色，信号平仓用红色，避免误读
+      const r = p.reason ?? '';
+      const riskKind = /止损/.test(r) ? '止损' : /止盈/.test(r) ? '止盈' : '';
       data.push({
         coord: [xi, p.exitPrice],
         value: '▲',
         symbol: 'arrow', symbolSize: 12, symbolRotate: 180,
-        itemStyle: { color: '#ef4444', borderColor: '#450a0a', borderWidth: 0.5 },
-        label: { show: true, position: 'top', fontSize: 9, color: '#ef4444', formatter: '平', backgroundColor: 'rgba(69,10,10,0.7)', borderRadius: 2, padding: [1, 3] },
+        itemStyle: riskKind
+          ? { color: '#f59e0b', borderColor: '#451a03', borderWidth: 0.5 }
+          : { color: '#ef4444', borderColor: '#450a0a', borderWidth: 0.5 },
+        label: {
+          show: true, position: 'top', fontSize: 9,
+          color: riskKind ? '#f59e0b' : '#ef4444',
+          formatter: riskKind || '平',
+          backgroundColor: riskKind ? 'rgba(69,26,3,0.7)' : 'rgba(69,10,10,0.7)',
+          borderRadius: 2, padding: [1, 3],
+        },
       });
     }
   }
