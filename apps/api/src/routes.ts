@@ -1,6 +1,7 @@
 import { promises as dns } from 'node:dns';
 import type { FastifyInstance } from 'fastify';
-import type { Interval, Market } from '@agentwin/shared';
+import type { Interval, Market, Candle } from '@agentwin/shared';
+import { INTERVAL_MS } from '@agentwin/shared';
 import { runBacktest } from '@agentwin/engine';
 import { builtinRegistry, normalizeParams } from '@agentwin/strategy';
 import { LLMService } from '@agentwin/llm';
@@ -230,9 +231,28 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     const market = str(b['market'], 'SPOT') as Market;
     const interval = str(b['interval'], '1h') as Interval;
     const symbol = str(b['symbol'], 'BTCUSDT').toUpperCase();
-    const to = Date.now();
-    const from = to - num(b['fromDays'], 90) * 86_400_000;
-    const candles = await marketData.getKlines({ symbol, market, interval, startTime: from, endTime: to, limit: 1000 });
+    // 行情页传入当前 K 线（与图表完全一致）→ 直接回测标注；否则回退行情源拉取
+    const rawCandles = Array.isArray(b['candles']) ? (b['candles'] as Partial<Candle>[]) : [];
+    let candles: Candle[];
+    if (rawCandles.length) {
+      candles = rawCandles.map((c) => ({
+        openTime: num(c.openTime, 0),
+        open: num(c.open, 0),
+        high: num(c.high, 0),
+        low: num(c.low, 0),
+        close: num(c.close, 0),
+        volume: num(c.volume, 0),
+        closeTime: num(c.closeTime, num(c.openTime, 0) + INTERVAL_MS[interval]),
+        quoteVolume: num(c.quoteVolume, 0),
+        trades: num(c.trades, 0),
+        takerBuyBase: num(c.takerBuyBase, 0),
+        takerBuyQuote: num(c.takerBuyQuote, 0),
+      }));
+    } else {
+      const to = Date.now();
+      const from = to - num(b['fromDays'], 90) * 86_400_000;
+      candles = await marketData.getKlines({ symbol, market, interval, startTime: from, endTime: to, limit: 1000 });
+    }
     if (candles.length < 50) return app.httpErrors.badRequest('not enough candles: ' + candles.length);
     const result = await runBacktest({
       strategy,

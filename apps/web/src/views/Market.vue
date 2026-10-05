@@ -150,6 +150,38 @@
         </el-dropdown>
       </div>
       <div class="tv-actions">
+        <!-- 策略信号：选择内置策略 → 应用 → 在当前 K 线上标注买卖信号 -->
+        <el-popover v-model:visible="stratOpen" placement="bottom-end" :width="430" trigger="click">
+          <template #reference>
+            <el-button size="small" class="ind-btn" :type="stratOpen ? 'primary' : 'default'" title="策略信号标注"><el-icon><DataLine /></el-icon></el-button>
+          </template>
+          <div class="strat-panel">
+            <div class="strat-head">
+              <b>策略信号</b>
+              <span v-if="stratPoints.length" class="dim">已标注 {{ stratPoints.length }} 笔（▼开 ▲平）</span>
+              <span v-else class="dim">选择内置策略后应用到当前 K 线</span>
+            </div>
+            <div class="strat-row">
+              <el-select v-model="stratSel" size="small" filterable placeholder="选择内置策略" style="width: 210px" @change="onStratSel">
+                <el-option v-for="s in stratList" :key="s.id" :value="s.id" :label="s.name" />
+              </el-select>
+              <el-button size="small" type="primary" :loading="stratLoading" :disabled="!stratSel" @click="applyStrategy">应用</el-button>
+              <el-button v-if="stratPoints.length" size="small" @click="clearStrategy">清除</el-button>
+            </div>
+            <template v-if="stratMeta">
+              <div class="strat-desc dim">{{ stratMeta.description }}</div>
+              <div class="strat-params">
+                <div v-for="ps in stratMeta.paramSpecs" :key="ps.name" class="strat-param">
+                  <span class="sp-name" :title="ps.description ?? ps.name">{{ ps.name }}</span>
+                  <el-input-number v-if="ps.type === 'number'" v-model="stratParams[ps.name]" :min="ps.min" :max="ps.max" :step="ps.step ?? 1" size="small" style="width: 140px" controls-position="right" />
+                  <el-switch v-else-if="ps.type === 'boolean'" v-model="stratParams[ps.name]" size="small" />
+                  <el-input v-else v-model="stratParams[ps.name]" size="small" style="width: 140px" />
+                </div>
+              </div>
+            </template>
+            <div v-if="stratErr" class="strat-err">{{ stratErr }}</div>
+          </div>
+        </el-popover>
         <el-button size="small" @click="refreshLatest">刷新</el-button>
       </div>
     </div>
@@ -237,7 +269,7 @@ import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, react
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
 import { ArrowLeft, DataAnalysis, DataLine, Delete, EditPen, Histogram, Odometer, PieChart, Top, TrendCharts, View } from '@element-plus/icons-vue';
-import { api } from '../api.ts';
+import { api, type BacktestResult, type StrategyMeta } from '../api.ts';
 import { accountStore } from '../store.ts';
 import { subscribePrice } from '../lib/prices.ts';
 import {
@@ -368,6 +400,88 @@ const lastPrice = ref<number | null>(null);
 const lastUp = ref(true);
 const lastChangePct = ref('');
 const chartEl = ref<HTMLDivElement | null>(null);
+
+// ---------- 策略信号标注 ----------
+interface StratPoint { entryTime: number; exitTime: number; side: string; entryPrice: number; exitPrice: number; reason: string; pnl: number }
+const stratOpen = ref(false);
+const stratList = ref<StrategyMeta[]>([]);
+const stratSel = ref('');
+const stratMeta = computed(() => stratList.value.find((s) => s.id === stratSel.value) ?? null);
+const stratParams = reactive<Record<string, number | string | boolean>>({});
+const stratLoading = ref(false);
+const stratErr = ref('');
+const stratPoints = ref<StratPoint[]>([]);
+
+async function loadStratList() {
+  const res = await api.get<{ strategies: StrategyMeta[] }>('/strategies/builtin').catch(() => null);
+  if (res) stratList.value = res.strategies;
+}
+function onStratSel(id: string) {
+  const m = stratList.value.find((s) => s.id === id);
+  for (const k of Object.keys(stratParams)) delete stratParams[k];
+  if (m) for (const ps of m.paramSpecs) stratParams[ps.name] = ps.default;
+  stratErr.value = '';
+}
+async function applyStrategy() {
+  if (!stratSel.value) return;
+  const cs = candles.value;
+  if (cs.length < 50) { stratErr.value = 'K线不足 50 根，无法回测标注'; return; }
+  stratLoading.value = true;
+  stratErr.value = '';
+  try {
+    const res = await api.post<BacktestResult>('/backtest', {
+      strategy: stratSel.value,
+      market: market.value,
+      interval: interval.value,
+      symbol: symbol.value,
+      params: { ...stratParams },
+      candles: cs,
+    });
+    stratPoints.value = (res.trades ?? []).map((t) => ({
+      entryTime: t.entryTime, exitTime: t.exitTime, side: t.side,
+      entryPrice: t.entryPrice, exitPrice: t.exitPrice, reason: t.reason, pnl: t.pnl,
+    }));
+    if (!stratPoints.value.length) stratErr.value = '该区间无交易信号';
+    render();
+  } catch (e) {
+    stratErr.value = '回测失败：' + (e instanceof Error ? e.message : String(e));
+  } finally {
+    stratLoading.value = false;
+  }
+}
+function clearStrategy() { stratPoints.value = []; stratErr.value = ''; render(); }
+/** 行情/周期/刷新变化后旧信号不再对应图表，清空标注 */
+function invalidateStrat() { stratPoints.value = []; }
+
+/** 由回测成交记录生成 K 线 markPoint（▼ 开仓 ▲ 平仓） */
+function stratMarkPoint(): Record<string, unknown> {
+  const cs = candles.value;
+  const idxByTime = new Map(cs.map((c, i) => [c.openTime, i] as const));
+  const data: Record<string, unknown>[] = [];
+  for (const p of stratPoints.value) {
+    const ei = idxByTime.get(p.entryTime);
+    if (ei !== undefined) {
+      data.push({
+        coord: [ei, p.entryPrice],
+        value: '▼',
+        symbol: 'arrow', symbolSize: 12, symbolRotate: 0,
+        itemStyle: { color: '#22c55e', borderColor: '#052e16', borderWidth: 0.5 },
+        label: { show: true, position: 'bottom', fontSize: 9, color: '#22c55e', formatter: '开', backgroundColor: 'rgba(5,46,22,0.7)', borderRadius: 2, padding: [1, 3] },
+      });
+    }
+    const xi = idxByTime.get(p.exitTime);
+    if (xi !== undefined) {
+      data.push({
+        coord: [xi, p.exitPrice],
+        value: '▲',
+        symbol: 'arrow', symbolSize: 12, symbolRotate: 180,
+        itemStyle: { color: '#ef4444', borderColor: '#450a0a', borderWidth: 0.5 },
+        label: { show: true, position: 'top', fontSize: 9, color: '#ef4444', formatter: '平', backgroundColor: 'rgba(69,10,10,0.7)', borderRadius: 2, padding: [1, 3] },
+      });
+    }
+  }
+  return { symbol: 'arrow', symbolSize: 12, data, animation: false };
+}
 
 // ---------- 指标菜单：一级(列表) / 二级(均线明细) 导航 ----------
 const indLevel = ref<'root' | 'ma'>('root');
@@ -570,11 +684,12 @@ function bindTicker() {
   });
 }
 
-function onSymbol(v: string) { symbol.value = v; load(true); bindTicker(); }
-function onMarket(v: string) { market.value = v; load(true); bindTicker(); }
+function onSymbol(v: string) { symbol.value = v; invalidateStrat(); load(true); bindTicker(); }
+function onMarket(v: string) { market.value = v; invalidateStrat(); load(true); bindTicker(); }
 function changeInterval(v: string) {
   if (interval.value === v) return;
   interval.value = v;
+  invalidateStrat();
   load(true);
 }
 
@@ -816,6 +931,7 @@ async function load(resetZoom = true) {
     );
     baseCandles = res.candles;
     candles.value = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
+    invalidateStrat(); // 行情数据变化，旧信号不再对应图表
     reachedStart = false;
     yPan = 0;
     userAdjusted = false; // 重新加载 → 回到默认视图（跟随最新 K 线）
@@ -884,6 +1000,7 @@ async function refreshLatest() {
     const cs = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
     if (!cs.length) return;
     candles.value = cs;
+    invalidateStrat(); // 增量数据变化，旧信号不再对应图表
     // 锚定可见窗口：
     // - 用户已调整（拖拽/缩放）→ 保持绝对窗口位置：同一批 K 线原地不动，新 K 线不挤入视野，
     //   右侧原本在填充区时按填充区偏移保持（不再回弹到默认视图）；
@@ -941,6 +1058,7 @@ async function refreshLatest() {
         id: 'kline',
         data: padNaN(cs.map((c) => [c.open, c.close, c.low, c.high])),
         markLine: vpvrOn.value ? pocMarkLine(pocPrice) : undefined,
+        markPoint: stratMarkPoint(),
       },
     ];
     for (const ln of lines.value) {
@@ -1238,6 +1356,7 @@ function render() {
     data: padNaN(cs.map((c) => [c.open, c.close, c.low, c.high])),
     itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN, borderWidth: 1 },
     markLine: vpvrOn.value ? pocMarkLine(pocPrice) : undefined,
+    markPoint: stratMarkPoint(),
     valueFormatter: (v: unknown) =>
       Array.isArray(v)
         ? '开 ' + fmtPrice(v[0] as number) + ' 收 ' + fmtPrice(v[1] as number) + ' 低 ' + fmtPrice(v[2] as number) + ' 高 ' + fmtPrice(v[3] as number)
@@ -1742,6 +1861,7 @@ onMounted(() => {
   measureChart();
   loadSettings();
   loadIvSettings();
+  loadStratList();
   load();
   bindTicker();
   startAutoRefresh();
@@ -1894,6 +2014,16 @@ onBeforeUnmount(() => {
 .color { width: 18px; height: 18px; border: none; border-radius: 4px; padding: 0; background: none; cursor: pointer; }
 .color::-webkit-color-swatch-wrapper { padding: 0; }
 .color::-webkit-color-swatch { border: 1px solid var(--border); border-radius: 4px; }
+
+/* 策略信号面板 */
+.strat-panel { display: flex; flex-direction: column; gap: 8px; }
+.strat-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.strat-row { display: flex; gap: 6px; align-items: center; }
+.strat-desc { font-size: 11px; line-height: 1.5; }
+.strat-params { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; max-height: 220px; overflow-y: auto; }
+.strat-param { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 11px; }
+.strat-param .sp-name { font-family: var(--mono); color: var(--text-dim); }
+.strat-err { font-size: 11px; color: #f56c6c; line-height: 1.4; }
 
 /* TradingView 风格状态栏 */
 .tv-status { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); font-size: 11px; flex-wrap: wrap; }

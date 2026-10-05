@@ -45,17 +45,32 @@ export interface AccountSummary {
 export const MARKET_LABELS: Record<string, string> = {
   SPOT: '现货', MARGIN: '全仓杠杆', MARGIN_ISOLATED: '逐仓杠杆', USDT_M: 'U本位合约', COIN_M: '币本位合约',
 };
-export interface StrategyMeta { id: string; name: string; description: string; paramSpecs: { name: string; default: number | string | boolean; min?: number; max?: number; step?: number }[] }
+export interface StrategyParamSpec { name: string; type: string; default: number | string | boolean; min?: number; max?: number; step?: number; description?: string }
+export interface StrategyMeta { id: string; name: string; description: string; paramSpecs: StrategyParamSpec[] }
 export interface StrategyConfig {
   id: string; name: string; description?: string; market: string; symbol: string; interval: string;
   parameters: Record<string, number | string | boolean>; source: string; enabled: boolean;
+}
+export interface BacktestTrade {
+  index: number;
+  entryTime: number;
+  exitTime: number;
+  side: string;
+  entryPrice: number;
+  exitPrice: number;
+  qty: number;
+  pnl: number;
+  pnlPct: number;
+  fees: number;
+  holdBars: number;
+  reason: string;
 }
 export interface BacktestResult {
   runId: string; metrics: {
     totalReturn: number; maxDrawdown: number; sharpe: number; winRate: number; profitFactor: number;
     totalTrades: number; finalEquity: number; annualizedReturn: number;
   };
-  equityCurve: EquityPoint[]; trades: { side: string; entryPrice: number; exitPrice: number; pnl: number; reason: string }[];
+  equityCurve: EquityPoint[]; trades: BacktestTrade[];
 }
 export interface Trade { id: string; symbol: string; side: string; qty: number; price: number; fee: number; realizedPnl?: number; tradedAt: number; strategyId?: string }
 export interface SentimentRecord {
