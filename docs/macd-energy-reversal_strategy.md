@@ -1,7 +1,7 @@
 
 # MACD 量价势能衰竭反转策略・设计文档
 
-**状态**：设计已确认，待实现
+**状态**：已实现（策略 + 校准模块 + 单元测试通过；真实回测待行情连通）
 **策略 ID**：`macd_energy_reversal`
 **兼容别名**：`macd_energy`
 **策略名称**：MACD 量价势能衰竭反转
@@ -88,7 +88,7 @@
 | 锚定方式      | `anchor=volume` 量峰锚定，默认；`anchor=hist` 极值锚定                 |
 | 价格确认      | 看跌：`PH_B ≥ PH_A × priceRatio`；看涨：`PL_B ≤ PL_A ÷ priceRatio` |
 | 成交量确认    | `V_B ≥ V_A × volRatio`                                                 |
-| MACD 势能确认 | 看跌：`Hv_B ≤ P_A × macdRatio`；看涨：`                                |
+| MACD 势能确认 | 看跌：`Hv_B ≤ P_A × macdRatio`；看涨：`\|Hv_B\| ≤ \|N_A\| × macdRatio`（`anchor=hist` 时用区段极值 `P_B` / `\|N_B\|`） |
 | 默认比率      | `priceRatio=0.9`，`volRatio=0.8`，`macdRatio=0.2`                    |
 | 信号强度      | 0–10 评分，刚好满足三阈值为`1`，越强越接近 `10`                       |
 | 评分模式      | `saturating` 默认 / `linear` / `calibrated`                          |
@@ -143,9 +143,9 @@ hist 连续同号的一段 K 线区间：
 
 | 比率           | 默认 | 方向                                                                       | 含义                                         |
 | -------------- | ---: | -------------------------------------------------------------------------- | -------------------------------------------- |
-| `priceRatio` | 0.98 | 看跌：`PH_B ≥ PH_A × priceRatio`；看涨：`PL_B ≤ PL_A ÷ priceRatio` | 当前价格达到前极值的至少该比例，才算有效采样 |
+| `priceRatio` | 0.9 | 看跌：`PH_B ≥ PH_A × priceRatio`；看涨：`PL_B ≤ PL_A ÷ priceRatio` | 当前价格达到前极值的至少该比例，才算有效采样 |
 | `volRatio`   |  0.8 | `V_B ≥ V_A × volRatio`                                                 | 当前量能达到前量的至少该比例，才算有效确认   |
-| `macdRatio`  |  0.2 | `                                                                          | 新势能                                       |
+| `macdRatio`  |  0.2 | 看跌：`Hv_B ≤ P_A × macdRatio`；看涨：`\|Hv_B\| ≤ \|N_A\| × macdRatio` | 新势能相对前势能至多该比例，越小衰减越明显   |
 
 - 价格与成交量比率越大，代表当前价格/量能相对前值越强，信号可信度越高。
 - MACD 比率越小，代表势能衰减越明显，信号越强。
@@ -501,9 +501,9 @@ I = 1.1904762 × 1 × 1
 | `slow`                  |  number |             26 |                                       5–100 |    1 | MACD 慢 EMA 周期                                                                                     |
 | `signal`                |  number |              9 |                                        2–50 |    1 | MACD 信号周期                                                                                        |
 | `anchor`                |  string |     `volume` |                        `volume` / `hist` |   — | 锚定方式：量峰 / MACD 极值                                                                           |
-| `priceRatio`            |  number |           0.98 |                                     0.1–2.0 | 0.05 | 价格确认比率。看跌：`PH_B ≥ PH_A × priceRatio`；看涨：`PL_B ≤ PL_A ÷ priceRatio`。越大越严格 |
+| `priceRatio`            |  number |           0.9 |                                     0.1–2.0 | 0.05 | 价格确认比率。看跌：`PH_B ≥ PH_A × priceRatio`；看涨：`PL_B ≤ PL_A ÷ priceRatio`。越大越严格 |
 | `volRatio`              |  number |            0.8 |                                     0.1–3.0 | 0.05 | 成交量确认比率。`V_B ≥ V_A × volRatio`。越大越严格                                               |
-| `macdRatio`             |  number |            0.2 |                                    0.05–1.0 | 0.05 | MACD 势能衰减比率。`                                                                                 |
+| `macdRatio`             |  number |            0.2 |                                    0.05–1.0 | 0.05 | MACD 势能衰减比率：新势能 ≤ 前势能 × 该值（越小要求衰减越明显，信号越强）                          |
 | `volWindow`             |  number |              3 |                                        0–10 |    1 | 量峰邻域 ±N 根平均量；0 = 单根量                                                                    |
 | `minAbsEnergy`          |  number |              0 |                                          ≥0 | 0.01 | 最小势能绝对值过滤，0 = 关闭；需按币种价格量级设置                                                   |
 | `strictPeakDecay`       | boolean |          false |                                 true / false |   — | 仅`anchor=volume` 时生效；额外要求新区段 hist 峰值 / 谷值也衰减                                    |
@@ -545,8 +545,9 @@ I = 1.1904762 × 1 × 1
 
 ```text
 onBar:
-  1. hist = ctx.indicators['hist'] ??= macd(closes, fast, slow, signal).hist
-     首次计算后缓存复用。
+  1. hist = macd(closes, fast, slow, signal).hist
+     说明：当前引擎每根 bar 新建 ctx.indicators、不跨 bar 复用，故实现每次全量重算
+     （与 macd_trend 一致），不依赖 indicators 缓存；若后续引擎支持跨 bar 缓存，可改为只算增量。
 
   2. 扫描 hist，切分区段序列：
      zones[] = { sign, start, end, P|N, V, Hv, PH|PL }
@@ -635,7 +636,8 @@ onBar:
 ### 实现要点
 
 - 区段扫描每次 `onBar` 全量重扫，首版保证确定性；后续可做增量缓存。
-- `ctx.indicators` 缓存 hist 序列、区段结果、`lastSignalZone`。
+- 当前引擎每根 bar 新建 `ctx.indicators`（不跨 bar 缓存）→ 每次 `onBar` 全量重算 hist 与区段；
+  区段去重用策略实例闭包 `lastSignalZone`（仅记录实际发单区段），不写入 `ctx.indicators`。
 - 判定顺序严格为：价格 → 成交量 → MACD 势能。前一步不满足时，后续步骤短路跳过。
 - 信号强度评分在第三步通过后计算，不影响信号是否触发，仅作为附加信息。
 - 信号在区段结束后的异号 bar 确认，下一根执行，避免追在极值 / 量峰尖上。
@@ -891,6 +893,9 @@ upper = center + half
 ---
 
 ## 12. 实现与交付计划
+
+> 进度：步骤 1–5 已完成（策略实现、注册、单元测试、校准模块、`pnpm typecheck` + `pnpm test` 全绿）；
+> 步骤 6 依赖 Binance 行情连通后执行。
 
 | 步骤 | 内容                                                                                                                                                                                                                                                                                                                      |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

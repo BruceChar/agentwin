@@ -103,10 +103,19 @@ pnpm dev:web   # http://127.0.0.1:5173 （Vite，/api 代理到后端）
 - **绝不向 Binance 下发真实订单**；支持现货与 U本位合约（含做空与反向开仓）；
 - 合约支持 **资金费结算**：订阅标记价格流，按 Binance 约定（正费率多头付空头）在每期 funding time 自动结算现金。
 
+## 策略实时运行时（后台更新 + 指标事件）
+
+- 策略可单独启动为**后台运行时**（`POST /api/strategy-runtime/start`），与 HTTP 请求周期解耦，持续实时更新；
+- 更新频率可设置：`granularity=bar`（默认，仅收盘，频率=周期）/ `intra`（盘中按 `throttleMs` 节流，缺省 `clamp(周期/20, 1s, 30s)`）；
+- 只在"更新点"发事件（默认即每根 K 线一次，不会秒级刷屏）：`candle`（K 线）/ `indicator`（EMA·MACD·RSI 快照 + 策略信号）/ `error`；
+- 下游消费：WebSocket `GET /api/ws/strategy`（默认订阅全部运行时），或轮询 `GET /api/strategy-runtime/events?since=` 做断线重放；
+- 详见 [docs/strategy-runtime.md](docs/strategy-runtime.md)。
+
 ## API 速览（前缀 /api）
 
 `health` · `market/klines|tickers|symbols` · `accounts` · `strategies(+builtin)` · `backtest(s)` ·
-`paper/start|stop|status` · `trades` · `pnl` · `binance/status|sync|account|trades|orders|proxy` ·
+`paper/start|stop|status` · `strategy-runtime/start|stop|events`(+`ws/strategy`) · `trades` · `pnl` ·
+`binance/status|sync|account|trades|orders|proxy` ·
 `llm/chat|chat-stream(SSE)|iterate|analyze-journal|sessions` · `sentiment/scan|score|:symbol` · `journal`
 
 ## 测试

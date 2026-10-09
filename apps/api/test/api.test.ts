@@ -105,4 +105,43 @@ describe('AgentWin API', () => {
     const list = await handle.app.inject({ method: 'GET', url: '/api/journal' });
     expect(list.json().entries.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('runs a background strategy runtime and exposes indicator events', async () => {
+    const start = await handle.app.inject({
+      method: 'POST', url: '/api/strategy-runtime/start',
+      payload: {
+        strategyId: 'macd_energy_reversal', symbol: 'BTCUSDT', market: 'USDT_M', interval: '1h',
+        granularity: 'intra', throttleMs: 1000,
+      },
+    });
+    expect(start.statusCode).toBe(200);
+    const status = start.json();
+    expect(status.running).toBe(true);
+    expect(status.granularity).toBe('intra');
+    expect(status.bars).toBeGreaterThan(0);
+
+    const list = await handle.app.inject({ method: 'GET', url: '/api/strategy-runtime' });
+    const ids = list.json().runtimes.map((r: { id: string }) => r.id);
+    expect(ids).toContain(status.id);
+
+    // 启动即产生 start + 首帧 indicator（预热 K 线基准）
+    const events = await handle.app.inject({ method: 'GET', url: '/api/strategy-runtime/events?runtimeId=' + encodeURIComponent(status.id) });
+    const types = events.json().events.map((e: { type: string }) => e.type);
+    expect(types).toContain('start');
+    expect(types).toContain('indicator');
+
+    const stop = await handle.app.inject({ method: 'POST', url: '/api/strategy-runtime/stop', payload: { id: status.id } });
+    expect(stop.statusCode).toBe(200);
+    expect(stop.json().running).toBe(false);
+    const missing = await handle.app.inject({ method: 'POST', url: '/api/strategy-runtime/stop', payload: { id: 'nope' } });
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it('rejects unknown strategy for strategy runtime', async () => {
+    const res = await handle.app.inject({
+      method: 'POST', url: '/api/strategy-runtime/start',
+      payload: { strategyId: 'does_not_exist', symbol: 'BTCUSDT', market: 'USDT_M', interval: '1h' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });

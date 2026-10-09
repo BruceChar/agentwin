@@ -1,6 +1,6 @@
 import { promises as dns } from 'node:dns';
 import type { FastifyInstance } from 'fastify';
-import type { Interval, Market, Candle } from '@agentwin/shared';
+import type { Interval, Market, Candle, StrategyParamValue } from '@agentwin/shared';
 import { INTERVAL_MS } from '@agentwin/shared';
 import { runBacktest } from '@agentwin/engine';
 import { builtinRegistry, normalizeParams } from '@agentwin/strategy';
@@ -9,6 +9,7 @@ import { SystemIterationAgent, JournalAnalyzer, SentimentAnalyzer, StrategyAdvis
 import { createProxiedFetch } from '@agentwin/market';
 import type { AppServices } from './services.ts';
 import type { PaperManager } from './paper-manager.ts';
+import type { StrategyRuntimeManager } from './strategy-runtime-manager.ts';
 
 interface Body {
   [key: string]: unknown;
@@ -33,7 +34,7 @@ function str(v: unknown, dflt = ''): string {
   return v === undefined ? dflt : String(v);
 }
 
-export function registerRoutes(app: FastifyInstance, services: AppServices, paper: PaperManager): void {
+export function registerRoutes(app: FastifyInstance, services: AppServices, paper: PaperManager, runtime: StrategyRuntimeManager): void {
   const { storage, marketData, toolkit, llm, sentiment, rest, sync } = services;
 
   // ---------------- 健康检查 ----------------
@@ -301,6 +302,50 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
 
   app.post('/api/paper/stop', async () => paper.stop());
   app.get('/api/paper/status', async () => paper.status());
+
+  // ---------------- 策略实时运行时（后台更新 + 指标事件） ----------------
+  // 启动：后台独立运行，按 granularity 决定更新粒度（bar=收盘 / intra=盘中节流）
+  app.post('/api/strategy-runtime/start', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    const strategyId = str(b['strategyId']);
+    if (!builtinRegistry.has(strategyId)) return app.httpErrors.badRequest('unknown strategy: ' + strategyId);
+    try {
+      return await runtime.start({
+        id: b['id'] !== undefined ? str(b['id']) : undefined,
+        strategyId,
+        symbol: str(b['symbol'], 'BTCUSDT').toUpperCase(),
+        market: str(b['market'], 'USDT_M') as Market,
+        interval: str(b['interval'], '1h') as Interval,
+        granularity: str(b['granularity'], 'bar') === 'intra' ? 'intra' : 'bar',
+        throttleMs: b['throttleMs'] !== undefined ? num(b['throttleMs'], 0) : undefined,
+        warmupLimit: b['warmupLimit'] !== undefined ? num(b['warmupLimit'], 300) : undefined,
+        params: (b['params'] as Record<string, StrategyParamValue> | undefined) ?? undefined,
+      });
+    } catch (e) {
+      return app.httpErrors.badRequest(e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  app.post('/api/strategy-runtime/stop', async (req) => {
+    const id = str((req.body as Body)['id']);
+    const status = await runtime.stop(id);
+    if (!status) return app.httpErrors.notFound('runtime not found: ' + id);
+    return status;
+  });
+
+  app.get('/api/strategy-runtime', async () => ({ runtimes: runtime.list() }));
+
+  // 事件环形缓冲：下游轮询/断线重放（since = 上次收到的 seq）
+  app.get('/api/strategy-runtime/events', async (req) => {
+    const q = req.query as Body;
+    return {
+      events: runtime.events({
+        runtimeId: q['runtimeId'] !== undefined ? str(q['runtimeId']) : undefined,
+        since: q['since'] !== undefined ? num(q['since'], 0) : 0,
+        limit: q['limit'] !== undefined ? num(q['limit'], 200) : undefined,
+      }),
+    };
+  });
 
   // ---------------- Binance 真实账户（只读） ----------------
   app.get('/api/binance/status', async () => {

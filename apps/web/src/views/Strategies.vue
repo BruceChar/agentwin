@@ -20,18 +20,64 @@
       </div>
     </div>
 
-    <!-- ============ 6.2 我的策略 ============ -->
-    <template v-if="tab === 'strategies'">
+    <!-- ============ 6.2 策略库（列表） ============ -->
+    <template v-if="tab === 'strategies' && !showDetail">
+      <div v-if="runtimes.length" class="aw-card rt-strip">
+        <span class="dim">运行中</span>
+        <button v-for="r in runtimes" :key="r.id" class="rt-chip" @click="openRuntimeDetail(r)">
+          {{ strategyLabel(r.strategyId) }} · {{ r.symbol }} {{ r.interval }}
+          <span v-if="rtSignals[r.id]" class="rt-sig" :class="rtSignals[r.id]!.action === 'OPEN_LONG' ? 'up' : rtSignals[r.id]!.action === 'OPEN_SHORT' ? 'down' : ''">{{ rtSignals[r.id]!.action }}</span>
+        </button>
+      </div>
+      <div class="aw-card sc-config">
+        <span class="dim">激活运行配置（开关使用）</span>
+        <label>品种 <el-input v-model="rtForm.symbol" size="small" style="width: 116px" /></label>
+        <label>市场
+          <el-select v-model="rtForm.market" size="small" style="width: 120px">
+            <el-option value="USDT_M" label="U本位合约" />
+            <el-option value="SPOT" label="现货" />
+          </el-select>
+        </label>
+        <label>周期
+          <el-select v-model="rtForm.interval" size="small" style="width: 92px">
+            <el-option v-for="iv in rtIntervals" :key="iv" :value="iv" :label="iv" />
+          </el-select>
+        </label>
+        <label>更新频率
+          <el-select v-model="rtForm.granularity" size="small" style="width: 132px">
+            <el-option value="bar" label="每根K线收盘" />
+            <el-option value="intra" label="盘中节流" />
+          </el-select>
+        </label>
+        <span class="dim sc-config-hint">开关 = 激活 / 停用后台运行时（优先用「已保存配置」的品种与参数）</span>
+      </div>
       <div class="strat-grid">
-        <div v-for="s in strategyCards" :key="s.key" class="aw-card strat-card hoverable" @click="openDetail(s)">
+        <div
+          v-for="s in strategyList"
+          :key="s.key"
+          class="aw-card strat-card hoverable"
+          :class="{ 'sc-live-card': activeCount(s.builtinId) > 0 }"
+          @click="openStrategyDetail(s)"
+        >
           <div class="sc-top">
             <div class="sc-name">
               <b>{{ s.name }}</b>
               <span class="sc-ver mono">{{ s.version }}</span>
               <span v-if="s.drift" class="sc-warn" title="版本漂移（当前 vs 全部 > 20%）">⚠</span>
+              <span v-if="activeCount(s.builtinId) > 0" class="sc-live" title="后台实时运行中">
+                ● 运行中{{ activeCount(s.builtinId) > 1 ? ' ×' + activeCount(s.builtinId) : '' }}
+              </span>
             </div>
-            <div class="sparkline" ref="sparkRefs" :data-key="s.key"></div>
+            <div v-if="s.builtinId" class="sc-switch" title="激活 / 停用" @click.stop>
+              <el-switch
+                :model-value="activeCount(s.builtinId) > 0"
+                :loading="!!rtToggling[s.builtinId]"
+                @change="(v: string | number | boolean) => toggleActive(s, Boolean(v))"
+              />
+            </div>
+            <div v-else class="sparkline" ref="sparkRefs" :data-key="s.key"></div>
           </div>
+          <div v-if="s.description && !s.hasJournal" class="sc-desc dim">{{ s.description }}</div>
           <div class="sc-stats">
             <span class="scs"><i>实盘交易</i><b class="mono">{{ s.totalTrades }}</b></span>
             <span class="scs"><i>胜率</i><b class="mono">{{ s.winRate }}</b></span>
@@ -39,23 +85,80 @@
             <span class="scs"><i>回撤</i><b class="mono">{{ s.drawdown }}</b></span>
           </div>
           <div class="sc-actions" @click.stop>
-            <button class="aw-btn aw-btn-secondary mini" @click="goBacktest(s.name)">回归测试</button>
-            <button class="aw-btn aw-btn-primary mini" @click="goPaper(s.name)">模拟验证</button>
+            <button class="aw-btn aw-btn-secondary mini" @click="goBacktest(s.builtinId ?? s.name)">回归测试</button>
+            <button class="aw-btn aw-btn-primary mini" @click="goPaper(s.builtinId ?? s.name)">模拟验证</button>
           </div>
         </div>
-        <div v-if="!strategyCards.length" class="aw-empty aw-card">
-          <span>暂无已复盘数据，先完成几笔复盘后再来分析策略</span>
-          <button class="aw-btn aw-btn-primary" @click="$router.push('/journal?tab=pending')">去日志中心复盘 →</button>
+        <div v-if="!strategyList.length" class="aw-empty aw-card">
+          <span>暂无策略，检查后端是否注册了内置策略</span>
+          <button class="aw-btn aw-btn-primary" @click="loadAll()">重新加载</button>
         </div>
       </div>
     </template>
 
-    <!-- ============ 6.3 版本管理 ============ -->
-    <template v-else-if="tab === 'versions'">
-      <div class="aw-card detail-card">
+    <!-- ============ 6.3 策略详情（概览 / 版本 / 运行 / 参数） ============ -->
+    <template v-else-if="tab === 'strategies' && showDetail">
+      <div class="aw-card sd-head-card">
+        <div class="sd-head">
+          <button class="sd-back" @click="closeDetail">← 策略库</button>
+          <b class="sd-name">{{ detailName }}</b>
+          <span v-if="detailStrategyId" class="sd-id mono dim">{{ detailStrategyId }}</span>
+          <span v-if="activeCount(detailStrategyId) > 0" class="sc-live" title="后台实时运行中">
+            ● 运行中{{ activeCount(detailStrategyId) > 1 ? ' ×' + activeCount(detailStrategyId) : '' }}
+          </span>
+          <div class="sd-head-actions">
+            <el-switch
+              v-if="detailStrategyId"
+              :model-value="activeCount(detailStrategyId) > 0"
+              :loading="!!rtToggling[detailStrategyId]"
+              @change="(v: string | number | boolean) => toggleDetailActive(Boolean(v))"
+            />
+            <button class="aw-btn aw-btn-secondary mini" @click="goBacktest(detailStrategyId ?? detailKey)">回归测试</button>
+            <button class="aw-btn aw-btn-primary mini" @click="goPaper(detailStrategyId ?? detailKey)">模拟验证</button>
+          </div>
+        </div>
+        <div class="sd-nav">
+          <button
+            v-for="t in detailTabs"
+            :key="t.key"
+            class="sd-nav-btn"
+            :class="{ active: detailTab === t.key }"
+            @click="switchDetailTab(t.key)"
+          >{{ t.label }}</button>
+        </div>
+      </div>
+
+      <!-- 概览 -->
+      <div v-show="detailTab === 'overview'" class="aw-card detail-card">
+        <div class="ov-grid">
+          <div class="ov-cell">
+            <div class="dc-title">简介</div>
+            <p class="ov-desc">{{ detailStrategy?.description || '（自定义 / 日志策略，无内置描述）' }}</p>
+          </div>
+          <div class="ov-cell">
+            <div class="dc-title">运行状态</div>
+            <div class="dc-rows">
+              <div class="dc-row"><span>运行实例</span><b class="mono">{{ activeCount(detailStrategyId) }}</b></div>
+              <div class="dc-row"><span>品种 / 周期</span><b class="mono">{{ detailRunMeta }}</b></div>
+              <div class="dc-row"><span>最新事件</span><b class="mono">{{ detailRuntimes[0]?.lastEventAt ? fmtTime(detailRuntimes[0]!.lastEventAt) : '—' }}</b></div>
+            </div>
+          </div>
+          <div class="ov-cell">
+            <div class="dc-title">实盘统计（交易日志）</div>
+            <div class="dc-rows">
+              <div class="dc-row"><span>交易数</span><b class="mono">{{ detailStats.total }}</b></div>
+              <div class="dc-row"><span>胜率</span><b class="mono">{{ detailStats.winRate }}</b></div>
+              <div class="dc-row"><span>累计盈亏</span><b class="mono" :class="detailStats.netPnl >= 0 ? 'up' : 'down'">{{ fmtPnl(detailStats.netPnl) }}</b></div>
+              <div class="dc-row"><span>盈亏比</span><b class="mono">{{ detailStats.profitFactor }}</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 版本 -->
+      <div v-show="detailTab === 'versions'" class="aw-card detail-card">
         <div class="dc-head">
-          <b v-if="detailKey">{{ detailKey }}</b>
-          <span v-else class="dim">从「我的策略」选择策略查看版本树与统计</span>
+          <b>版本与统计</b>
           <div class="version-switch">
             <el-select v-model="versionScope" size="small" style="width: 160px">
               <el-option value="all" label="全部版本累计" />
@@ -145,11 +248,92 @@
             </div>
           </div>
           <div class="dc-foot">
-            <button class="aw-btn aw-btn-secondary" @click="goBacktest(detailKey)">对该策略发起回归测试 →</button>
-            <button class="aw-btn aw-btn-primary" @click="goPaper(detailKey)">发起 Dry Run 验证 →</button>
+            <button class="aw-btn aw-btn-secondary" @click="goBacktest(detailStrategyId ?? detailKey)">对该策略发起回归测试 →</button>
+            <button class="aw-btn aw-btn-primary" @click="goPaper(detailStrategyId ?? detailKey)">发起 Dry Run 验证 →</button>
           </div>
         </template>
-        <div v-else class="aw-empty"><span>暂无策略版本数据</span></div>
+        <div v-else class="aw-empty"><span>暂无版本数据：去日志中心为记录补充「策略版本」后即可见版本树</span></div>
+      </div>
+
+      <!-- 运行 -->
+      <div v-show="detailTab === 'run'" class="aw-card detail-card">
+        <div class="dc-head">
+          <b>实时运行</b>
+          <span class="dim" style="font-size: 11px; margin-left: 8px">后台独立运行；事件只在「更新频率」到点时产生（默认 = K线周期，不会秒级刷屏）</span>
+        </div>
+        <div class="rt-form" style="margin-bottom: 12px">
+          <label>品种 <el-input v-model="rtForm.symbol" size="small" style="width: 116px" /></label>
+          <label>市场
+            <el-select v-model="rtForm.market" size="small" style="width: 120px">
+              <el-option value="USDT_M" label="U本位合约" />
+              <el-option value="SPOT" label="现货" />
+            </el-select>
+          </label>
+          <label>周期
+            <el-select v-model="rtForm.interval" size="small" style="width: 92px">
+              <el-option v-for="iv in rtIntervals" :key="iv" :value="iv" :label="iv" />
+            </el-select>
+          </label>
+          <label>更新频率
+            <el-select v-model="rtForm.granularity" size="small" style="width: 168px">
+              <el-option value="bar" :label="'每根K线收盘（默认 · ' + rtForm.interval + '）'" />
+              <el-option value="intra" label="盘中节流" />
+            </el-select>
+          </label>
+          <label v-if="rtForm.granularity === 'intra'">节流(ms) <el-input-number v-model="rtForm.throttleMs" size="small" :min="250" :step="500" controls-position="right" style="width: 130px" /></label>
+          <button class="aw-btn aw-btn-primary mini" :disabled="rtLoading || !detailStrategyId" @click="startDetailRuntime">
+            {{ rtLoading ? '启动中…' : '启动运行' }}
+          </button>
+          <span class="dim rt-freq-hint">{{ freqHint }}</span>
+        </div>
+        <table class="rt-tbl">
+          <thead>
+            <tr><th>品种</th><th>市场</th><th>周期</th><th>更新频率</th><th>最新价</th><th>最新事件</th><th>最新信号</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in detailRuntimes" :key="r.id">
+              <td class="mono">{{ r.symbol }}</td>
+              <td>{{ MARKET_LABELS[r.market] ?? r.market }}</td>
+              <td class="mono">{{ r.interval }}</td>
+              <td>{{ r.granularity === 'intra' ? '盘中 · 每 ' + r.throttleMs + 'ms' : '每根K线 · ' + r.interval }}</td>
+              <td class="mono">{{ fmtPrice(r.lastPrice) }}</td>
+              <td class="mono dim">{{ r.lastEventAt ? fmtTime(r.lastEventAt) : '—' }}</td>
+              <td>
+                <span v-if="rtSignals[r.id]" class="rt-sig" :class="rtSignals[r.id]!.action === 'OPEN_LONG' ? 'up' : rtSignals[r.id]!.action === 'OPEN_SHORT' ? 'down' : ''">{{ rtSignals[r.id]!.action }}</span>
+                <span v-else class="dim">—</span>
+              </td>
+              <td><button class="aw-btn aw-btn-danger mini" @click="stopRuntime(r.id)">停止</button></td>
+            </tr>
+            <tr v-if="!detailRuntimes.length"><td colspan="8" class="dim rt-empty">未运行，使用上方「启动运行」</td></tr>
+          </tbody>
+        </table>
+        <div class="rt-feed-title" style="margin-top: 12px">实时事件流<span class="dim">（新 → 旧）</span></div>
+        <div class="rt-events">
+          <div v-for="(e, i) in detailEvents" :key="i" class="rt-ev" :class="e.type">
+            <span class="rt-ev-time mono dim">{{ fmtTime(e.at) }}</span>
+            <span class="rt-ev-type">{{ e.type }}</span>
+            <span class="rt-ev-id dim mono">{{ e.symbol }} {{ e.interval }}</span>
+            <span class="rt-ev-msg">{{ evSummary(e) }}</span>
+          </div>
+          <div v-if="!detailEvents.length" class="dim">暂无事件</div>
+        </div>
+      </div>
+
+      <!-- 参数 -->
+      <div v-show="detailTab === 'params'" class="aw-card detail-card">
+        <div class="dc-head"><b>参数</b><span class="dim" style="font-size: 11px; margin-left: 8px">运行时与回测共用；保存后作为该策略的配置</span></div>
+        <el-form v-if="detailStrategy" label-width="150px" size="small">
+          <el-form-item v-for="p in detailStrategy.paramSpecs" :key="p.name" :label="p.name">
+            <el-switch v-if="p.type === 'boolean'" v-model="paramForm[p.name]" />
+            <el-input v-else v-model="paramForm[p.name]" style="width: 200px" class="mono" />
+            <span class="dim param-desc">{{ p.description }}</span>
+          </el-form-item>
+        </el-form>
+        <div v-else class="aw-empty"><span>该策略无内置参数</span></div>
+        <div v-if="detailStrategy" class="sd-foot">
+          <button class="aw-btn aw-btn-secondary mini" @click="resetParams">恢复默认</button>
+          <button class="aw-btn aw-btn-primary mini" @click="saveConfig">保存为配置</button>
+        </div>
       </div>
     </template>
 
@@ -160,7 +344,7 @@
         <el-form label-width="86px" size="small" inline>
           <el-form-item label="策略">
             <el-select v-model="btForm.strategy" filterable allow-create placeholder="选择内置策略" style="width: 180px">
-              <el-option v-for="s in builtinStrategies" :key="s" :value="s" :label="s" />
+              <el-option v-for="s in builtinStrategies" :key="s.id" :value="s.id" :label="s.name" />
             </el-select>
           </el-form-item>
           <el-form-item label="币种"><el-input v-model="btForm.symbol" style="width: 130px" class="mono" /></el-form-item>
@@ -240,8 +424,8 @@
       <Paper />
     </template>
 
-    <!-- ============ 6.6 反馈分析 ============ -->
-    <template v-else>
+    <!-- ============ 6.7 反馈分析 ============ -->
+    <template v-else-if="tab === 'feedback'">
       <div class="fb-head">
         <div class="dim">基于日志中心已复盘数据（{{ all.length }} 条记录）生成诊断与优化任务</div>
         <button class="aw-btn aw-btn-secondary" :disabled="llmBusy" @click="runLLMDiagnose">
@@ -316,12 +500,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
-import { api, type BacktestResult } from '../api.ts';
+import { api, MARKET_LABELS, type BacktestResult } from '../api.ts';
 import Paper from './Paper.vue';
+import { subscribeAll, type StrategyRuntimeEvent } from '../lib/strategy-stream.ts';
 import type { TradeJournal } from '../lib/journal.ts';
 interface TradeJournalStats { closed: number; wins: number; losses: number; netPnl: number; expectancy: number }
 import { deriveStatus, fmtPnl, fmtNum } from '../lib/journal.ts';
@@ -329,17 +514,17 @@ import { deriveStatus, fmtPnl, fmtNum } from '../lib/journal.ts';
 const route = useRoute();
 const router = useRouter();
 
-type SubTab = 'strategies' | 'versions' | 'backtest' | 'paper' | 'feedback';
+type SubTab = 'strategies' | 'backtest' | 'paper' | 'feedback';
 const subTabs: { key: SubTab; label: string; color: string }[] = [
-  { key: 'strategies', label: '我的策略', color: '#06B6D4' },
-  { key: 'versions', label: '版本管理', color: '#8B5CF6' },
+  { key: 'strategies', label: '策略库', color: '#06B6D4' },
   { key: 'backtest', label: '回归测试', color: '#F59E0B' },
   { key: 'paper', label: '模拟交易', color: '#10B981' },
   { key: 'feedback', label: '反馈分析', color: '#EF4444' },
 ];
 
 function tabFromQuery(q: string | null): SubTab {
-  if (q === 'paper' || q === 'backtest' || q === 'feedback' || q === 'versions') return q;
+  // 兼容旧链接：versions / runtime 已并入「策略库」的策略详情
+  if (q === 'paper' || q === 'backtest' || q === 'feedback') return q;
   return 'strategies';
 }
 const tab = ref<SubTab>(tabFromQuery(typeof route.query.tab === 'string' ? route.query.tab : null));
@@ -353,10 +538,12 @@ watch(() => route.query.tab, (q) => {
 });
 function goBacktest(strategyName: string) {
   if (strategyName) btForm.strategy = strategyName;
+  closeDetail();
   switchTab('backtest');
 }
 function goPaper(strategyName: string) {
   if (strategyName) btForm.strategy = strategyName;
+  closeDetail();
   switchTab('paper');
 }
 
@@ -403,13 +590,6 @@ const strategyCards = computed(() => {
 function latestOf(recs: TradeJournal[]): string {
   const sorted = recs.filter((r) => r.strategyVersion).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
   return sorted.length ? sorted[sorted.length - 1]!.strategyVersion! : '—';
-}
-
-function openDetail(s: { key: string }) {
-  detailKey.value = s.key;
-  selectedVersion.value = '';
-  switchTab('versions');
-  nextTick(() => renderCurve());
 }
 
 const detailRecords = computed(() => all.value.filter((r) => (r.strategyName || r.strategyVersion || '未标注策略') === detailKey.value));
@@ -514,7 +694,8 @@ const scenarioWorstWin = computed(() => {
 });
 
 // ---------- 回归测试 ----------
-const builtinStrategies = ref<string[]>([]);
+interface BuiltinMeta { id: string; name: string; description?: string; paramSpecs: { name: string; type: string; default: number | string | boolean; description?: string; min?: number; max?: number; step?: number }[] }
+const builtinStrategies = ref<BuiltinMeta[]>([]);
 const btRunning = ref(false);
 const btResult = ref<BacktestResult | null>(null);
 const btHistory = ref<Array<{ id: string; symbol: string; interval: string; strategyId?: string; metrics?: BacktestResult['metrics']; createdAt?: number; request?: { from?: number } }>>([]);
@@ -687,17 +868,324 @@ function renderSparks() {
   }
 }
 
+// ---------- 实时运行（策略运行时） ----------
+interface RuntimeStatus {
+  id: string; running: boolean; strategyId: string; symbol: string; market: string; interval: string;
+  granularity: string; throttleMs: number; bars: number; lastBarOpenTime: number; lastPrice: number;
+  lastEventAt: number; startedAt: number; seq: number;
+}
+interface RuntimeSignalView { action: string; sizeMode: string; size: number; reason: string }
+interface SavedStrategy {
+  id: string; name: string; market: string; symbol: string; interval: string;
+  parameters: Record<string, number | string | boolean>; enabled?: boolean;
+}
+
+const rtIntervals = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d'];
+/** 与后端 defaultThrottleMs 对齐：clamp(周期/20, 1s, 30s) */
+const RT_INTERVAL_MS: Record<string, number> = {
+  '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+  '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000, '6h': 21_600_000, '12h': 43_200_000, '1d': 86_400_000,
+};
+function defaultThrottleFor(interval: string): number {
+  const step = RT_INTERVAL_MS[interval] ?? 60_000;
+  return Math.min(30_000, Math.max(1_000, Math.floor(step / 20)));
+}
+const runtimes = ref<RuntimeStatus[]>([]);
+const savedStrategies = ref<SavedStrategy[]>([]);
+const runtimeEvents = ref<StrategyRuntimeEvent[]>([]);
+const rtSignals = ref<Record<string, RuntimeSignalView>>({});
+const rtLoading = ref(false);
+const rtToggling = ref<Record<string, boolean>>({});
+
+/** 我的策略：内置策略全部展示，并与日志统计合并（有复盘的显示统计，无复盘的显示简介） */
+interface StrategyCardView {
+  key: string; name: string; builtinId: string | null; description: string;
+  version: string; totalTrades: number; winRate: string; netPnl: number; drawdown: string;
+  drift: boolean; sparkline: number[]; hasJournal: boolean;
+}
+const strategyList = computed<StrategyCardView[]>(() => {
+  const cards = strategyCards.value;
+  const matched = new Set<string>();
+  const out: StrategyCardView[] = [];
+  for (const meta of builtinStrategies.value) {
+    const card = cards.find((c) => c.name === meta.name || c.key === meta.id || c.key === meta.name);
+    if (card) matched.add(card.key);
+    out.push({
+      key: card?.key ?? 'builtin:' + meta.id,
+      name: meta.name,
+      builtinId: meta.id,
+      description: meta.description ?? '',
+      version: card?.version ?? '—',
+      totalTrades: card?.totalTrades ?? 0,
+      winRate: card?.winRate ?? '—',
+      netPnl: card?.netPnl ?? 0,
+      drawdown: card?.drawdown ?? '—',
+      drift: card?.drift ?? false,
+      sparkline: card?.sparkline ?? [],
+      hasJournal: !!card,
+    });
+  }
+  for (const card of cards) {
+    if (matched.has(card.key)) continue;
+    out.push({
+      key: card.key, name: card.name, builtinId: null, description: '',
+      version: card.version, totalTrades: card.totalTrades, winRate: card.winRate,
+      netPnl: card.netPnl, drawdown: card.drawdown, drift: card.drift,
+      sparkline: card.sparkline, hasJournal: true,
+    });
+  }
+  return out;
+});
+
+/** 某策略当前运行中的运行时数量 */
+function activeCount(strategyId: string | null): number {
+  if (!strategyId) return 0;
+  return runtimes.value.filter((r) => r.strategyId === strategyId && r.running).length;
+}
+
+/** 开关：激活 = 启动后台运行时；停用 = 停止该策略的全部运行时 */
+async function toggleActive(card: StrategyCardView, on: boolean) {
+  const id = card.builtinId;
+  if (!id) { ElMessage.warning('该策略非内置策略，无法直接激活'); return; }
+  rtToggling.value = { ...rtToggling.value, [id]: true };
+  try {
+    if (on) {
+      const saved = savedStrategies.value.find((s) => s.name === id);
+      let params: Record<string, unknown> = {};
+      if (saved) {
+        params = { ...saved.parameters };
+      } else {
+        const meta = builtinStrategies.value.find((m) => m.id === id);
+        if (meta) for (const p of meta.paramSpecs) params[p.name] = p.default;
+      }
+      await api.post<RuntimeStatus>('/strategy-runtime/start', {
+        strategyId: id,
+        symbol: (saved?.symbol ?? rtForm.symbol).toUpperCase(),
+        market: saved?.market ?? rtForm.market,
+        interval: saved?.interval ?? rtForm.interval,
+        granularity: rtForm.granularity,
+        throttleMs: rtForm.granularity === 'intra' ? rtForm.throttleMs : undefined,
+        params,
+      });
+      ElMessage.success('已激活：' + strategyLabel(id));
+    } else {
+      const ids = runtimes.value.filter((r) => r.strategyId === id).map((r) => r.id);
+      for (const rid of ids) await api.post('/strategy-runtime/stop', { id: rid });
+      ElMessage.success('已停用：' + strategyLabel(id));
+    }
+  } catch (e) {
+    ElMessage.error((on ? '激活' : '停用') + '失败：' + (e instanceof Error ? e.message : String(e)));
+  } finally {
+    const next = { ...rtToggling.value };
+    delete next[id];
+    rtToggling.value = next;
+    await loadRuntimes();
+  }
+}
+const rtForm = reactive({
+  symbol: 'BTCUSDT', market: 'USDT_M', interval: '1h',
+  granularity: 'bar' as 'bar' | 'intra', throttleMs: 5000,
+});
+/** 更新频率提示：默认 = K线周期（bar）；盘中节流给出建议默认值 */
+const freqHint = computed(() => rtForm.granularity === 'intra'
+  ? '约每 ' + rtForm.throttleMs + 'ms 更新一次（周期 ' + rtForm.interval + ' 建议 ' + defaultThrottleFor(rtForm.interval) + 'ms）'
+  : '约每 ' + rtForm.interval + ' 更新一次（随 K 线收盘，推荐）');
+// 周期变化时，若为盘中节流则把节流重置为该周期的建议值（频率不会被周期"带偏"）
+watch(() => rtForm.interval, (iv, prev) => {
+  if (rtForm.granularity === 'intra' && (rtForm.throttleMs === defaultThrottleFor(prev ?? iv) || rtForm.throttleMs === 5000)) {
+    rtForm.throttleMs = defaultThrottleFor(iv);
+  }
+});
+let rtUnsub: (() => void) | null = null;
+
+// ---------- 策略详情（概览 / 版本 / 运行 / 参数） ----------
+type DetailTab = 'overview' | 'versions' | 'run' | 'params';
+const detailTabs: { key: DetailTab; label: string }[] = [
+  { key: 'overview', label: '概览' },
+  { key: 'versions', label: '版本' },
+  { key: 'run', label: '运行' },
+  { key: 'params', label: '参数' },
+];
+const detailStrategyId = ref<string | null>(null);
+const detailTab = ref<DetailTab>('overview');
+const paramForm = reactive<Record<string, string | boolean>>({});
+
+const showDetail = computed(() => !!detailKey.value);
+const detailStrategy = computed<BuiltinMeta | null>(() => builtinStrategies.value.find((m) => m.id === detailStrategyId.value) ?? null);
+const detailName = computed(() => detailStrategy.value?.name ?? detailKey.value);
+const detailRuntimes = computed(() => runtimes.value.filter((r) => r.strategyId === detailStrategyId.value));
+const detailEvents = computed(() => runtimeEvents.value.filter((e) => detailRuntimes.value.some((r) => r.id === e.runtimeId)).slice(0, 40));
+const detailRunMeta = computed(() => detailRuntimes.value.map((r) => r.symbol + ' ' + r.interval).join(', ') || '—');
+
+function strategyLabel(id: string): string {
+  return builtinStrategies.value.find((s) => s.id === id)?.name ?? id;
+}
+function initParamForm(id: string | null) {
+  for (const k of Object.keys(paramForm)) delete paramForm[k];
+  const meta = builtinStrategies.value.find((m) => m.id === id);
+  if (!meta) return;
+  const saved = savedStrategies.value.find((s) => s.name === id);
+  for (const p of meta.paramSpecs) {
+    const v = saved?.parameters?.[p.name] ?? p.default;
+    paramForm[p.name] = p.type === 'boolean' ? v === true || v === 'true' : String(v);
+  }
+}
+function resetParams() {
+  initParamForm(detailStrategyId.value);
+}
+/** 参数表单 → 参数对象（按 paramSpecs 类型校正） */
+function paramsObject(): Record<string, number | string | boolean> {
+  const out: Record<string, number | string | boolean> = {};
+  for (const spec of detailStrategy.value?.paramSpecs ?? []) {
+    const v = paramForm[spec.name];
+    if (spec.type === 'number') {
+      const n = Number(v);
+      out[spec.name] = Number.isFinite(n) ? n : Number(spec.default);
+    } else if (spec.type === 'boolean') {
+      out[spec.name] = v === true || v === 'true';
+    } else {
+      out[spec.name] = String(v ?? spec.default);
+    }
+  }
+  return out;
+}
+function openStrategyDetail(card: StrategyCardView) {
+  detailStrategyId.value = card.builtinId;
+  detailKey.value = card.hasJournal ? card.key : card.name;
+  selectedVersion.value = '';
+  detailTab.value = 'overview';
+  initParamForm(card.builtinId);
+  // 同步运行默认配置（优先已保存配置）
+  const saved = card.builtinId ? savedStrategies.value.find((s) => s.name === card.builtinId) : null;
+  if (saved) {
+    rtForm.symbol = saved.symbol;
+    rtForm.market = saved.market === 'SPOT' ? 'SPOT' : 'USDT_M';
+    if (rtIntervals.includes(saved.interval)) rtForm.interval = saved.interval;
+  }
+}
+function closeDetail() {
+  detailKey.value = '';
+  detailStrategyId.value = null;
+}
+/** 从「运行中」概览条直接打开该策略详情并定位到「运行」页 */
+function openRuntimeDetail(r: RuntimeStatus) {
+  const card = strategyList.value.find((c) => c.builtinId === r.strategyId);
+  if (!card) return;
+  openStrategyDetail(card);
+  switchDetailTab('run');
+}
+function switchDetailTab(k: DetailTab) {
+  detailTab.value = k;
+  if (k === 'versions') nextTick(() => renderCurve());
+}
+async function startDetailRuntime() {
+  const id = detailStrategyId.value;
+  if (!id) { ElMessage.warning('该策略无内置标识，无法启动'); return; }
+  rtLoading.value = true;
+  try {
+    await api.post<RuntimeStatus>('/strategy-runtime/start', {
+      strategyId: id,
+      symbol: rtForm.symbol.toUpperCase(),
+      market: rtForm.market,
+      interval: rtForm.interval,
+      granularity: rtForm.granularity,
+      throttleMs: rtForm.granularity === 'intra' ? rtForm.throttleMs : undefined,
+      params: paramsObject(),
+    });
+    ElMessage.success('已启动：' + strategyLabel(id));
+    await loadRuntimes();
+  } catch (e) {
+    ElMessage.error('启动失败：' + (e instanceof Error ? e.message : String(e)));
+  } finally {
+    rtLoading.value = false;
+  }
+}
+function toggleDetailActive(on: boolean) {
+  const card = strategyList.value.find((c) => c.builtinId === detailStrategyId.value);
+  if (card) void toggleActive(card, on);
+}
+async function saveConfig() {
+  const id = detailStrategyId.value;
+  if (!id) return;
+  try {
+    await api.post('/strategies', {
+      name: id, market: rtForm.market, symbol: rtForm.symbol.toUpperCase(), interval: rtForm.interval,
+      params: paramsObject(),
+    });
+    ElMessage.success('已保存为该策略配置');
+    await loadSavedStrategies();
+  } catch (e) {
+    ElMessage.error('保存失败：' + (e instanceof Error ? e.message : String(e)));
+  }
+}
+function fmtTime(t: number): string {
+  const d = new Date(t);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+function fmtPrice(p: number): string {
+  if (!Number.isFinite(p) || p === 0) return '—';
+  return p >= 100 ? p.toFixed(2) : p.toFixed(4);
+}
+function evSummary(e: StrategyRuntimeEvent): string {
+  if (e.type === 'indicator') {
+    const sig = e.signal ? ' 信号 ' + e.signal.action : '';
+    const hist = e.indicators?.hist;
+    return 'hist=' + (hist == null ? '—' : hist.toFixed(3)) + ' rsi=' + (e.indicators?.rsi == null ? '—' : e.indicators.rsi.toFixed(1)) + sig + (e.closed ? '（收盘）' : '');
+  }
+  if (e.type === 'candle') return 'close=' + (e.candle ? e.candle.close.toFixed(2) : '—') + (e.closed ? '（收盘）' : '');
+  if (e.type === 'error') return e.message ?? '';
+  return '';
+}
+function applyRuntimeEvent(e: StrategyRuntimeEvent) {
+  runtimeEvents.value.unshift(e);
+  if (runtimeEvents.value.length > 50) runtimeEvents.value.length = 50;
+  const idx = runtimes.value.findIndex((r) => r.id === e.runtimeId);
+  if (idx >= 0) {
+    const r = runtimes.value[idx]!;
+    if (e.type === 'candle' && e.candle) { r.lastPrice = e.candle.close; r.lastBarOpenTime = e.candle.openTime; }
+    if (e.type === 'indicator' && e.candle) r.lastPrice = e.candle.close;
+    if (e.type === 'stop') r.running = false;
+    r.lastEventAt = e.at;
+    r.seq = e.seq;
+  }
+  if (e.type === 'indicator' && e.signal) {
+    rtSignals.value = { ...rtSignals.value, [e.runtimeId]: e.signal as RuntimeSignalView };
+  }
+  if (e.type === 'start' || e.type === 'stop') void loadRuntimes();
+}
+async function loadRuntimes() {
+  const res = await api.get<{ runtimes: RuntimeStatus[] }>('/strategy-runtime').catch(() => null);
+  if (res) runtimes.value = res.runtimes;
+}
+async function loadSavedStrategies() {
+  const res = await api.get<{ strategies: SavedStrategy[] }>('/strategies').catch(() => null);
+  if (res) savedStrategies.value = res.strategies;
+}
+async function stopRuntime(id: string) {
+  try {
+    await api.post('/strategy-runtime/stop', { id });
+    delete rtSignals.value[id];
+    await loadRuntimes();
+    ElMessage.success('已停止');
+  } catch (e) {
+    ElMessage.error('停止失败：' + (e instanceof Error ? e.message : String(e)));
+  }
+}
+
 watch(tab, async (v) => {
-  if (v === 'versions' && detailKey.value) await nextTick(() => renderCurve());
-  if (v === 'strategies') await nextTick(() => renderSparks());
+  if (v === 'strategies') { await Promise.all([loadRuntimes(), loadSavedStrategies()]); await nextTick(() => renderSparks()); }
   if (v === 'backtest') await loadBtHistory();
   if (v === 'paper') { await nextTick(() => { /* Paper 自管理 */ }); }
 });
 
 onMounted(async () => {
   await loadAll();
-  const bi = await api.get<{ strategies: { id: string; name: string }[] }>('/strategies/builtin').catch(() => null);
-  if (bi) builtinStrategies.value = bi.strategies.map((s) => s.name);
+  const bi = await api.get<{ strategies: BuiltinMeta[] }>('/strategies/builtin').catch(() => null);
+  if (bi) builtinStrategies.value = bi.strategies;
+  // 订阅策略运行时事件（WebSocket），实时刷新运行列表与事件流
+  rtUnsub = subscribeAll(applyRuntimeEvent);
+  await Promise.all([loadRuntimes(), loadSavedStrategies()]);
   await loadBtHistory();
   await nextTick();
   if (tab.value === 'strategies') renderSparks();
@@ -706,6 +1194,11 @@ onMounted(async () => {
     curveE?.resize();
     btE?.resize();
   });
+});
+
+onBeforeUnmount(() => {
+  rtUnsub?.();
+  rtUnsub = null;
 });
 </script>
 
@@ -723,13 +1216,21 @@ onMounted(async () => {
 .pill-dot { width: 6px; height: 6px; border-radius: 50%; }
 
 /* 策略卡片 */
+.sc-config { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 10px; }
+.sc-config .dim { font-size: 11px; }
+.sc-config label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--aw-text-dim); }
+.sc-config-hint { margin-left: auto; }
 .strat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
 .strat-card { cursor: pointer; display: flex; flex-direction: column; gap: 10px; }
+.strat-card.sc-live-card { border-color: rgba(14,165,233,0.5); box-shadow: 0 0 0 1px rgba(14,165,233,0.25) inset; }
 .sc-top { display: flex; align-items: center; gap: 10px; }
 .sc-name { display: flex; align-items: baseline; gap: 8px; }
 .sc-name b { font-size: 14px; color: var(--aw-text-title); }
 .sc-ver { font-size: 11px; color: var(--aw-text-dim); background: var(--aw-bg); padding: 1px 6px; border-radius: 4px; }
 .sc-warn { font-size: 12px; color: var(--aw-todo); }
+.sc-live { font-size: 11px; color: #0EA5E9; background: rgba(14,165,233,0.12); padding: 1px 7px; border-radius: 999px; }
+.sc-switch { margin-left: auto; }
+.sc-desc { font-size: 11px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .sparkline { width: 64px; height: 24px; margin-left: auto; }
 .sc-stats { display: flex; justify-content: space-between; background: var(--aw-bg); border-radius: 8px; padding: 8px 10px; transition: background var(--aw-dur-fast) var(--aw-ease); }
 .strat-card:hover .sc-stats { background: rgba(255,255,255,0.04); }
@@ -806,4 +1307,62 @@ onMounted(async () => {
 .task-actions { display: flex; gap: 10px; }
 .llm-report { white-space: pre-wrap; font-size: 12px; color: var(--aw-text-body); background: var(--aw-bg); border-radius: 8px; padding: 10px 12px; margin: 0; max-height: 320px; overflow-y: auto; }
 .fb-card .aw-btn { align-self: flex-start; }
+
+/* 实时运行 */
+.rt-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.rt-head .dim { flex: 1; font-size: 12px; }
+.rt-head-actions { display: flex; align-items: center; gap: 10px; }
+.rt-count { font-size: 12px; color: var(--aw-accent); }
+.rt-start { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; margin-bottom: 10px; }
+.rt-form { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.rt-form label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--aw-text-dim); }
+.rt-params { display: flex; align-items: center; gap: 10px; }
+.rt-params .dim { font-size: 11px; flex: none; }
+.rt-saved { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 8px; border-top: 1px solid var(--aw-border); }
+.rt-saved .dim { font-size: 11px; }
+.rt-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11px; border-radius: 999px; border: 1px solid var(--aw-border); background: var(--aw-bg); color: var(--aw-text-body); cursor: pointer; font-family: inherit; transition: all var(--aw-dur-fast) var(--aw-ease); }
+.rt-chip:hover { border-color: var(--aw-accent); color: var(--aw-accent); }
+.rt-chip-on { font-size: 10px; color: #34d399; }
+.rt-table { padding: 6px 10px; margin-bottom: 10px; overflow-x: auto; }
+.rt-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.rt-tbl th { text-align: left; color: var(--aw-text-dim); font-weight: 500; font-size: 11px; padding: 8px 10px; border-bottom: 1px solid var(--aw-border); white-space: nowrap; }
+.rt-tbl td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--aw-text-body); white-space: nowrap; }
+.rt-tbl tr:last-child td { border-bottom: none; }
+.rt-empty { text-align: center; padding: 18px 0 !important; }
+.rt-sig { padding: 1px 6px; border-radius: 4px; font-size: 11px; background: var(--aw-accent-dim); color: var(--aw-accent); }
+.rt-sig.up { background: rgba(16,185,129,0.15); color: #34d399; }
+.rt-sig.down { background: rgba(239,68,68,0.15); color: #f87171; }
+.rt-feed { padding: 12px 14px; }
+.rt-feed-title { font-size: 13px; font-weight: 600; color: var(--aw-text-title); margin-bottom: 8px; }
+.rt-feed-title .dim { font-weight: 400; font-size: 11px; margin-left: 6px; }
+.rt-events { display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow-y: auto; }
+.rt-ev { display: flex; align-items: center; gap: 10px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--aw-bg); }
+.rt-ev.indicator { border-left: 2px solid var(--aw-accent); }
+.rt-ev.candle { border-left: 2px solid rgba(255,255,255,0.1); }
+.rt-ev.error { border-left: 2px solid #ef4444; color: #f87171; }
+.rt-ev-time { font-size: 11px; flex: none; }
+.rt-ev-type { font-size: 10px; text-transform: uppercase; color: var(--aw-accent); flex: none; width: 62px; }
+.rt-ev-id { font-size: 11px; flex: none; }
+.rt-ev-msg { color: var(--aw-text-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 策略详情 */
+.rt-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 10px; }
+.rt-strip .dim { font-size: 11px; }
+.rt-freq-hint { flex-basis: 100%; font-size: 11px; }
+.sd-head-card { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px; margin-bottom: 10px; }
+.sd-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sd-back { border: none; background: transparent; color: var(--aw-text-dim); cursor: pointer; font-size: 12px; font-family: inherit; padding: 2px 6px; }
+.sd-back:hover { color: var(--aw-accent); }
+.sd-name { font-size: 15px; color: var(--aw-text-title); }
+.sd-id { font-size: 11px; }
+.sd-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.sd-nav { display: flex; gap: 4px; background: var(--aw-bg); border: 1px solid var(--aw-border); border-radius: 8px; padding: 3px; align-self: flex-start; }
+.sd-nav-btn { padding: 5px 16px; border: none; background: transparent; color: var(--aw-text-dim); border-radius: 6px; cursor: pointer; font-size: 12px; font-family: inherit; }
+.sd-nav-btn.active { background: var(--aw-accent-dim); color: var(--aw-accent); font-weight: 600; }
+.ov-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 12px; }
+@media (max-width: 1000px) { .ov-grid { grid-template-columns: 1fr; } }
+.ov-cell { background: var(--aw-bg); border: 1px solid var(--aw-border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.ov-desc { font-size: 12px; line-height: 1.6; color: var(--aw-text-body); margin: 0; }
+.sd-foot { display: flex; gap: 10px; margin-top: 10px; }
+.param-desc { font-size: 11px; margin-left: 10px; }
 </style>

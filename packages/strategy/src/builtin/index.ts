@@ -21,10 +21,12 @@ export function registerBuiltinStrategies(): void {
       factory,
     );
   }
-  // 兼容别名：macd_energy → macd_energy_reversal（文档要求两个 ID 均可创建/选择）
-  // registry.meta() 返回工厂实例的 id（忽略 meta.id），故别名用包装工厂固定实例 id
+  // 兼容别名：macd_energy → macd_energy_reversal（两个 ID 均可创建，历史回测记录可复现）
+  // hidden=true：不出现在策略列表，避免策略中心重复展示；create/has 仍可用。
+  const aliasMeta = createMacdEnergyReversalStrategy();
   builtinRegistry.register(
-    { id: 'macd_energy', name: 'MACD 量价势能衰竭反转', description: createMacdEnergyReversalStrategy().description + '（兼容别名，同 macd_energy_reversal）', paramSpecs: createMacdEnergyReversalStrategy().paramSpecs, marketSupport: ['SPOT', 'USDT_M'] },
+    { id: 'macd_energy', name: aliasMeta.name, description: aliasMeta.description + '（兼容别名，同 macd_energy_reversal）', paramSpecs: aliasMeta.paramSpecs, marketSupport: ['SPOT', 'USDT_M'] },
     () => ({ ...createMacdEnergyReversalStrategy(), id: 'macd_energy' }),
+    { hidden: true },
   );
 }
