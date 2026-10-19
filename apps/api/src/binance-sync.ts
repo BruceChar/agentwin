@@ -1,6 +1,7 @@
 import type { Account, Market, Trade } from '@agentwin/shared';
 import type { StorageAdapter } from '@agentwin/db';
 import type { BinanceRest, FuturesAccountInfo, MarketDataProvider, MyTradeRow, ProxyConfig, SpotAccountInfo } from '@agentwin/market';
+import type { BinanceSettings } from './binance-settings.ts';
 
 export const DEFAULT_SYNC_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT'];
 
@@ -41,15 +42,23 @@ export interface BinanceStatus {
  */
 export class BinanceAccountSync {
   private readonly storage: StorageAdapter;
-  private readonly rest: BinanceRest;
+  private rest: BinanceRest;
   private readonly marketData: MarketDataProvider;
+  /** 设置页凭据（持久化优先，env 兜底）；缺省时回退 rest.credentials / 环境变量 */
+  private readonly binanceSettings: BinanceSettings | null;
   /** 最近一次同步结果（诊断用） */
   private lastReport: SyncReport | null = null;
 
-  constructor(storage: StorageAdapter, rest: BinanceRest, marketData: MarketDataProvider) {
+  constructor(storage: StorageAdapter, rest: BinanceRest, marketData: MarketDataProvider, binanceSettings?: BinanceSettings) {
     this.storage = storage;
     this.rest = rest;
     this.marketData = marketData;
+    this.binanceSettings = binanceSettings ?? null;
+  }
+
+  /** 运行时更新私有接口凭据（设置页保存 API Key 后重建 rest，立即生效无需重启） */
+  updateRest(rest: BinanceRest): void {
+    this.rest = rest;
   }
 
   get lastSync(): SyncReport | null {
@@ -62,10 +71,28 @@ export class BinanceAccountSync {
     return this.storage.createAccount({ name: 'binance-real', type: 'real', meta: { source: 'binance' } });
   }
 
+  /** 当前生效的凭据：设置页 → 环境变量 → rest 构造快照（依次回退，兼容测试注入的假 rest） */
+  private keyState(): { apiKey?: string; apiSecret?: string } {
+    if (this.binanceSettings) {
+      const c = this.binanceSettings.credentials();
+      return { apiKey: c.apiKey ?? undefined, apiSecret: c.apiSecret ?? undefined };
+    }
+    const envKey = process.env.BINANCE_API_KEY;
+    const envSecret = process.env.BINANCE_API_SECRET;
+    if (envKey || envSecret) return { apiKey: envKey, apiSecret: envSecret };
+    const cred = (this.rest as { credentials?: unknown }).credentials;
+    if (cred && typeof cred === 'object') {
+      const c = cred as { apiKey?: string; apiSecret?: string };
+      return { apiKey: c.apiKey, apiSecret: c.apiSecret };
+    }
+    return {};
+  }
+
   /** 私有接口连通性（key 只对 api.binance.com / fapi.binance.com 有效） */
   async status(): Promise<BinanceStatus> {
-    const hasKey = Boolean(process.env.BINANCE_API_KEY?.trim());
-    const hasSecret = Boolean(process.env.BINANCE_API_SECRET?.trim());
+    const cred = this.keyState();
+    const hasKey = Boolean(cred.apiKey?.trim());
+    const hasSecret = Boolean(cred.apiSecret?.trim());
     const missing: string[] = [];
     if (!hasKey) missing.push('BINANCE_API_KEY');
     if (!hasSecret) missing.push('BINANCE_API_SECRET');

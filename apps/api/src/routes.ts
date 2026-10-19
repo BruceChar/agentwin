@@ -610,6 +610,26 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     }
   });
 
+  // ---------------- Binance API 凭据设置 ----------------
+  // 当前凭据状态（apiKey 掩码 / secret 仅布尔；绝不返回明文）
+  app.get('/api/settings/binance', async () => services.binanceSettings.get());
+
+  // 保存 Binance API Key/Secret：空串清除对应项；两者皆空=清除全部。持久化并重建 rest 立即生效
+  app.post('/api/settings/binance', async (req) => {
+    const b = (req.body ?? {}) as Body;
+    try {
+      return services.applyBinanceCredentials({
+        apiKey: b['apiKey'] !== undefined ? str(b['apiKey']) : undefined,
+        apiSecret: b['apiSecret'] !== undefined ? str(b['apiSecret']) : undefined,
+      });
+    } catch (e) {
+      return app.httpErrors.badRequest(e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  // 清除已保存的 Binance 凭据（回到环境变量）
+  app.delete('/api/settings/binance', async () => services.applyBinanceCredentials({ apiKey: '', apiSecret: '' }));
+
   // ---------------- 存储路径设置 ----------------
   // 当前存储路径（JSONL 主存储 / SQLite 辅助库，绝对路径）
   app.get('/api/settings/storage', async () => services.storageSettings.get());

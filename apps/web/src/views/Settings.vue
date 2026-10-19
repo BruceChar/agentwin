@@ -55,6 +55,33 @@
         </div>
         <pre v-if="diag" class="diag mono">{{ diag }}</pre>
 
+        <!-- 币安 API 凭据（可配置 + 掩码展示，绝不回显明文） -->
+        <div class="sc-divider"></div>
+        <div class="sc-subtitle">币安 API 凭据</div>
+        <div class="llm-grid">
+          <div class="llm-field">
+            <span class="llm-label">API Key</span>
+            <el-input v-model="binApiKey" type="password" show-password class="llm-input mono" placeholder="留空则保留已配置的 Key" autocomplete="off" />
+            <span v-if="binKeySet" class="llm-mask dim">已配置：<b class="mono">{{ binKeyMask }}</b></span>
+            <span v-else class="llm-mask dim">未配置</span>
+          </div>
+          <div class="llm-field">
+            <span class="llm-label">API Secret</span>
+            <el-input v-model="binApiSecret" type="password" show-password class="llm-input mono" placeholder="留空则保留已配置的 Secret" autocomplete="off" />
+            <span class="llm-mask dim">Secret：{{ binHasSecret ? '已配置（仅保存，不回显）' : '未配置' }}</span>
+          </div>
+        </div>
+        <div class="llm-mask dim" style="margin-top:4px;">
+          来源：{{ binSourceLabel }}<template v-if="binUpdatedAt"> · 设置页保存于 {{ fmtBinTime }}</template>
+        </div>
+        <div class="set-actions">
+          <button class="aw-btn aw-btn-primary btn-lg" :disabled="binSaving" @click="saveBinance">
+            <el-icon v-if="binSaving" class="is-loading"><Loading /></el-icon>保存凭据
+          </button>
+          <button v-if="binSource === 'settings'" class="aw-btn aw-btn-secondary btn-lg" :disabled="binSaving" @click="clearBinance">清除已保存</button>
+        </div>
+        <div class="sc-note dim">保存后立即生效（重建私有接口客户端），持久化到 data/agentwin-binance.json；API Key 仅以掩码展示，Secret 永不回显。清除后回退环境变量 BINANCE_API_KEY / BINANCE_API_SECRET。</div>
+
         <!-- 界面显示：账户余额开关 + 行情刷新周期（并入币安连接底部） -->
         <div class="sc-divider"></div>
         <div class="pref-row">
@@ -235,6 +262,67 @@ const storage = ref<StoragePaths | null>(null);
 const storageInput = ref('');
 const storageSaving = ref(false);
 
+// ---------- Binance API 凭据设置 ----------
+interface BinanceSettingsView {
+  apiKeySet: boolean; apiKeyMask: string | null; hasSecret: boolean;
+  source: 'settings' | 'env' | null; updatedAt: number | null;
+}
+const binApiKey = ref('');
+const binApiSecret = ref('');
+const binKeySet = ref(false);
+const binKeyMask = ref<string | null>(null);
+const binHasSecret = ref(false);
+const binSource = ref<'settings' | 'env' | null>(null);
+const binUpdatedAt = ref<number | null>(null);
+const binSaving = ref(false);
+const binSourceLabel = computed(() =>
+  binSource.value === 'settings' ? '设置页（持久化）' : binSource.value === 'env' ? '环境变量' : '未配置');
+const fmtBinTime = computed(() => binUpdatedAt.value ? new Date(binUpdatedAt.value).toLocaleString('zh-CN', { hour12: false }) : '');
+function applyBinView(v: BinanceSettingsView) {
+  binKeySet.value = v.apiKeySet;
+  binKeyMask.value = v.apiKeyMask;
+  binHasSecret.value = v.hasSecret;
+  binSource.value = v.source;
+  binUpdatedAt.value = v.updatedAt;
+}
+async function saveBinance() {
+  if (!binApiKey.value.trim() && !binApiSecret.value.trim()) {
+    ElMessage.warning('请填写 API Key 或 Secret');
+    return;
+  }
+  binSaving.value = true;
+  try {
+    const body: Record<string, string> = {};
+    if (binApiKey.value.trim()) body.apiKey = binApiKey.value.trim();
+    if (binApiSecret.value.trim()) body.apiSecret = binApiSecret.value.trim();
+    const v = await api.post<BinanceSettingsView>('/settings/binance', body);
+    applyBinView(v);
+    binApiKey.value = '';
+    binApiSecret.value = '';
+    ElMessage.success('币安凭据已保存并立即生效');
+    await load();
+  } catch (e) {
+    ElMessage.error((e as Error).message);
+  } finally {
+    binSaving.value = false;
+  }
+}
+async function clearBinance() {
+  binSaving.value = true;
+  try {
+    const v = await api.del<BinanceSettingsView>('/settings/binance');
+    applyBinView(v);
+    binApiKey.value = '';
+    binApiSecret.value = '';
+    ElMessage.success('已清除设置页保存的凭据');
+    await load();
+  } catch (e) {
+    ElMessage.error((e as Error).message);
+  } finally {
+    binSaving.value = false;
+  }
+}
+
 // ---------- LLM 设置 ----------
 interface LlmSettingsView { provider: string; model: string; apiKeySet: boolean; apiKeyMask: string | null }
 const llmProvider = ref('deepseek');
@@ -387,6 +475,8 @@ async function load() {
     llmApiKeySet.value = llm.apiKeySet;
     llmApiKeyMask.value = llm.apiKeyMask;
   }
+  const bn = await api.get<BinanceSettingsView>('/settings/binance').catch(() => null);
+  if (bn) applyBinView(bn);
   if (bs.value?.proxy) {
     proxyMode.value = bs.value.proxy.mode === 'off' ? 'off' : 'on';
     proxyUrl.value = bs.value.proxy.url || rememberedProxyUrl();
@@ -532,6 +622,7 @@ onMounted(load);
   padding-bottom: 14px; border-bottom: 1px solid var(--aw-border);
 }
 .sc-divider { height: 1px; background: var(--aw-border); }
+.sc-subtitle { font-size: 13px; font-weight: 700; color: var(--aw-text-title); }
 
 /* ---------- 币安连接 ---------- */
 .status-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; color: var(--aw-text-body); }

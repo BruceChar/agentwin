@@ -57,6 +57,11 @@ export class BinanceRest {
   /** market -> 已选中的可用 base（带时间戳缓存） */
   private baseCache = new Map<Market, { url: string; at: number }>();
 
+  /** 私有接口凭据（运行时可重建 rest 更新；仅供状态/诊断读取，不落日志） */
+  get credentials(): { apiKey?: string; apiSecret?: string } {
+    return { apiKey: this.opts.apiKey, apiSecret: this.opts.apiSecret };
+  }
+
   private readonly proxiedFetch: typeof fetch | undefined;
 
   constructor(opts: RestOptions = {}) {

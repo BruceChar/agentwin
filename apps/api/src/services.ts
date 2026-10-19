@@ -3,6 +3,7 @@ import { BinanceMarketData, BinanceOfficialMarketData, BinanceRest, MockMarketDa
 import { ProxySettings } from './proxy-settings.ts';
 import { StorageSettings } from './storage-settings.ts';
 import { LlmSettings } from './llm-settings.ts';
+import { BinanceSettings } from './binance-settings.ts';
 import { registerBuiltinStrategies, builtinRegistry } from '@agentwin/strategy';
 import { LLMService } from '@agentwin/llm';
 import { TradingToolkit } from '@agentwin/llm';
@@ -26,6 +27,10 @@ export interface AppServices {
   storageSettings: StorageSettings;
   /** LLM 设置（provider / model / apiKey 可运行时修改并持久化） */
   llmSettings: LlmSettings;
+  /** Binance API 凭据设置（可运行时修改并持久化；API 返回仅掩码） */
+  binanceSettings: BinanceSettings;
+  /** 更新 Binance 凭据：持久化 + 重建 rest，立即生效 */
+  applyBinanceCredentials: (patch: { apiKey?: string; apiSecret?: string }) => import('./binance-settings.ts').BinanceSettingsView;
   /** 结构化交易日志（JSONL 主存储 + SQLite 镜像） */
   journalStore: TradeJournalStore;
   journalAutoFill: JournalAutoFill;
@@ -92,7 +97,24 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     futuresBaseUrl: process.env.BINANCE_FUTURES_BASE_URL,
     proxyConfig: proxySettings.config,
   });
-  const sync = new BinanceAccountSync(storage, rest, marketData);
+  // Binance API 凭据设置：持久化优先，环境变量兜底；保存后重建 rest 立即生效
+  const binanceSettings = new BinanceSettings(config.binanceApiKey, config.binanceApiSecret);
+  const sync = new BinanceAccountSync(storage, rest, marketData, binanceSettings);
+
+  const applyBinanceCredentials = (patch: { apiKey?: string; apiSecret?: string }) => {
+    binanceSettings.apply(patch);
+    const cred = binanceSettings.credentials();
+    const rest2 = new BinanceRest({
+      apiKey: cred.apiKey ?? undefined,
+      apiSecret: cred.apiSecret ?? undefined,
+      spotBaseUrl: process.env.BINANCE_SPOT_BASE_URL,
+      futuresBaseUrl: process.env.BINANCE_FUTURES_BASE_URL,
+      proxyConfig: proxySettings.config,
+    });
+    sync.updateRest(rest2);
+    services.rest = rest2;
+    return binanceSettings.get();
+  };
 
   // 结构化交易日志：JSONL 主存储 + SQLite 镜像（主存储路径可运行时修改并持久化）
   const storageSettings = new StorageSettings(
@@ -103,10 +125,11 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   await journalStore.init();
   const journalAutoFill = new JournalAutoFill(marketData);
 
-  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, storageSettings, llmSettings, journalStore, journalAutoFill, llm, toolkit, sentiment };
+  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, storageSettings, llmSettings, binanceSettings, applyBinanceCredentials, journalStore, journalAutoFill, llm, toolkit, sentiment };
 
-  // 配置了 key 且非 Mock 模式：启动后自动同步一次真实账户（不阻塞启动）
-  if (process.env.AGENTWIN_USE_MOCK !== '1' && config.binanceApiKey && config.binanceApiSecret) {
+  // 配置了 key（环境变量或设置页持久化）且非 Mock 模式：启动后自动同步一次真实账户（不阻塞启动）
+  const startupCred = binanceSettings.credentials();
+  if (process.env.AGENTWIN_USE_MOCK !== '1' && startupCred.apiKey && startupCred.apiSecret) {
     void services.sync.syncAll().then((r) => {
       if (r.ok) console.log('[sync] 真实账户已同步: 余额 ' + r.balancesUpserted + ' 笔, 合约持仓 ' + r.futuresPositions + ' 个, 成交 ' + r.tradesSynced + ' 条');
       else console.warn('[sync] 真实账户同步失败: ' + (r.message ?? 'unknown'));
