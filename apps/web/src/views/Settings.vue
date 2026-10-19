@@ -58,7 +58,7 @@
         <!-- 币安 API 凭据（可配置 + 掩码展示，绝不回显明文） -->
         <div class="sc-divider"></div>
         <div class="sc-subtitle">币安 API 凭据</div>
-        <div class="llm-grid">
+        <div class="cred-grid">
           <div class="llm-field">
             <span class="llm-label">API Key</span>
             <el-input v-model="binApiKey" type="password" show-password class="llm-input mono" placeholder="留空则保留已配置的 Key" autocomplete="off" />
@@ -680,6 +680,9 @@ onMounted(load);
 .llm-label { font-size: 12px; color: var(--aw-text-dim); }
 .llm-input { width: 100%; }
 .llm-key .llm-mask { font-size: 11px; margin-top: 4px; }
+/* 币安凭据：两字段等宽两列，与 LLM 三列网格区分，避免对齐错位 */
+.cred-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: end; }
+@media (max-width: 1100px) { .cred-grid { grid-template-columns: 1fr; } }
 
 /* ---------- 存储状态 ---------- */
 .storage-edit { display: flex; align-items: center; gap: 8px; }

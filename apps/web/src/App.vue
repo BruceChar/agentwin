@@ -22,11 +22,20 @@
         </router-link>
       </nav>
 
-      <!-- 设置固定左下角 -->
-      <router-link to="/settings" class="nav-item settings-pin" :class="{ active: route.path === '/settings' }">
+      <!-- 设置固定左下角：进入设置页后切换为「返回」，可回到之前的页面 -->
+      <router-link
+        v-if="route.path !== '/settings'"
+        to="/settings"
+        class="nav-item settings-pin"
+        :class="{ active: route.path === '/settings' }"
+      >
         <el-icon class="nav-ic"><Setting /></el-icon>
         <span class="nav-label">设置</span>
       </router-link>
+      <button v-else class="nav-item settings-pin" @click="goBackFromSettings">
+        <el-icon class="nav-ic"><ArrowLeft /></el-icon>
+        <span class="nav-label">返回</span>
+      </button>
     </aside>
 
     <!-- 右侧弹性内容区 -->
@@ -75,7 +84,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { api } from './api.ts';
 import AiChat from './components/AiChat.vue';
 import { loadAccounts } from './store.ts';
@@ -83,6 +92,12 @@ import { deriveStatus, type TradeJournal } from './lib/journal.ts';
 import { latestPrice, subscribePrice } from './lib/prices.ts';
 
 const route = useRoute();
+const router = useRouter();
+/** 在设置页时，左下角入口切换为「返回」，回到进入设置前的页面（无历史则回仪表盘） */
+const goBackFromSettings = () => {
+  if (window.history.length > 1) router.back();
+  else router.push('/');
+};
 
 type NavItem = { path: string; label: string; icon: string; badgeKey?: string };
 // 导航平铺（无分组），设置固定在左下角
@@ -268,6 +283,7 @@ onBeforeUnmount(() => {
   transition: all var(--aw-dur-fast) var(--aw-ease);
 }
 .nav-item:hover { color: var(--aw-text-body); background: rgba(255,255,255,0.03); }
+button.nav-item { background: none; border: none; cursor: pointer; font: inherit; width: 100%; text-align: left; }
 .nav-item.active {
   color: var(--aw-accent);
   background: rgba(6, 182, 212, 0.08);
