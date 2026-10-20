@@ -1017,7 +1017,7 @@ let yPan = 0;                          // 价格轴上下平移量（相对可�
 let yDrag: { startY: number; startPan: number } | null = null;
 let yPanRaf = 0;
 let dragMode: 'none' | 'h' | 'v' = 'none';   // 主图按下后的拖拽方向判定：h=水平翻历史、v=垂直平移价格轴
-let dragStart = { x: 0, y: 0 };              // 主图按下起点（方向判定用）
+let dragStart: { x: number; y: number; zStart: number; zEnd: number } = { x: 0, y: 0, zStart: 0, zEnd: 0 }; // 按下起点（方向判定 + 水平平移基准，防累积漂移）
 let hPanRaf = 0;                             // 水平平移 rAF 节流
 let pointerDown = false;               // 图表上是否处于按下状态（cursor 由捕获阶段 mousemove 统一控制）
 function chartCursor(c: string) {
@@ -1994,7 +1994,7 @@ function onYDown(e: MouseEvent) {
   if (showDbg.value) dbg('down x=' + Math.round(e.clientX) + ' y=' + Math.round(e.clientY));
   const rect = chartEl.value?.getBoundingClientRect();
   if (!rect) return;
-  dragStart = { x: e.clientX, y: e.clientY };
+  dragStart = { x: e.clientX, y: e.clientY, zStart: zoomStart, zEnd: zoomEnd };
   const PRICE_AXIS_W = 72;
   if (e.clientX >= rect.left + rect.width - PRICE_AXIS_W) {
     // 右侧价格轴区域：直接进入垂直平移模式
@@ -2039,12 +2039,14 @@ function onYMove(e: MouseEvent) {
     if (Math.abs(dx) < 2) return;
     const w = chartEl.value?.clientWidth ?? 0;
     if (!w) return;
-    const span = Math.max(0.001, zoomEnd - zoomStart);
+    // 从按下起点计算（dragStart.zStart/zEnd 固定基准）：移动 dx px → 窗口平移 dx 对应根数，
+    // 1:1 跟手、不累积（此前基于已更新的 zoomStart 再加绝对偏移导致越拖越飘）
+    const span = Math.max(0.001, dragStart.zEnd - dragStart.zStart);
     // 标准跟手方向（与 TradingView 一致）：往右拖（dx>0）→ start/end 减小 → 翻更早历史（左缘自动分页）；
     // 往左拖（dx<0）→ start/end 增大 → 看更晚，到最新端为止
     const deltaPct = -(dx / w) * span;
-    let ns = zoomStart + deltaPct;
-    let ne = zoomEnd + deltaPct;
+    let ns = dragStart.zStart + deltaPct;
+    let ne = dragStart.zEnd + deltaPct;
     if (ns < 0) { ne += -ns; ns = 0; }        // 左缘 clamp（保持窗口宽度）
     if (ne > 100) { ns -= ne - 100; ne = 100; } // 右缘 clamp（保持窗口宽度）
     ns = Math.max(0, ns);
@@ -2119,6 +2121,11 @@ async function loadOlderPage() {
       }
     }
     anchorZoom(realFrom + shift, realTo + shift);
+    // 分页后窗口被锚定：若用户仍按住拖拽（h 模式），同步拖拽基准，避免继续拖动时跳变
+    if (dragMode === 'h') {
+      dragStart.zStart = zoomStart;
+      dragStart.zEnd = zoomEnd;
+    }
     render();
   } catch {
     /* 历史加载失败静默，下次拖拽再试 */
