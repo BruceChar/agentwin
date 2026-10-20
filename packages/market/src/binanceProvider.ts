@@ -2,6 +2,7 @@ import type { Candle, Interval, Market, SymbolInfo, Ticker } from '@agentwin/sha
 import type { KlineQuery, MarketDataProvider, MarketEvent, PingResult, StreamSubscription, Unsubscribe } from './provider.ts';
 import { BinanceRest, type RestOptions } from './binance/rest.ts';
 import { BinanceWs, aggTradeStream, bookTickerStream, klineStream, markPriceStream } from './binance/ws.ts';
+import type { ProxyConfig } from './binance/proxy.ts';
 import { toMarketEvent } from './events.ts';
 
 /** Binance 真实行情适配：REST（历史 K 线/行情）+ WebSocket（实时），多主机自动回退 */
@@ -18,6 +19,12 @@ export class BinanceMarketData implements MarketDataProvider {
       baseUrl: opts.spotBaseUrl ?? process.env.BINANCE_WS_BASE_URL,
       proxyConfig: opts.proxyConfig,
     });
+  }
+
+  /** 运行时切换代理：REST 立即生效，WS 已连接时触发重连（connect 时实时读取新配置） */
+  updateProxy(config: ProxyConfig): void {
+    this.rest.updateProxy(config);
+    this.ws.updateProxy(config);
   }
 
   /** 连通性探测：选中一个可用主机即视为可达 */

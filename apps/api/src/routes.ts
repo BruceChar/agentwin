@@ -378,7 +378,8 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   app.post('/api/binance/proxy', async (req) => {
     const b = (req.body ?? {}) as Body;
     try {
-      return services.proxySettings.apply({ mode: b['mode'] as never, url: b['url'] !== undefined ? String(b['url']) : undefined });
+      // 切换代理/直连：持久化 + 重建行情/私有接口代理链路，立即生效
+      return services.applyProxyConfig({ mode: b['mode'] as never, url: b['url'] !== undefined ? String(b['url']) : undefined });
     } catch (e) {
       return app.httpErrors.badRequest(e instanceof Error ? e.message : String(e));
     }

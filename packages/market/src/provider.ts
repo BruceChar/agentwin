@@ -58,4 +58,6 @@ export interface MarketDataProvider {
   getTickers(market: Market): Promise<Ticker[]>;
   getSymbols(market: Market): Promise<SymbolInfo[]>;
   subscribe(sub: StreamSubscription, cb: (e: MarketEvent) => void): Promise<Unsubscribe>;
+  /** 运行时切换代理（可选实现：Mock 等无网络客户端可省略） */
+  updateProxy?(config: import('./binance/proxy.ts').ProxyConfig): void;
 }

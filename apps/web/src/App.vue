@@ -22,20 +22,27 @@
         </router-link>
       </nav>
 
-      <!-- 设置固定左下角：进入设置页后切换为「返回」，可回到之前的页面 -->
-      <router-link
-        v-if="route.path !== '/settings'"
-        to="/settings"
-        class="nav-item settings-pin"
-        :class="{ active: route.path === '/settings' }"
-      >
-        <el-icon class="nav-ic"><Setting /></el-icon>
-        <span class="nav-label">设置</span>
-      </router-link>
-      <button v-else class="nav-item settings-pin" @click="goBackFromSettings">
-        <el-icon class="nav-ic"><ArrowLeft /></el-icon>
-        <span class="nav-label">返回</span>
-      </button>
+      <!-- 底部固定：设置（进入设置页后切换为「返回」）+ 右侧连接状态（直连/已连接/受限/异常） -->
+      <div class="side-bottom">
+        <router-link
+          v-if="route.path !== '/settings'"
+          to="/settings"
+          class="nav-item settings-pin"
+          :class="{ active: route.path === '/settings' }"
+        >
+          <el-icon class="nav-ic"><Setting /></el-icon>
+          <span class="nav-label">设置</span>
+        </router-link>
+        <button v-else class="nav-item settings-pin" @click="goBackFromSettings">
+          <el-icon class="nav-ic"><ArrowLeft /></el-icon>
+          <span class="nav-label">返回</span>
+        </button>
+        <!-- 代理连接状态：点击直达设置页修改代理/直连 -->
+        <button class="proxy-chip" :class="proxyCls" :title="proxyMsg" @click="$router.push('/settings')">
+          <span class="proxy-dot"></span>
+          <span class="proxy-text">{{ proxyText }}</span>
+        </button>
+      </div>
     </aside>
 
     <!-- 右侧弹性内容区 -->
@@ -52,11 +59,6 @@
             <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
             <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
           </div>
-          <!-- 代理连接状态：直连 / 已连接 / 受限 / 异常（随 /health + /binance/status + /binance/proxy-status 实时检测） -->
-          <button class="proxy-chip" :class="proxyCls" :title="proxyMsg">
-            <span class="proxy-dot"></span>
-            <span class="proxy-text">{{ proxyText }}</span>
-          </button>
         </div>
       </header>
 
@@ -287,7 +289,20 @@ onBeforeUnmount(() => {
 .brand-sub { font-size: 10px; color: var(--aw-text-dim); }
 
 .side-nav { flex: 1; overflow-y: auto; padding: 4px 0; }
-.settings-pin { border-top: 1px solid var(--aw-border); }
+/* 底部固定区：设置 + 连接状态并排 */
+.side-bottom {
+  border-top: 1px solid var(--aw-border);
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px 8px;
+}
+.side-bottom .settings-pin { border-top: none; flex: 1; min-width: 0; padding: 8px 10px; }
+/* 侧边栏内紧凑版连接状态 chip */
+.side-bottom .proxy-chip {
+  height: 28px; padding: 0 8px; font-size: 11px; flex: none; max-width: 74px;
+  justify-content: center; cursor: pointer;
+}
+.side-bottom .proxy-chip:hover { border-color: var(--aw-accent); color: var(--aw-accent); }
+.side-bottom .proxy-text { overflow: hidden; text-overflow: ellipsis; }
 .nav-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 16px; color: var(--aw-text-dim); text-decoration: none;

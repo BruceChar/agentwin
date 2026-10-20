@@ -1,5 +1,6 @@
 import { createStorage, type StorageAdapter } from '@agentwin/db';
 import { BinanceMarketData, BinanceOfficialMarketData, BinanceRest, MockMarketData, resolveProxyConfig, type MarketDataProvider } from '@agentwin/market';
+import type { ProxyConfig, ProxyMode } from '@agentwin/market';
 import { ProxySettings } from './proxy-settings.ts';
 import { StorageSettings } from './storage-settings.ts';
 import { LlmSettings } from './llm-settings.ts';
@@ -31,6 +32,8 @@ export interface AppServices {
   binanceSettings: BinanceSettings;
   /** 更新 Binance 凭据：持久化 + 重建 rest，立即生效 */
   applyBinanceCredentials: (patch: { apiKey?: string; apiSecret?: string }) => import('./binance-settings.ts').BinanceSettingsView;
+  /** 运行时切换代理：持久化 + 重建 REST/WS 代理链路，立即生效（行情/私有接口同步切换） */
+  applyProxyConfig: (patch: { mode?: ProxyMode; url?: string }) => ProxyConfig;
   /** 结构化交易日志（JSONL 主存储 + SQLite 镜像） */
   journalStore: TradeJournalStore;
   journalAutoFill: JournalAutoFill;
@@ -116,6 +119,14 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
     return binanceSettings.get();
   };
 
+  // 运行时切换代理：持久化配置 + 重建 REST/WS 代理链路（行情 marketData 与私有 rest 同时更新，立即生效）
+  const applyProxyConfig = (patch: { mode?: ProxyMode; url?: string }) => {
+    const cfg = proxySettings.apply(patch);
+    marketData.updateProxy?.(cfg);
+    services.rest.updateProxy(cfg);
+    return proxySettings.get();
+  };
+
   // 结构化交易日志：JSONL 主存储 + SQLite 镜像（主存储路径可运行时修改并持久化）
   const storageSettings = new StorageSettings(
     process.env.JOURNAL_PATH ?? './data/trade-journal.jsonl',
@@ -125,7 +136,7 @@ export async function createServices(config: AppConfig): Promise<AppServices> {
   await journalStore.init();
   const journalAutoFill = new JournalAutoFill(marketData);
 
-  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, storageSettings, llmSettings, binanceSettings, applyBinanceCredentials, journalStore, journalAutoFill, llm, toolkit, sentiment };
+  const services: AppServices = { config, storage, marketData, rest, sync, proxySettings, storageSettings, llmSettings, binanceSettings, applyBinanceCredentials, applyProxyConfig, journalStore, journalAutoFill, llm, toolkit, sentiment };
 
   // 配置了 key（环境变量或设置页持久化）且非 Mock 模式：启动后自动同步一次真实账户（不阻塞启动）
   const startupCred = binanceSettings.credentials();

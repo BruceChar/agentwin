@@ -216,6 +216,11 @@
 
     <!-- 图表 + 各面板独立图例（悬停联动，默认显示最新值）+ 面板拖拽手柄 -->
     <div class="chart-wrap">
+      <!-- 行情加载失败横幅：显示原因（代理受限/不可达等），可关闭；自动刷新失败不再反复弹窗 -->
+      <div v-if="errBanner" class="chart-err-banner">
+        <span class="chart-err-msg">{{ errBanner }}</span>
+        <button class="chart-err-close" title="关闭" @click="errBanner = ''">×</button>
+      </div>
       <div ref="chartEl" v-loading="loading" class="chart"></div>
       <div
         v-for="(h, hi) in dragHandles"
@@ -471,6 +476,20 @@ const linkWidth = ref(1.2);
 const linkCount = computed(() => Object.values(linkMap).filter(Boolean).length);
 const loading = ref(false);
 const candles = ref<CandleView[]>([]);
+/** 行情加载失败横幅内容（代理受限/不可达等）；成功后清空 */
+const errBanner = ref('');
+/** 失败弹窗限频：同一错误 15 秒内只弹一次 toast，横幅持续展示最新原因 */
+let lastLoadErrAt = 0;
+let lastLoadErrKey = '';
+function notifyLoadError(msg: string) {
+  const key = msg.slice(0, 60);
+  errBanner.value = '行情加载失败：' + msg;
+  const now = Date.now();
+  if (key === lastLoadErrKey && now - lastLoadErrAt < 15_000) return;
+  lastLoadErrAt = now;
+  lastLoadErrKey = key;
+  ElMessage.error(errBanner.value);
+}
 const lastPrice = ref<number | null>(null);
 const lastUp = ref(true);
 const lastChangePct = ref('');
@@ -1231,8 +1250,9 @@ async function load(resetZoom = true) {
     if (stratSel.value) applyStrategy();
     tabSnap[activeTab.value] = snapActive(); // 数据就绪后更新当前 tab 快照
     prevTabRef.value = null; // 新 tab 加载成功：清除回滚标记
+    errBanner.value = ''; // 数据恢复：清除失败横幅
   } catch (e) {
-    ElMessage.error('行情加载失败：' + (e instanceof Error ? e.message : String(e)));
+    notifyLoadError(e instanceof Error ? e.message : String(e));
     // 新开 tab 拉取失败：回滚该空 tab 并切回上一个 tab（避免残留错误/旧数据的行情窗口）
     if (prevTabRef.value && !tabSnap[activeTab.value] && !candles.value.length) {
       const prev = prevTabRef.value;
@@ -2317,6 +2337,22 @@ onBeforeUnmount(() => {
 /* 图表 + 图例浮层 + 面板拖拽手柄 */
 .chart-wrap { position: relative; flex: 1; min-height: 420px; }
 .chart { height: 100%; min-height: 420px; width: 100%; }
+/* 行情加载失败横幅（顶部浮层，可关闭；失败原因持续可见但不反复弹窗） */
+.chart-err-banner {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+  z-index: 20; display: flex; align-items: center; gap: 8px;
+  max-width: 90%; padding: 6px 10px 6px 14px;
+  background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 8px; font-size: 12px; color: #fca5a5;
+  backdrop-filter: blur(6px);
+}
+.chart-err-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-err-close {
+  flex: none; width: 18px; height: 18px; line-height: 16px; text-align: center;
+  border: none; border-radius: 4px; background: rgba(239, 68, 68, 0.25);
+  color: #fca5a5; cursor: pointer; font-size: 13px; padding: 0;
+}
+.chart-err-close:hover { background: rgba(239, 68, 68, 0.45); color: #fff; }
 .legend { position: absolute; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
 .lg { display: inline-flex; align-items: center; }
 .lg b { font-weight: 600; margin-left: 3px; }

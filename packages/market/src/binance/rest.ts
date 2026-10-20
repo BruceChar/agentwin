@@ -53,7 +53,7 @@ export function parseKlineRow(row: RawKlineRow): Candle {
 export class BinanceRest {
   private readonly opts: RestOptions;
   private readonly fetchImpl: typeof fetch;
-  private readonly proxyConfig: ProxyConfig;
+  private proxyConfig: ProxyConfig;
   /** market -> 已选中的可用 base（带时间戳缓存） */
   private baseCache = new Map<Market, { url: string; at: number }>();
 
@@ -62,7 +62,7 @@ export class BinanceRest {
     return { apiKey: this.opts.apiKey, apiSecret: this.opts.apiSecret };
   }
 
-  private readonly proxiedFetch: typeof fetch | undefined;
+  private proxiedFetch: typeof fetch | undefined;
 
   constructor(opts: RestOptions = {}) {
     this.opts = opts;
@@ -77,6 +77,12 @@ export class BinanceRest {
     const url = String(input);
     if (isDirectHost(url)) return this.fetchImpl(url, init ?? {});
     return this.proxiedFetch ? this.proxiedFetch(url, init) : this.fetchImpl(url, init ?? {});
+  }
+
+  /** 运行时切换代理：重建 proxiedFetch，立即生效（凭据/主机缓存不变） */
+  updateProxy(config: ProxyConfig): void {
+    this.proxyConfig = config;
+    this.proxiedFetch = createProxiedFetch(config);
   }
 
   /** 当前代理配置（诊断/状态展示用） */

@@ -37,12 +37,23 @@ export class BinanceWs {
     /** 代理配置；缺省按 BINANCE_PROXY / BINANCE_PROXY_URL / HTTPS_PROXY 解析 */
     proxyConfig?: ProxyConfig;
   };
-  private readonly proxyConfig: ProxyConfig;
+  private proxyConfig: ProxyConfig;
 
   constructor(market: Market, opts: { onStatus?: (status: 'open' | 'close' | 'error', detail?: string) => void; baseUrl?: string; proxyConfig?: ProxyConfig } = {}) {
     this.market = market;
     this.opts = opts;
     this.proxyConfig = opts.proxyConfig ?? resolveProxyConfig();
+  }
+
+  /** 运行时切换代理：更新配置；已连接且有订阅时断开触发自动重连（connect 时实时读取新配置） */
+  updateProxy(config: ProxyConfig): void {
+    this.proxyConfig = config;
+    if (this.connected && this.handlers.size > 0) {
+      this.closedByUser = false;
+      this.connecting = false;
+      try { this.ws?.close(); } catch { /* ignore */ }
+      this.ws = null;
+    }
   }
 
   get connected(): boolean {

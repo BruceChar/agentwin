@@ -1,4 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { buildApp, type AppHandle } from '../src/app.ts';
 
 describe('runtime proxy endpoints', () => {
@@ -9,6 +11,8 @@ describe('runtime proxy endpoints', () => {
     // 模拟已配置 Key：status.configured 应为 true（reachable 在沙箱中为 false）
     process.env.BINANCE_API_KEY = 'test-key';
     process.env.BINANCE_API_SECRET = 'test-secret';
+    // 持久化隔离：测试进程写入临时文件，不污染真实 data/agentwin-proxy.json
+    process.env.AGENTWIN_PROXY_FILE = join(tmpdir(), 'agentwin-proxy-test-' + Date.now() + '.json');
     handle = await buildApp({
       host: '127.0.0.1', port: 0, dbEngine: 'sqlite', dbPath: ':memory:',
       llmProvider: 'deepseek', llmModel: 'deepseek-v4-flash',
@@ -21,6 +25,7 @@ describe('runtime proxy endpoints', () => {
     await handle.close();
     delete process.env.BINANCE_API_KEY;
     delete process.env.BINANCE_API_SECRET;
+    delete process.env.AGENTWIN_PROXY_FILE;
   });
 
   it('status reports configured when keys present', async () => {
