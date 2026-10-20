@@ -1016,6 +1016,9 @@ let mainGridH = 300;
 let yPan = 0;                          // 价格轴上下平移量（相对可见区间基准范围）
 let yDrag: { startY: number; startPan: number } | null = null;
 let yPanRaf = 0;
+let dragMode: 'none' | 'h' | 'v' = 'none';   // 主图按下后的拖拽方向判定：h=水平翻历史、v=垂直平移价格轴
+let dragStart = { x: 0, y: 0 };              // 主图按下起点（方向判定用）
+let hPanRaf = 0;                             // 水平平移 rAF 节流
 let pointerDown = false;               // 图表上是否处于按下状态（cursor 由捕获阶段 mousemove 统一控制）
 function chartCursor(c: string) {
   try {
@@ -1587,7 +1590,9 @@ function render() {
     // 注意：zrender 在 canvas 上 stopPropagation 掉 mousemove，冒泡到不了 window/chartEl，
     // 必须用捕获阶段监听（捕获先于 zrender 的目标阶段处理，必然能收到事件）。
     chartEl.value.addEventListener('mousedown', onYDown);
-    chartEl.value.addEventListener('mousemove', onYMove, true);
+    // 捕获阶段在 window 上监听（比 chartEl 更早）：真实浏览器 zrender 在 canvas 目标阶段 stopPropagation 掉 mousemove，
+    // window 捕获必然收到，方向判定/平移不受 zrender 干扰；拖拽语义（hPan/yPan）只由 chartEl 内按下触发。
+    window.addEventListener('mousemove', onYMove, true);
     chartEl.value.addEventListener('mouseup', onYUp, true);
     // 松开可能发生在图表外（拖出 canvas 边界释放）：全局兜底清除拖拽状态，防止 yDrag 残留导致"没按也能拖"
     window.addEventListener('mouseup', onYUp);
@@ -1919,8 +1924,9 @@ function render() {
       xAxis: xAxes,
       yAxis: yAxes,
       dataZoom: [
-        // 仅内置缩放（滚轮/拖拽），不显示底部缩放条；cursor:auto 让悬停保持箭头（按下时由图表 mousemove 改为小手）
-        { type: 'inside', xAxisIndex: catAxisIdx, start: zoomStart, end: zoomEnd, cursor: 'auto' },
+        // 仅内置滚轮缩放（zoomOnMouseWheel），禁用内部鼠标拖拽（moveOnMouseMove:false）——
+        // 主图按下拖动由自定义 onYMove 按方向判定：水平=翻历史（左拖更早/右拖更晚）、垂直=平移价格轴
+        { type: 'inside', xAxisIndex: catAxisIdx, start: zoomStart, end: zoomEnd, cursor: 'auto', moveOnMouseMove: false, zoomOnMouseWheel: true },
       ],
       series,
     },
@@ -1985,34 +1991,78 @@ function onYDown(e: MouseEvent) {
   if (e.button !== 0) return;
   pointerDown = true;
   chartCursor('grabbing'); // 按住即小手（无论拖 K 线还是拖价格轴）
-  // 仅右侧价格轴区域启用垂直平移；主图按下完全交给 ECharts dataZoom 水平拖拽，
-  // 不抢占 mousemove（否则 yPan 的 setOption 会打断 dataZoom 拖拽手势，导致左拉卡顿）
+  if (showDbg.value) dbg('down x=' + Math.round(e.clientX) + ' y=' + Math.round(e.clientY));
   const rect = chartEl.value?.getBoundingClientRect();
   if (!rect) return;
+  dragStart = { x: e.clientX, y: e.clientY };
   const PRICE_AXIS_W = 72;
-  if (e.clientX < rect.left + rect.width - PRICE_AXIS_W) return;
-  yDrag = { startY: e.clientY, startPan: yPan };
+  if (e.clientX >= rect.left + rect.width - PRICE_AXIS_W) {
+    // 右侧价格轴区域：直接进入垂直平移模式
+    dragMode = 'v';
+    yDrag = { startY: e.clientY, startPan: yPan };
+  } else {
+    // 主图：按下不立即决定，移动过死区后按方向判定（垂直=平移价格轴，水平=翻历史）
+    dragMode = 'none';
+  }
 }
 function onYMove(e: MouseEvent) {
   chartCursor(pointerDown ? 'grabbing' : 'auto'); // 捕获阶段必然收到 mousemove：hover 箭头、按下拖拽小手
-  if (!yDrag) return;
-  const dy = e.clientY - yDrag.startY;
-  if (Math.abs(dy) < 2) return; // 死区：忽略轻微抖动
-  const range = currentPriceRange();
-  if (range == null) return;
-  // 往下拖 = 视图下移 = 看到更高价格区间（与 TradingView 一致）
-  const delta = (dy / Math.max(50, mainGridH)) * (range.hi - range.lo);
-  yPan = yDrag.startPan + delta;
-  if (yPanRaf) return;
-  yPanRaf = requestAnimationFrame(() => {
-    yPanRaf = 0;
-    applyYPan();
-  });
+  if (!pointerDown) return;
+  if (dragMode === 'none') {
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return; // 死区：未移动不判定
+    if (Math.abs(dy) > Math.abs(dx)) {
+      dragMode = 'v';
+      yDrag = { startY: e.clientY, startPan: yPan };
+    } else {
+      dragMode = 'h'; // 水平拖拽由自定义逻辑处理（dataZoom 已禁用 moveOnMouseMove，避免手势冲突）
+    }
+  }
+  if (dragMode === 'v') {
+    if (!yDrag) return;
+    const dy = e.clientY - yDrag.startY;
+    if (Math.abs(dy) < 2) return; // 死区：忽略轻微抖动
+    const range = currentPriceRange();
+    if (range == null) return;
+    // 往下拖 = 视图下移 = 看到更高价格区间（与 TradingView 一致）
+    const delta = (dy / Math.max(50, mainGridH)) * (range.hi - range.lo);
+    yPan = yDrag.startPan + delta;
+    if (yPanRaf) return;
+    yPanRaf = requestAnimationFrame(() => {
+      yPanRaf = 0;
+      if (showDbg.value) dbg('yPan=' + yPan.toFixed(2));
+      applyYPan();
+    });
+  } else if (dragMode === 'h') {
+    const dx = e.clientX - dragStart.x;
+    if (Math.abs(dx) < 2) return;
+    const w = chartEl.value?.clientWidth ?? 0;
+    if (!w) return;
+    const span = Math.max(0.001, zoomEnd - zoomStart);
+    // 反转方向：往左拖（dx<0）→ start/end 减小 → 翻更早（到数据起点自动分页加载历史）；
+    // 往右拖 → 看更晚，到最新端为止
+    const deltaPct = (dx / w) * span;
+    let ns = zoomStart + deltaPct;
+    let ne = zoomEnd + deltaPct;
+    if (ns < 0) { ne += -ns; ns = 0; }        // 左缘 clamp（保持窗口宽度）
+    if (ne > 100) { ns -= ne - 100; ne = 100; } // 右缘 clamp（保持窗口宽度）
+    ns = Math.max(0, ns);
+    ne = Math.min(100, Math.max(ns + 1e-3, ne));
+    if (hPanRaf) return;
+    hPanRaf = requestAnimationFrame(() => {
+      hPanRaf = 0;
+      if (showDbg.value) dbg('hPan z=' + ns.toFixed(1) + '/' + ne.toFixed(1));
+      // 非 suppress 的 setOption：触发 onZoom → 回写 zoom + 重算价格轴 + 左缘到起点时自动分页
+      chart?.setOption({ dataZoom: [{ start: ns, end: ne }] });
+    });
+  }
 }
 function onYUp() {
   pointerDown = false;
   chartCursor('auto');
   yDrag = null;
+  dragMode = 'none';
 }
 
 // ---------- 历史分页：往右拖拽（向更早数据）到已加载边界时按页加载 ----------
