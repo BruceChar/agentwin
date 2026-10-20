@@ -10,6 +10,6 @@ import Market from './Market.vue';
 </script>
 
 <style scoped>
-.data-center { display: flex; flex-direction: column; gap: 12px; }
+.data-center { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 .dc-body { min-height: 0; }
 </style>

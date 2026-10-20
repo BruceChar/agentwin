@@ -337,6 +337,8 @@ button.nav-item { background: none; border: none; cursor: pointer; font: inherit
 
 
 .content { flex: 1; overflow-y: auto; padding: 16px 20px; }
+/* 行情页（含 .tv-card.fullbleed）：图表高度自适应——不滚动，内容弹性撑满视口剩余高度 */
+.content:has(.tv-card.fullbleed) { overflow: hidden; display: flex; flex-direction: column; }
 
 /* 路由过渡 */
 .fade-enter-active, .fade-leave-active { transition: opacity var(--aw-dur-fast) var(--aw-ease); }

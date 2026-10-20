@@ -2125,6 +2125,8 @@ function startAutoRefresh() {
   timer = setInterval(() => refreshLatest(), sec * 1000);
 }
 
+// 图表高度自适应：ResizeObserver 监听容器尺寸变化（窗口缩放/面板拖拽/图例行数变化）→ 重算面板布局
+let chartObserver: ResizeObserver | null = null;
 onMounted(() => {
   resizeHandler = () => {
     chart?.resize();
@@ -2132,6 +2134,10 @@ onMounted(() => {
   };
   window.addEventListener('resize', resizeHandler);
   measureChart();
+  if (chartEl.value) {
+    chartObserver = new ResizeObserver(() => measureChart());
+    chartObserver.observe(chartEl.value);
+  }
   loadSettings();
   loadIvSettings();
   loadStratList();
@@ -2154,6 +2160,8 @@ onActivated(() => {
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
   if (resizeHandler) window.removeEventListener('resize', resizeHandler);
+  chartObserver?.disconnect();
+  chartObserver = null;
   unsubTicker?.();
   chart?.dispose();
   chart = null;
@@ -2161,7 +2169,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.tv-card :deep(.el-card__body) { padding: 0; }
+.tv-card :deep(.el-card__body) { padding: 0; display: flex; flex-direction: column; flex: 1; min-height: 0; }
 /* 行情图表左右占满内容区：抵消 .content 的 20px 左右内边距，不留白、不设 margin */
 .tv-card.fullbleed {
   margin-left: -20px;
@@ -2169,6 +2177,10 @@ onBeforeUnmount(() => {
   border-radius: 0 !important; /* 覆盖全局 .el-card 圆角 */
   border-left: none;
   border-right: none;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 .dim { color: var(--text-dim); font-size: 12px; }
 .mono { font-family: var(--mono); }
@@ -2255,8 +2267,8 @@ onBeforeUnmount(() => {
 .mk-add { flex: none; }
 
 /* 图表 + 图例浮层 + 面板拖拽手柄 */
-.chart-wrap { position: relative; }
-.chart { height: calc(100vh - 248px); min-height: 420px; width: 100%; }
+.chart-wrap { position: relative; flex: 1; min-height: 420px; }
+.chart { height: 100%; min-height: 420px; width: 100%; }
 .legend { position: absolute; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; font-family: var(--mono); pointer-events: none; z-index: 5; }
 .lg { display: inline-flex; align-items: center; }
 .lg b { font-weight: 600; margin-left: 3px; }
