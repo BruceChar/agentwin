@@ -2048,13 +2048,13 @@ function onYMove(e: MouseEvent) {
     let ns = dragStart.zStart + deltaPct;
     let ne = dragStart.zEnd + deltaPct;
     if (ns < 0) { ne += -ns; ns = 0; }        // 左缘 clamp（保持窗口宽度）
-    // 右缘上限：最新 K 线最多停在可视窗口约 2/3 处（右侧留 1/3 空），不贴右缘——
+    // 右缘上限：最新 K 线最多停在可视窗口约 1/3 处（从左边界算起，右侧留 2/3 空），不贴右缘——
     // 往左拖（看更晚）到该位置即停；往右拖（翻更早）不受此限
     const L = candles.value.length;
     const RIGHT_PAD = rightPadFor(L);
     const paddedLen = L + RIGHT_PAD;
     const winW = Math.max(1, ((dragStart.zEnd - dragStart.zStart) / 100) * paddedLen);
-    const neLimit = Math.min(100, Math.max(((L - 1 + winW / 3) / paddedLen) * 100, ns + 1e-3));
+    const neLimit = Math.min(100, Math.max(((L - 1 + (2 * winW) / 3) / paddedLen) * 100, ns + 1e-3));
     if (ne > neLimit) { ns -= ne - neLimit; ne = neLimit; }
     ns = Math.max(0, ns);
     ne = Math.min(100, Math.max(ns + 1e-3, ne));
