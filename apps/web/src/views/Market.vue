@@ -5,6 +5,16 @@
   VPVR：火焰图配色（低量深蓝 → 高量黄/红）。 -->
 <template>
   <el-card shadow="never" class="tv-card fullbleed">
+    <!-- 多行情 tab 栏（置顶，替代原顶部菜单名位置）：每品种独立行情窗口，可关闭；＋ 新开 -->
+    <div class="mk-tabs">
+      <div v-for="t in tabs" :key="t.symbol" class="mk-tab" :class="{ on: t.symbol === activeTab }" @click="switchTab(t.symbol)">
+        <span class="mk-name">{{ t.symbol }}</span>
+        <span v-if="tabs.length > 1" class="mk-x" title="关闭该行情" @click.stop="closeTab(t.symbol)">×</span>
+      </div>
+      <el-select class="mk-add" :model-value="''" placeholder="＋ 新行情" size="small" style="width: 96px" @change="addTab" @click.stop>
+        <el-option v-for="s in symbols.filter((x) => !tabs.some((t) => t.symbol === x))" :key="s" :value="s" :label="s" />
+      </el-select>
+    </div>
     <!-- TradingView 风格顶栏：品种 + 周期选择 + 指标菜单 -->
     <div class="tv-top">
       <div class="tv-symbol">
@@ -182,19 +192,9 @@
             <div v-if="stratErr" class="strat-err">{{ stratErr }}</div>
           </div>
         </el-popover>
+        <el-button size="small" class="ind-btn" title="舆情" @click="onSentiment"><el-icon><ChatDotRound /></el-icon></el-button>
         <el-button size="small" @click="refreshLatest">刷新</el-button>
       </div>
-    </div>
-
-    <!-- 多行情 tab 栏：每个品种独立行情窗口（数据/缩放/周期各自保持），可关闭；＋ 新开 -->
-    <div class="mk-tabs">
-      <div v-for="t in tabs" :key="t.symbol" class="mk-tab" :class="{ on: t.symbol === activeTab }" @click="switchTab(t.symbol)">
-        <span class="mk-name">{{ t.symbol }}</span>
-        <span v-if="tabs.length > 1" class="mk-x" title="关闭该行情" @click.stop="closeTab(t.symbol)">×</span>
-      </div>
-      <el-select class="mk-add" :model-value="''" placeholder="＋ 新行情" size="small" style="width: 96px" @change="addTab" @click.stop>
-        <el-option v-for="s in symbols.filter((x) => !tabs.some((t) => t.symbol === x))" :key="s" :value="s" :label="s" />
-      </el-select>
     </div>
 
     <!-- 图表 + 各面板独立图例（悬停联动，默认显示最新值）+ 面板拖拽手柄 -->
@@ -782,6 +782,9 @@ function bindTicker() {
 
 function onSymbol(v: string) { symbol.value = v; invalidateStrat(); load(true); bindTicker(); }
 function onMarket(v: string) { market.value = v; invalidateStrat(); load(true); bindTicker(); }
+const emit = defineEmits<{ 'open-sentiment': [] }>();
+/** 舆情入口：行情页右上角 icon，点击切到舆情视图（DataCenter 内 KeepAlive 切换） */
+function onSentiment() { emit('open-sentiment'); }
 function changeInterval(v: string) {
   if (interval.value === v) return;
   interval.value = v;

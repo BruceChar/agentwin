@@ -45,6 +45,9 @@
       <!-- 刷新 -->
       <button class="refresh-btn" :class="{ spinning: scanning }" title="刷新舆情" @click="scan"><i>⟳</i></button>
 
+      <!-- 返回行情（舆情由行情页右上角 icon 进入，这里回到行情主视图） -->
+      <button class="back-btn" title="返回行情" @click="backToMarket">← 行情</button>
+
       <!-- 极端情绪警告 -->
       <div v-if="extremeWarn" class="warn-pill">{{ extremeWarn }}</div>
     </div>
@@ -272,11 +275,19 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
 import { api, type SentimentAggregate, type SentimentRecord, type StrategyConfig } from '../api.ts';
 
 // ---------- 常量 ----------
+const route = useRoute();
+const router = useRouter();
+/** 返回行情主视图（行情页右上角 icon 进入舆情，这里回退） */
+function backToMarket() {
+  router.replace({ query: { ...route.query, tab: 'market' } });
+}
+
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
 const COIN_COLORS: Record<string, string> = {
   BTCUSDT: '#F7931A', ETHUSDT: '#627EEA', SOLUSDT: '#14F195',
@@ -789,6 +800,13 @@ onBeforeUnmount(() => { ro?.disconnect(); chart?.dispose(); chart = null; });
 .refresh-btn:hover i { transform: rotate(180deg); }
 .refresh-btn.spinning i { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* 返回行情（右上角入口的对偶） */
+.back-btn {
+  height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent; color: var(--aw-text-dim); cursor: pointer; font-size: 13px;
+  transition: border-color var(--aw-dur-fast) var(--aw-ease), color var(--aw-dur-fast) var(--aw-ease);
+}
+.back-btn:hover { border-color: var(--aw-accent); color: var(--aw-accent); }
 .warn-pill {
   margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 12px;
   border-radius: 999px; font-size: 12px; color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.4);

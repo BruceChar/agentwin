@@ -40,7 +40,8 @@
 
     <!-- 右侧弹性内容区 -->
     <div class="main">
-      <header class="topbar">
+      <!-- 数据中心页：隐藏顶栏（菜单名/价格 chip），行情 Tab 栏直接占据顶部，避免多层头部 -->
+      <header v-if="route.path !== '/data'" class="topbar">
         <div class="crumb">
           <b>{{ crumbTitle }}</b>
         </div>
