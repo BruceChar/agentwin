@@ -8,7 +8,7 @@
     <!-- TradingView 风格顶栏：品种 + 周期选择 + 指标菜单 -->
     <div class="tv-top">
       <div class="tv-symbol">
-        <el-select :model-value="symbol" size="small" style="width: 118px" @change="onSymbol">
+        <el-select :model-value="activeTab" size="small" style="width: 118px" @change="addTab" title="选择品种（已开的切换，未开的开新行情窗口）">
           <el-option v-for="s in symbols" :key="s" :value="s" :label="s" />
         </el-select>
         <el-select :model-value="market" size="small" style="width: 118px" @change="onMarket">
@@ -184,6 +184,17 @@
         </el-popover>
         <el-button size="small" @click="refreshLatest">刷新</el-button>
       </div>
+    </div>
+
+    <!-- 多行情 tab 栏：每个品种独立行情窗口（数据/缩放/周期各自保持），可关闭；＋ 新开 -->
+    <div class="mk-tabs">
+      <div v-for="t in tabs" :key="t.symbol" class="mk-tab" :class="{ on: t.symbol === activeTab }" @click="switchTab(t.symbol)">
+        <span class="mk-name">{{ t.symbol }}</span>
+        <span v-if="tabs.length > 1" class="mk-x" title="关闭该行情" @click.stop="closeTab(t.symbol)">×</span>
+      </div>
+      <el-select class="mk-add" :model-value="''" placeholder="＋ 新行情" size="small" style="width: 96px" @change="addTab" @click.stop>
+        <el-option v-for="s in symbols.filter((x) => !tabs.some((t) => t.symbol === x))" :key="s" :value="s" :label="s" />
+      </el-select>
     </div>
 
     <!-- 图表 + 各面板独立图例（悬停联动，默认显示最新值）+ 面板拖拽手柄 -->
@@ -938,6 +949,112 @@ const chartH = ref(660);
 const panelH = reactive<{ vol: number; macd: number; rsi: number }>({ vol: 86, macd: 86, rsi: 86 });
 const dragHandles = ref<{ top: number }[]>([]);
 
+// ---------- 多行情 tab：每品种独立窗口（数据/缩放/周期/面板各自保持，切换即恢复） ----------
+interface TabSnap {
+  market: string;
+  interval: string;
+  baseCandles: CandleView[];
+  candles: CandleView[];
+  zoomStart: number;
+  zoomEnd: number;
+  yPan: number;
+  userAdjusted: boolean;
+  reachedStart: boolean;
+  lastPrice: number | null;
+  lastUp: boolean;
+  lastChangePct: string;
+  panelH: { vol: number; macd: number; rsi: number };
+}
+const tabs = ref<{ symbol: string }[]>([{ symbol: 'BTCUSDT' }]);
+const activeTab = ref('BTCUSDT');
+const tabSnap: Record<string, TabSnap> = {};
+
+function snapActive(): TabSnap {
+  return {
+    market: market.value,
+    interval: interval.value,
+    baseCandles,
+    candles: candles.value,
+    zoomStart,
+    zoomEnd,
+    yPan,
+    userAdjusted,
+    reachedStart,
+    lastPrice: lastPrice.value,
+    lastUp: lastUp.value,
+    lastChangePct: lastChangePct.value,
+    panelH: { ...panelH },
+  };
+}
+function applySnap(s: TabSnap) {
+  market.value = s.market;
+  interval.value = s.interval;
+  baseCandles = s.baseCandles;
+  candles.value = s.candles;
+  zoomStart = s.zoomStart;
+  zoomEnd = s.zoomEnd;
+  yPan = s.yPan;
+  userAdjusted = s.userAdjusted;
+  reachedStart = s.reachedStart;
+  lastPrice.value = s.lastPrice;
+  lastUp.value = s.lastUp;
+  lastChangePct.value = s.lastChangePct;
+  panelH.vol = s.panelH.vol;
+  panelH.macd = s.panelH.macd;
+  panelH.rsi = s.panelH.rsi;
+}
+/** 渲染当前视图（chart 已存在时）并保持策略标注一致 */
+function renderAndKeepStrat() {
+  invalidateStrat();
+  render();
+  bindTicker();
+  if (stratSel.value) applyStrategy();
+}
+function switchTab(sym: string) {
+  if (sym === activeTab.value) return;
+  tabSnap[activeTab.value] = snapActive(); // 保存当前 tab 状态
+  activeTab.value = sym;
+  const s = tabSnap[sym];
+  if (s && s.candles.length) {
+    symbol.value = sym;
+    applySnap(s);
+    renderAndKeepStrat();
+  } else {
+    symbol.value = sym;
+    invalidateStrat();
+    bindTicker();
+    load(true); // 首次打开：拉数据
+  }
+}
+function addTab(sym: string) {
+  if (!sym) return;
+  if (tabs.value.some((t) => t.symbol === sym)) { switchTab(sym); return; }
+  tabs.value.push({ symbol: sym });
+  switchTab(sym);
+}
+function closeTab(sym: string) {
+  if (tabs.value.length <= 1) return; // 至少保留一个行情窗口
+  const idx = tabs.value.findIndex((t) => t.symbol === sym);
+  if (idx < 0) return;
+  tabs.value.splice(idx, 1);
+  delete tabSnap[sym];
+  if (activeTab.value === sym) {
+    const next = tabs.value[Math.max(0, idx - 1)]!.symbol;
+    activeTab.value = next;
+    const s = tabSnap[next];
+    if (s && s.candles.length) {
+      symbol.value = next;
+      applySnap(s);
+      renderAndKeepStrat();
+    } else {
+      symbol.value = next;
+      invalidateStrat();
+      bindTicker();
+      load(true);
+    }
+  }
+}
+
 /** 右侧留空填充量：用于自由往右拖拽（最新值拖到中间、右边留空） */
 function rightPadFor(len: number): number {
   return Math.max(20, Math.ceil(len * 0.6));
@@ -1038,6 +1155,7 @@ async function load(resetZoom = true) {
     render();
     // 数据整体变化（初始化/切换币种/市场/周期）：若已选策略则自动重算标注，保持信号状态
     if (stratSel.value) applyStrategy();
+    tabSnap[activeTab.value] = snapActive(); // 数据就绪后更新当前 tab 快照
   } catch (e) {
     ElMessage.error('行情加载失败：' + (e instanceof Error ? e.message : String(e)));
   } finally {
@@ -1200,6 +1318,7 @@ async function refreshLatest() {
     const last = cs[cs.length - 1]!;
     lastPrice.value = last.close;
     // 顶栏/行情页统一的 24h 涨跌幅由共享 WS 推送驱动（bindTicker），此处不再按 K 线覆盖
+    tabSnap[activeTab.value] = snapActive(); // 增量数据后更新当前 tab 快照
   } catch {
     /* 自动刷新失败静默，等待下次 */
   } finally {
@@ -1784,6 +1903,10 @@ function onZoom() {
   userAdjusted = true; // 用户手动拖拽/缩放：自动刷新不再跟随最新 K 线
   zoomStart = s;
   zoomEnd = e;
+  if (tabSnap[activeTab.value]) {
+    tabSnap[activeTab.value].zoomStart = s;
+    tabSnap[activeTab.value].zoomEnd = e;
+  }
   if (!candles.value.length) return;
   const cs = candles.value;
   const RIGHT_PAD = rightPadFor(cs.length);
@@ -2073,6 +2196,16 @@ onBeforeUnmount(() => {
 .ip-link { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(64,158,255,0.08); border: 1px solid rgba(64,158,255,0.35); border-radius: 5px; margin-top: 6px; }
 .ip-link-t { color: #409eff; font-weight: 600; margin-right: 2px; }
 .ip-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+
+/* 多行情 tab 栏：浏览器式标签，当前 tab 高亮，可关闭；＋ 下拉新开 */
+.mk-tabs { display: flex; align-items: center; gap: 6px; padding: 6px 14px 0; flex-wrap: wrap; }
+.mk-tab { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid var(--border); border-bottom: none; border-radius: 6px 6px 0 0; font-size: 12px; font-family: var(--mono); color: var(--text-dim); cursor: pointer; background: rgba(255,255,255,0.02); user-select: none; }
+.mk-tab:hover { color: var(--aw-text-body); background: rgba(255,255,255,0.05); }
+.mk-tab.on { color: #fff; background: rgba(64,158,255,0.14); border-color: var(--accent); }
+.mk-name { font-weight: 600; letter-spacing: 0.3px; }
+.mk-x { font-size: 12px; line-height: 1; color: var(--text-dim); border-radius: 3px; padding: 0 2px; }
+.mk-x:hover { color: #f56c6c; background: rgba(245,108,108,0.18); }
+.mk-add { flex: none; }
 
 /* 图表 + 图例浮层 + 面板拖拽手柄 */
 .chart-wrap { position: relative; }
