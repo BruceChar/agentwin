@@ -58,15 +58,15 @@
           <span>返回</span>
         </button>
         <span class="bar-ver mono">v{{ appVersion }}</span>
-      </div>
-
-      <div class="bar-right">
-        <!-- 全站统一：BTCUSDT 实时价格（24h 涨跌幅） -->
+        <!-- 全站统一：BTCUSDT 实时价格（无边框文本，24h 涨跌幅） -->
         <div class="btc-chip" title="BTCUSDT 现货 · 24h 涨跌幅">
           <span class="btc-sym">BTCUSDT</span>
           <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
           <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
         </div>
+      </div>
+
+      <div class="bar-right">
         <!-- 代理/直连：点击直接切换（直连 / 走代理），小绿点 + 现货行情延迟（<100ms 绿 / <1s 橙 / 以上红） -->
         <el-dropdown trigger="click" @command="onProxyCommand">
           <button class="conn-chip" :class="connCls" :title="connTitle">
@@ -455,12 +455,8 @@ button.nav-item { background: none; border: none; cursor: pointer; font: inherit
 
 
 
-/* ---------- 底部 bar BTC 实时价格 ---------- */
-.btc-chip {
-  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px;
-  background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 8px;
-  font-size: 12px;
-}
+/* ---------- 底部 bar BTC 实时价格（无边框文本，位于 bar 左侧） ---------- */
+.btc-chip { display: flex; align-items: baseline; gap: 7px; padding-left: 10px; }
 .btc-sym { color: var(--aw-text-dim); font-size: 11px; font-weight: 600; }
 .btc-px { font-size: 13px; font-weight: 700; }
 .btc-chg { font-size: 11px; }

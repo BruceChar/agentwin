@@ -38,9 +38,6 @@
         <el-select :model-value="activeTab" size="small" style="width: 118px" @change="addTab" title="选择品种（已开的切换，未开的开新行情窗口）">
           <el-option v-for="s in symbols" :key="s" :value="s" :label="s" />
         </el-select>
-        <el-select :model-value="market" size="small" style="width: 118px" @change="onMarket">
-          <el-option v-for="m in marketOptions" :key="m.value" :value="m.value" :label="m.label" />
-        </el-select>
         <span v-if="lastPrice != null" class="tv-px mono" :class="lastUp ? 'up' : 'down'">{{ fmtPrice(lastPrice) }}</span>
         <span class="tv-chg mono" :class="lastUp ? 'up' : 'down'">{{ lastChangePct }}</span>
       </div>
@@ -366,10 +363,6 @@ function searchSymbols(q: string) {
   if (hit.length > 0) searchResults.value = hit;
   else searchResults.value = allSymbols.value.filter((s) => s.symbol.replace(/USDT|BUSD|FDUSD|BTC|ETH$/, '') === query || s.symbol.startsWith(query)).slice(0, 50);
 }
-const marketOptions = [
-  { value: 'SPOT', label: '现货' },
-  { value: 'USDT_M', label: 'U本位合约' },
-];
 /** 全部周期（含前端聚合的 2w）；默认只展示最常用的 4 个，其余进“更多”下拉 */
 const ALL_INTERVALS = [
   { value: '1m', label: '1分钟', short: '1m' }, { value: '3m', label: '3分钟', short: '3m' }, { value: '5m', label: '5分钟', short: '5m' },
@@ -864,7 +857,6 @@ function bindTicker() {
 }
 
 function onSymbol(v: string) { symbol.value = v; invalidateStrat(); load(true); bindTicker(); }
-function onMarket(v: string) { market.value = v; invalidateStrat(); load(true); bindTicker(); }
 /** 舆情入口：行情页右上角 icon，进入独立舆情页并携带当前行情币种（舆情页按 symbol 联动） */
 function onSentiment() {
   router.push({ path: '/sentiment', query: { symbol: activeTab.value } });
@@ -2235,13 +2227,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .tv-card :deep(.el-card__body) { padding: 0; display: flex; flex-direction: column; flex: 1; min-height: 0; }
-/* 行情图表左右占满内容区：抵消 .content 的 20px 左右内边距，不留白、不设 margin */
+/* 行情图表铺满内容区：上下左右抵消 .content 的 16px/20px 内边距，不留黑边、不设 margin */
 .tv-card.fullbleed {
-  margin-left: -20px;
-  margin-right: -20px;
+  margin: -16px -20px;
   border-radius: 0 !important; /* 覆盖全局 .el-card 圆角 */
   border-left: none;
   border-right: none;
+  border-top: none;
+  border-bottom: none;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -2321,11 +2314,18 @@ onBeforeUnmount(() => {
 .ip-link-t { color: #409eff; font-weight: 600; margin-right: 2px; }
 .ip-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
 
-/* 多行情 tab 栏：浏览器式标签，当前 tab 高亮，可关闭；＋ 下拉新开 */
-.mk-tabs { display: flex; align-items: center; gap: 6px; padding: 6px 14px 0; flex-wrap: wrap; }
-.mk-tab { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 1px solid var(--border); border-bottom: none; border-radius: 6px 6px 0 0; font-size: 12px; font-family: var(--mono); color: var(--text-dim); cursor: pointer; background: rgba(255,255,255,0.02); user-select: none; }
-.mk-tab:hover { color: var(--aw-text-body); background: rgba(255,255,255,0.05); }
-.mk-tab.on { color: #fff; background: rgba(64,158,255,0.14); border-color: var(--accent); }
+/* 多行情 tab 栏：无圆角方框，tab 间竖线分隔；当前 tab 下划线高亮，可关闭；＋ 下拉新开 */
+.mk-tabs { display: flex; align-items: center; padding: 0 14px; flex-wrap: wrap; }
+.mk-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 7px 12px; border: none; border-radius: 0;
+  font-size: 12px; font-family: var(--mono); color: var(--text-dim);
+  cursor: pointer; background: none; user-select: none;
+  border-bottom: 2px solid transparent;
+}
+.mk-tab + .mk-tab { border-left: 1px solid var(--border); }
+.mk-tab:hover { color: var(--aw-text-body); background: rgba(255,255,255,0.04); }
+.mk-tab.on { color: #fff; border-bottom-color: var(--accent); background: rgba(64,158,255,0.10); }
 .mk-name { font-weight: 600; letter-spacing: 0.3px; }
 .mk-x { font-size: 12px; line-height: 1; color: var(--text-dim); border-radius: 3px; padding: 0 2px; }
 .mk-x:hover { color: #f56c6c; background: rgba(245,108,108,0.18); }
