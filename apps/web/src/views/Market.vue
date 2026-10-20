@@ -1097,7 +1097,7 @@ function applySnap(s: TabSnap) {
   panelH.vol = s.panelH.vol;
   panelH.macd = s.panelH.macd;
   panelH.rsi = s.panelH.rsi;
-  dbg('applySnap z=' + s.zoomStart.toFixed(1) + '/' + s.zoomEnd.toFixed(1) + ' len=' + s.candles.length);
+  if (showDbg.value) dbg('applySnap z=' + s.zoomStart.toFixed(1) + '/' + s.zoomEnd.toFixed(1) + ' len=' + s.candles.length);
 }
 /** 渲染当前视图（chart 已存在时）并保持策略标注一致 */
 function renderAndKeepStrat() {
@@ -1254,7 +1254,7 @@ async function load(resetZoom = true) {
       const fromIdx = Math.max(0, Math.round(lastIdx - (2 / 3) * W));
       const toIdx = Math.min(L + rightPadFor(L), Math.round(fromIdx + W));
       anchorZoom(fromIdx, toIdx);
-      dbg('load defaultView from=' + fromIdx + ' to=' + toIdx + ' W=' + W);
+      if (showDbg.value) dbg('load defaultView from=' + fromIdx + ' to=' + toIdx + ' W=' + W);
     }
     const cs = candles.value;
     if (cs.length) {
@@ -1265,7 +1265,7 @@ async function load(resetZoom = true) {
       lastChangePct.value = prev > 0 ? ((last.close - prev) / prev) * 100 >= 0 ? '+' + (((last.close - prev) / prev) * 100).toFixed(2) + '%' : (((last.close - prev) / prev) * 100).toFixed(2) + '%' : '';
     }
     render();
-    dbg('postRender z=' + zoomStart.toFixed(2) + '/' + zoomEnd.toFixed(2));
+    if (showDbg.value) dbg('postRender z=' + zoomStart.toFixed(2) + '/' + zoomEnd.toFixed(2));
     // 数据整体变化（初始化/切换币种/市场/周期）：若已选策略则自动重算标注，保持信号状态
     if (stratSel.value) applyStrategy(false);
     tabSnap[activeTab.value] = snapActive(); // 数据就绪后更新当前 tab 快照
@@ -1301,7 +1301,7 @@ async function load(resetZoom = true) {
 let refreshingLatest = false; // 防重入：上一次刷新还在请求中则跳过本次（1s 高频下避免重叠/竞态）
 async function refreshLatest() {
   // 切换品种/周期/tab 的异步加载进行中：跳过增量刷新，避免用新 symbol 的数据与旧数据合并产生竞态
-  dbg('tickStart z=' + zoomStart.toFixed(2) + ' uA=' + userAdjusted);
+  if (showDbg.value) dbg('tickStart z=' + zoomStart.toFixed(2) + ' uA=' + userAdjusted);
   if (loading.value) return;
   if (refreshingLatest) return;
   if (!chart || !candles.value.length) return load();
@@ -1356,14 +1356,14 @@ async function refreshLatest() {
       const newToPadded = Math.min(newPadded, Math.max(newFrom + 1, oldToPadded));
       zoomStart = (newFrom / newPadded) * 100;
       zoomEnd = (newToPadded / newPadded) * 100;
-      dbg('refresh(uA) z=' + zoomStart.toFixed(1) + '/' + zoomEnd.toFixed(1) + ' len=' + cs.length + ' oldFrom=' + oldFrom);
+      if (showDbg.value) dbg('refresh(uA) z=' + zoomStart.toFixed(1) + '/' + zoomEnd.toFixed(1) + ' len=' + cs.length + ' oldFrom=' + oldFrom);
     } else {
       // 默认视图跟随：保持「最新 K 线距窗口左侧的偏移」，窗口宽度（padded 空间）不变，
       // 右端允许落在右侧填充区——默认最新 K 线位于窗口约 2/3 处（不贴右缘），刷新时保持该结构
       const nf = Math.max(0, cs.length - 1 - leftOff);
       const oldWin = Math.max(1, oldToPadded - oldFrom);
       const nt = Math.min(cs.length + rightPadFor(cs.length), Math.max(nf + 1, nf + oldWin));
-      dbg('refresh(follow) preZoom=' + zoomStart.toFixed(2) + ' uA=' + userAdjusted + ' leftOff=' + leftOff + ' rightOff=' + rightOff + ' nf=' + nf + ' nt=' + nt + ' len=' + cs.length + ' W=' + oldWin);
+      if (showDbg.value) dbg('refresh(follow) preZoom=' + zoomStart.toFixed(2) + ' uA=' + userAdjusted + ' leftOff=' + leftOff + ' rightOff=' + rightOff + ' nf=' + nf + ' nt=' + nt + ' len=' + cs.length + ' W=' + oldWin);
       if (nf < cs.length && nt > nf + 1) {
         anchorZoom(nf, nt);
       }
@@ -2001,7 +2001,7 @@ function anchorZoom(fromIdx: number, toIdx: number) {
   const paddedLen = candles.value.length + rightPadFor(candles.value.length);
   zoomStart = Math.max(0, Math.min(100, (fromIdx / paddedLen) * 100));
   zoomEnd = Math.max(zoomStart + 1e-3, Math.min(100, (toIdx / paddedLen) * 100));
-  dbg('anchor[' + fromIdx + ',' + toIdx + '] z=' + zoomStart.toFixed(1) + '/' + zoomEnd.toFixed(1) + ' len=' + candles.value.length);
+  if (showDbg.value) dbg('anchor[' + fromIdx + ',' + toIdx + '] z=' + zoomStart.toFixed(1) + '/' + zoomEnd.toFixed(1) + ' len=' + candles.value.length);
 }
 
 /** 加载更早一页历史（endTime 取当前最旧 K 线之前），追加后保持当前可见窗口不变 */
@@ -2058,12 +2058,12 @@ function onZoom() {
   const s = arr[0]?.start;
   const e = arr[0]?.end;
   if (s == null || e == null) return;
-  dbg('onZoomREAD s=' + s.toFixed(3) + ' e=' + e.toFixed(3) + ' suppress=' + suppressZoomEvent);
+  if (showDbg.value) dbg('onZoomREAD s=' + s.toFixed(3) + ' e=' + e.toFixed(3) + ' suppress=' + suppressZoomEvent);
   if (suppressZoomEvent) return; // setOption 引发的 datazoom 事件：不回写 zoom
   userAdjusted = true; // 用户手动拖拽/缩放：自动刷新不再跟随最新 K 线
   zoomStart = s;
   zoomEnd = e;
-  dbg('onZoomWRITE z=' + s.toFixed(1) + '/' + e.toFixed(1));
+  if (showDbg.value) dbg('onZoomWRITE z=' + s.toFixed(1) + '/' + e.toFixed(1));
   if (tabSnap[activeTab.value]) {
     tabSnap[activeTab.value].zoomStart = s;
     tabSnap[activeTab.value].zoomEnd = e;
