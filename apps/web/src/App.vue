@@ -382,10 +382,10 @@ onBeforeUnmount(() => {
 }
 .bar-left { display: flex; align-items: center; gap: 4px; }
 .bar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-.bar-ver { font-size: 11px; color: var(--aw-text-disabled); opacity: 0.8; padding-left: 4px; }
+.bar-ver { font-size: 11px; color: var(--aw-text-disabled); opacity: 0.8; min-width: 40px; }
 .bar-item {
-  display: inline-flex; align-items: center; gap: 7px;
-  height: 30px; padding: 0 12px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 30px; min-width: 56px; padding: 0 8px; border-radius: 8px;
   border: 1px solid transparent; background: transparent;
   color: var(--aw-text-dim); font-size: 13px; text-decoration: none; cursor: pointer;
   transition: all var(--aw-dur-fast) var(--aw-ease);
@@ -472,8 +472,9 @@ button.nav-item { background: none; border: none; cursor: pointer; font: inherit
 
 
 
-/* 底部 bar：BTC 实时价格（无边框文本，margin 侧边栏宽度，视觉上从侧边栏右缘开始） */
-.btc-chip { display: flex; align-items: baseline; gap: 7px; margin-left: var(--aw-sidebar-w); }
+/* 底部 bar：BTC 实时价格（无边框文本）。bar-left 左侧依次为 设置(56) gap(4) 版本(40) gap(4)，
+ * 左侧容器 padding-left 14px；减去这些占位后，价格左缘正好落在侧边栏右框线（--aw-sidebar-w）上 */
+.btc-chip { display: flex; align-items: baseline; gap: 7px; margin-left: calc(var(--aw-sidebar-w) - 14px - 56px - 4px - 40px - 4px); }
 .btc-sym { color: var(--aw-text-dim); font-size: 11px; font-weight: 600; }
 .btc-px { font-size: 13px; font-weight: 700; }
 .btc-chg { font-size: 11px; }
