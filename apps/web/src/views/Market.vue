@@ -290,7 +290,8 @@
       <span class="dim">收</span><span :class="status.cls">{{ status.close }}</span>
       <span class="dim">涨跌</span><span :class="status.cls">{{ status.change }} · {{ status.changePct }}</span>
       <span class="dim">量</span><span>{{ status.volume }}</span>
-      <span v-if="dbgZoom" class="dim" style="margin-left:12px;color:#f0a35e">DBG</span><span v-if="dbgZoom" style="color:#f0a35e;font-size:11px">{{ dbgZoom }}</span>
+      <span class="dim" style="margin-left:12px"><button class="dbg-toggle" :class="{ on: showDbg }" @click="showDbg = !showDbg">DBG</button></span>
+      <span v-if="showDbg" class="dbg-panel mono">{{ dbgZoom }}</span>
     </div>
   </el-card>
 </template>
@@ -1032,9 +1033,11 @@ let lastGridIdx: Record<string, number> = {};
 const chartH = ref(660);
 const panelH = reactive<{ vol: number; macd: number; rsi: number }>({ vol: 86, macd: 86, rsi: 86 });
 const dragHandles = ref<{ top: number }[]>([]);
-// 临时调试：追踪 zoomStart/zoomEnd 的最后设置来源（验证后移除）
+// 临时调试：追踪 zoomStart/zoomEnd 的最后设置来源（DBG 开关默认关闭；仅调试时打开）
+const showDbg = ref(false);
 const dbgZoom = ref('');
 function dbg(msg: string) {
+  if (!showDbg.value) return;
   const t = new Date().toISOString().slice(11, 19);
   dbgZoom.value = (t + ' ' + msg + '\n' + dbgZoom.value).slice(0, 3000);
 }
@@ -1243,10 +1246,15 @@ async function load(resetZoom = true) {
     yPan = 0;
     userAdjusted = false; // 重新加载 → 回到默认视图（跟随最新 K 线）
     if (resetZoom && candles.value.length) {
-      // 默认视图：最近 limit 根可见，左侧预热数据隐藏（用于 MA/EMA 左侧值），右侧留空可自由平移
-      const warmup = Math.max(0, candles.value.length - limit.value);
-      anchorZoom(warmup, candles.value.length);
-      dbg('load warmup=' + warmup + ' limit=' + limit.value);
+      // 默认视图：最新 K 线位于可视窗口约 2/3 处（左侧 2/3 历史、右侧 1/3 留空），
+      // 视觉上最新价格不贴右缘；窗口宽度保持 ~limit 根，新建 tab 同样适用
+      const L = candles.value.length;
+      const W = Math.min(limit.value, Math.max(32, L - 2));
+      const lastIdx = L - 1;
+      const fromIdx = Math.max(0, Math.round(lastIdx - (2 / 3) * W));
+      const toIdx = Math.min(L + rightPadFor(L), Math.round(fromIdx + W));
+      anchorZoom(fromIdx, toIdx);
+      dbg('load defaultView from=' + fromIdx + ' to=' + toIdx + ' W=' + W);
     }
     const cs = candles.value;
     if (cs.length) {
@@ -1350,9 +1358,12 @@ async function refreshLatest() {
       zoomEnd = (newToPadded / newPadded) * 100;
       dbg('refresh(uA) z=' + zoomStart.toFixed(1) + '/' + zoomEnd.toFixed(1) + ' len=' + cs.length + ' oldFrom=' + oldFrom);
     } else {
+      // 默认视图跟随：保持「最新 K 线距窗口左侧的偏移」，窗口宽度（padded 空间）不变，
+      // 右端允许落在右侧填充区——默认最新 K 线位于窗口约 2/3 处（不贴右缘），刷新时保持该结构
       const nf = Math.max(0, cs.length - 1 - leftOff);
-      const nt = Math.min(cs.length, cs.length - rightOff);
-      dbg('refresh(follow) preZoom=' + zoomStart.toFixed(2) + ' uA=' + userAdjusted + ' leftOff=' + leftOff + ' rightOff=' + rightOff + ' nf=' + nf + ' nt=' + nt + ' len=' + cs.length);
+      const oldWin = Math.max(1, oldToPadded - oldFrom);
+      const nt = Math.min(cs.length + rightPadFor(cs.length), Math.max(nf + 1, nf + oldWin));
+      dbg('refresh(follow) preZoom=' + zoomStart.toFixed(2) + ' uA=' + userAdjusted + ' leftOff=' + leftOff + ' rightOff=' + rightOff + ' nf=' + nf + ' nt=' + nt + ' len=' + cs.length + ' W=' + oldWin);
       if (nf < cs.length && nt > nf + 1) {
         anchorZoom(nf, nt);
       }
@@ -2455,4 +2466,8 @@ onBeforeUnmount(() => {
 
 /* TradingView 风格状态栏 */
 .tv-status { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); font-size: 11px; flex-wrap: wrap; }
+.dbg-toggle { background: transparent; border: 1px solid rgba(128,140,155,0.35); color: #8a94a3; font-size: 10px; padding: 1px 7px; border-radius: 3px; cursor: pointer; line-height: 1.5; }
+.dbg-toggle:hover { border-color: #f0a35e; color: #f0a35e; }
+.dbg-toggle.on { color: #f0a35e; border-color: #f0a35e; }
+.dbg-panel { flex: 1 1 100%; margin-top: 2px; color: #f0a35e; font-size: 11px; max-height: 140px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
 </style>
