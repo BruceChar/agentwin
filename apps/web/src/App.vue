@@ -23,6 +23,13 @@
             <span v-if="badgeOf(item) > 0" class="nav-badge">{{ badgeOf(item) }}</span>
           </router-link>
         </nav>
+
+        <!-- 侧边栏底部右侧：BTCUSDT 实时价格（无边框文本，24h 涨跌幅） -->
+        <div class="side-btc" title="BTCUSDT 现货 · 24h 涨跌幅">
+          <span class="btc-sym">BTCUSDT</span>
+          <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
+          <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
+        </div>
       </aside>
 
       <!-- 右侧弹性内容区（主页面顶部不再显示菜单 title，侧边栏即为导航） -->
@@ -58,11 +65,10 @@
           <span>返回</span>
         </button>
         <span class="bar-ver mono">v{{ appVersion }}</span>
-        <!-- 全站统一：BTCUSDT 实时价格（无边框文本，24h 涨跌幅） -->
-        <div class="btc-chip" title="BTCUSDT 现货 · 24h 涨跌幅">
-          <span class="btc-sym">BTCUSDT</span>
-          <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
-          <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
+        <!-- 已生效启动的策略（运行中，来自 /strategy-runtime） -->
+        <div v-if="activeRuntimes.length" class="bar-strategies" title="已生效启动的策略">
+          <span class="bs-badge">策略 {{ activeRuntimes.length }}</span>
+          <span v-for="r in activeRuntimes" :key="r.id" class="bs-item">{{ stratLabel(r) }}</span>
         </div>
       </div>
 
@@ -142,6 +148,13 @@ const chatVisible = ref(false);
 
 /** 应用版本（底部 bar 展示，来自 /health） */
 const appVersion = ref('');
+/** 已生效启动的策略（运行中，来自 /strategy-runtime；底部 bar 展示） */
+interface RuntimeLite { id: string; running: boolean; strategyId: string; symbol: string; interval: string }
+const activeRuntimes = ref<RuntimeLite[]>([]);
+function stratLabel(r: RuntimeLite): string {
+  const name = r.strategyId?.includes('-') ? r.strategyId.split('-')[0] : (r.strategyId || '策略');
+  return name + ' ' + r.symbol + ' ' + (r.interval || '');
+}
 /** 现货行情联通性延迟（ms，以 data-api.binance.vision 为准）；null = 检测中/不可达 */
 const latencyMs = ref<number | null>(null);
 /** 当前代理模式（直连 off / 代理 on / 自动 auto） */
@@ -244,11 +257,13 @@ async function refreshStatus() {
   try {
     const h = await api.get<{ ok?: boolean; version?: string }>('/health').catch(() => null);
     if (h?.version) appVersion.value = h.version;
-    const [st, ps, lat] = await Promise.all([
+    const [st, ps, lat, rt] = await Promise.all([
       api.get<BinanceStatusLite>('/binance/status').catch(() => null),
       api.get<ProxyStatusLite>('/binance/proxy-status').catch(() => null),
       api.get<LatencyLite>('/market/latency').catch(() => null),
+      api.get<{ runtimes?: RuntimeLite[] }>('/strategy-runtime').catch(() => null),
     ]);
+    activeRuntimes.value = (rt?.runtimes ?? []).filter((r) => r.running);
     // 代理模式与现货行情延迟（底部 bar 展示，以现货行情联通性为准）
     proxyMode.value = (st?.proxy?.mode as 'off' | 'on' | 'auto' | null) ?? proxyMode.value;
     if (st?.proxy?.url) proxyUrl.value = st.proxy.url;
@@ -356,6 +371,12 @@ onBeforeUnmount(() => {
   font-size: 13px; border-left: 3px solid transparent; position: relative;
   transition: all var(--aw-dur-fast) var(--aw-ease);
 }
+/* 侧边栏底部右侧：BTC 实时价格（无边框文本，右对齐） */
+.side-btc {
+  border-top: 1px solid var(--aw-border);
+  display: flex; align-items: baseline; justify-content: flex-end; gap: 6px;
+  padding: 10px 14px; font-size: 11px; white-space: nowrap; overflow: hidden;
+}
 
 /* ---------- 底部贯穿 bar ---------- */
 .bottom-bar {
@@ -455,11 +476,23 @@ button.nav-item { background: none; border: none; cursor: pointer; font: inherit
 
 
 
-/* ---------- 底部 bar BTC 实时价格（无边框文本，位于 bar 左侧） ---------- */
-.btc-chip { display: flex; align-items: baseline; gap: 7px; padding-left: 10px; }
+/* ---------- 底部 bar BTC 实时价格（已移至侧边栏底部，此处仅保留颜色类） ---------- */
 .btc-sym { color: var(--aw-text-dim); font-size: 11px; font-weight: 600; }
 .btc-px { font-size: 13px; font-weight: 700; }
 .btc-chg { font-size: 11px; }
+
+/* ---------- 底部 bar：已生效启动的策略 ---------- */
+.bar-strategies {
+  display: flex; align-items: center; gap: 8px;
+  margin-left: 16px; padding-left: 16px; border-left: 1px solid var(--aw-border);
+  font-size: 12px; color: var(--aw-text-dim); overflow: hidden; white-space: nowrap;
+}
+.bs-badge {
+  flex: none; padding: 2px 8px; border-radius: 10px; font-size: 11px;
+  background: rgba(16, 185, 129, 0.14); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35);
+}
+.bs-item { font-family: var(--aw-mono); font-size: 11px; }
+.bs-item + .bs-item::before { content: '·'; margin-right: 8px; color: var(--aw-text-disabled); }
 
 /* ---------- 全局 AI 聊天浮窗（右下角） ---------- */
 .ai-chat-panel {
