@@ -1016,6 +1016,13 @@ let mainGridH = 300;
 let yPan = 0;                          // 价格轴上下平移量（相对可见区间基准范围）
 let yDrag: { startY: number; startPan: number } | null = null;
 let yPanRaf = 0;
+let pointerDown = false;               // 图表上是否处于按下状态（cursor 由捕获阶段 mousemove 统一控制）
+function chartCursor(c: string) {
+  try {
+    const canvas = chartEl.value?.querySelector('canvas');
+    if (canvas) (canvas as HTMLElement).style.cursor = c;
+  } catch { /* 图表未初始化时忽略 */ }
+}
 let baseCandles: CandleView[] = [];    // 基础周期连续 K 线（历史页向左追加，含左侧预热数据）
 let loadingHistory = false;            // 历史页加载中（防重入）
 let reachedStart = false;              // 已到数据起点（无法再往前翻）
@@ -1582,6 +1589,8 @@ function render() {
     chartEl.value.addEventListener('mousedown', onYDown);
     chartEl.value.addEventListener('mousemove', onYMove, true);
     chartEl.value.addEventListener('mouseup', onYUp, true);
+    // 松开可能发生在图表外（拖出 canvas 边界释放）：全局兜底清除拖拽状态，防止 yDrag 残留导致"没按也能拖"
+    window.addEventListener('mouseup', onYUp);
     chartEl.value.addEventListener('dblclick', () => {
       yPan = 0; // 双击重置价格轴平移
       render();
@@ -1910,8 +1919,8 @@ function render() {
       xAxis: xAxes,
       yAxis: yAxes,
       dataZoom: [
-        // 仅内置缩放（滚轮/拖拽），不显示底部缩放条
-        { type: 'inside', xAxisIndex: catAxisIdx, start: zoomStart, end: zoomEnd },
+        // 仅内置缩放（滚轮/拖拽），不显示底部缩放条；cursor:auto 让悬停保持箭头（按下时由图表 mousemove 改为小手）
+        { type: 'inside', xAxisIndex: catAxisIdx, start: zoomStart, end: zoomEnd, cursor: 'auto' },
       ],
       series,
     },
@@ -1974,9 +1983,18 @@ function applyYPan() {
 
 function onYDown(e: MouseEvent) {
   if (e.button !== 0) return;
+  pointerDown = true;
+  chartCursor('grabbing'); // 按住即小手（无论拖 K 线还是拖价格轴）
+  // 仅右侧价格轴区域启用垂直平移；主图按下完全交给 ECharts dataZoom 水平拖拽，
+  // 不抢占 mousemove（否则 yPan 的 setOption 会打断 dataZoom 拖拽手势，导致左拉卡顿）
+  const rect = chartEl.value?.getBoundingClientRect();
+  if (!rect) return;
+  const PRICE_AXIS_W = 72;
+  if (e.clientX < rect.left + rect.width - PRICE_AXIS_W) return;
   yDrag = { startY: e.clientY, startPan: yPan };
 }
 function onYMove(e: MouseEvent) {
+  chartCursor(pointerDown ? 'grabbing' : 'auto'); // 捕获阶段必然收到 mousemove：hover 箭头、按下拖拽小手
   if (!yDrag) return;
   const dy = e.clientY - yDrag.startY;
   if (Math.abs(dy) < 2) return; // 死区：忽略轻微抖动
@@ -1992,6 +2010,8 @@ function onYMove(e: MouseEvent) {
   });
 }
 function onYUp() {
+  pointerDown = false;
+  chartCursor('auto');
   yDrag = null;
 }
 
