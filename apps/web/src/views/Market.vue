@@ -2040,9 +2040,9 @@ function onYMove(e: MouseEvent) {
     const w = chartEl.value?.clientWidth ?? 0;
     if (!w) return;
     const span = Math.max(0.001, zoomEnd - zoomStart);
-    // 反转方向：往左拖（dx<0）→ start/end 减小 → 翻更早（到数据起点自动分页加载历史）；
-    // 往右拖 → 看更晚，到最新端为止
-    const deltaPct = (dx / w) * span;
+    // 标准跟手方向（与 TradingView 一致）：往右拖（dx>0）→ start/end 减小 → 翻更早历史（左缘自动分页）；
+    // 往左拖（dx<0）→ start/end 增大 → 看更晚，到最新端为止
+    const deltaPct = -(dx / w) * span;
     let ns = zoomStart + deltaPct;
     let ne = zoomEnd + deltaPct;
     if (ns < 0) { ne += -ns; ns = 0; }        // 左缘 clamp（保持窗口宽度）
@@ -2052,9 +2052,16 @@ function onYMove(e: MouseEvent) {
     if (hPanRaf) return;
     hPanRaf = requestAnimationFrame(() => {
       hPanRaf = 0;
+      // 同步状态（不依赖 onZoom 事件触发，保证自动刷新/重绘不跳回默认视图）
+      zoomStart = ns;
+      zoomEnd = ne;
+      userAdjusted = true;
       if (showDbg.value) dbg('hPan z=' + ns.toFixed(1) + '/' + ne.toFixed(1));
-      // 非 suppress 的 setOption：触发 onZoom → 回写 zoom + 重算价格轴 + 左缘到起点时自动分页
-      chart?.setOption({ dataZoom: [{ start: ns, end: ne }] });
+      chart?.setOption({ dataZoom: [{ start: ns, end: ne }] }); // 触发 onZoom → 重算价格轴/图例
+      // 分页兜底：左缘到达数据起点时加载更早历史（onZoom 若未触发，这里保证翻页；loadingHistory 防重）
+      if (ns <= 0 && !loadingHistory && !reachedStart && baseCandles.length) {
+        void loadOlderPage();
+      }
     });
   }
 }
