@@ -20,6 +20,7 @@
             :class="{ active: isActive(item) }"
           >
             <el-icon class="nav-ic"><component :is="item.icon" /></el-icon>
+            <span class="nav-label">{{ item.label }}</span>
             <span v-if="badgeOf(item) > 0" class="nav-badge">{{ badgeOf(item) }}</span>
           </router-link>
         </nav>
@@ -134,7 +135,7 @@ const navItems: NavItem[] = [
   { path: '/journal', label: '日志中心', icon: 'Notebook', badgeKey: 'journal' },
   { path: '/strategies', label: '策略中心', icon: 'SetUp', badgeKey: 'strategies' },
   { path: '/data', label: '行情', icon: 'DataLine' },
-  { path: '/sentiment', label: '舆情', icon: 'ChatDotRound' },
+  { path: '/sentiment', label: '舆情中心', icon: 'ChatDotRound' },
 ];
 
 const counts = ref<Record<string, number>>({ plan: 0, holding: 0, pending: 0, done: 0 });
@@ -365,8 +366,8 @@ onBeforeUnmount(() => {
 
 .side-nav { flex: 1; overflow-y: auto; padding: 4px 0; }
 .nav-item {
-  display: flex; align-items: center; justify-content: center; gap: 0;
-  padding: 8px 0; margin: 2px 10px; color: var(--aw-text-dim); text-decoration: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; margin: 2px 10px; color: var(--aw-text-dim); text-decoration: none;
   font-size: 13px; border-left: 3px solid transparent; position: relative;
   transition: all var(--aw-dur-fast) var(--aw-ease);
 }
@@ -424,7 +425,9 @@ button.nav-item { background: none; border: none; cursor: pointer; font: inherit
   background: rgba(6, 182, 212, 0.08);
   border-left-color: var(--aw-accent);
 }
-.nav-ic { font-size: 16px; }
+.nav-ic { font-size: 16px; flex: none; }
+.nav-label { font-size: 13px; line-height: 1; }
+.nav-item .nav-badge { margin-left: auto; }
 .nav-badge {
   min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
   background: var(--aw-todo); color: #1a1205; font-size: 11px; font-weight: 700;
