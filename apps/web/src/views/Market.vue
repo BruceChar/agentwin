@@ -27,7 +27,9 @@
         @change="addTab"
         @click.stop
       >
-        <el-option v-for="s in searchResults" :key="s" :value="s" :label="s" />
+        <el-option v-for="s in searchResults" :key="s.symbol" :value="s.symbol" :label="s.symbol">
+          <span class="sym-opt"><b>{{ s.symbol }}</b><i class="sym-mk">{{ marketLabel(s.markets) }}</i></span>
+        </el-option>
       </el-select>
     </div>
     <!-- TradingView 风格顶栏：品种 + 周期选择 + 指标菜单 -->
@@ -314,15 +316,35 @@ import {
 
 // ---------- 常量 ----------
 const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
-// 币安全量交易对（后端 /api/binance/symbols 现货+USDT-M 合约，含股票代币等），本地过滤搜索
-const allSymbols = ref<string[]>([]);
-const searchResults = ref<string[]>([]);
+// 币安全量交易对（后端 /api/binance/symbols 现货+USDT-M 合约，含股票代币等）：合并同 symbol 的多市场，本地过滤搜索
+interface SymMeta { symbol: string; markets: string[] }
+const allSymbols = ref<SymMeta[]>([]);
+const searchResults = ref<SymMeta[]>([]);
 const symLoading = ref(false);
+/** 市场徽标：SPOT→现货，USDT_M→合约 */
+function marketLabel(markets: string[]): string {
+  return markets.map((m) => (m === 'SPOT' ? '现货' : '合约')).join(' / ');
+}
+/** 新开 tab 的市场推导：当前市场有该交易对 → 保持当前选择；否则用该交易对首个可用市场（如 U 本位合约专属 → 自动切合约） */
+function marketFor(sym: string): string {
+  const meta = allSymbols.value.find((x) => x.symbol === sym);
+  if (!meta || !meta.markets.length) return market.value;
+  if (meta.markets.includes(market.value)) return market.value;
+  return meta.markets[0]!;
+}
 async function loadAllSymbols() {
   symLoading.value = true;
   try {
     const r = await binanceSymbols();
-    allSymbols.value = r.symbols.map((s) => s.symbol).sort((a, b) => a.localeCompare(b));
+    const map = new Map<string, string[]>();
+    for (const s of r.symbols) {
+      const arr = map.get(s.symbol) ?? [];
+      if (!arr.includes(s.market)) arr.push(s.market);
+      map.set(s.symbol, arr);
+    }
+    allSymbols.value = [...map.entries()]
+      .map(([symbol, markets]) => ({ symbol, markets }))
+      .sort((a, b) => a.symbol.localeCompare(b.symbol));
     searchResults.value = allSymbols.value.slice(0, 50);
   } catch { /* 代理/网络不可用时静默：搜索框保持可输入，结果为空提示 */ }
   finally { symLoading.value = false; }
@@ -334,10 +356,10 @@ function searchSymbols(q: string) {
     searchResults.value = allSymbols.value.slice(0, 50);
     return;
   }
-  const hit = allSymbols.value.filter((s) => s.includes(query)).slice(0, 50);
+  const hit = allSymbols.value.filter((s) => s.symbol.includes(query)).slice(0, 50);
   // 无精确命中时优先把 symbol 开头匹配的排前面（如输入 BTC → BTC 开头的交易对）
   if (hit.length > 0) searchResults.value = hit;
-  else searchResults.value = allSymbols.value.filter((s) => s.replace(/USDT|BUSD|FDUSD|BTC|ETH$/, '') === query || s.startsWith(query)).slice(0, 50);
+  else searchResults.value = allSymbols.value.filter((s) => s.symbol.replace(/USDT|BUSD|FDUSD|BTC|ETH$/, '') === query || s.symbol.startsWith(query)).slice(0, 50);
 }
 const marketOptions = [
   { value: 'SPOT', label: '现货' },
@@ -1011,9 +1033,11 @@ interface TabSnap {
   lastChangePct: string;
   panelH: { vol: number; macd: number; rsi: number };
 }
-const tabs = ref<{ symbol: string }[]>([{ symbol: 'BTCUSDT' }]);
+const tabs = ref<{ symbol: string; market: string }[]>([{ symbol: 'BTCUSDT', market: 'SPOT' }]);
 const activeTab = ref('BTCUSDT');
 const tabSnap: Record<string, TabSnap> = {};
+/** 新开 tab 前的上一个 tab（加载失败时回滚用） */
+const prevTabRef = ref<string | null>(null);
 
 function snapActive(): TabSnap {
   return {
@@ -1063,10 +1087,12 @@ function switchTab(sym: string) {
   const s = tabSnap[sym];
   if (s && s.candles.length) {
     symbol.value = sym;
-    applySnap(s);
+    applySnap(s); // 快照含该 tab 自己的 market/周期/面板，直接恢复
     renderAndKeepStrat();
   } else {
     symbol.value = sym;
+    const t = tabs.value.find((x) => x.symbol === sym);
+    if (t) market.value = t.market; // 首次打开：应用该 tab 自己的市场（合约专属交易对 → 自动切合约）
     invalidateStrat();
     bindTicker();
     load(true); // 首次打开：拉数据
@@ -1075,7 +1101,9 @@ function switchTab(sym: string) {
 function addTab(sym: string) {
   if (!sym) return;
   if (tabs.value.some((t) => t.symbol === sym)) { switchTab(sym); return; }
-  tabs.value.push({ symbol: sym });
+  prevTabRef.value = activeTab.value; // 记录来源 tab：新开加载失败时回滚
+  const m = marketFor(sym);           // 当前市场有该交易对 → 保持选择；否则自动用其可用市场（如 U 本位合约专属）
+  tabs.value.push({ symbol: sym, market: m });
   switchTab(sym);
 }
 function closeTab(sym: string) {
@@ -1202,8 +1230,25 @@ async function load(resetZoom = true) {
     // 数据整体变化（初始化/切换币种/市场/周期）：若已选策略则自动重算标注，保持信号状态
     if (stratSel.value) applyStrategy();
     tabSnap[activeTab.value] = snapActive(); // 数据就绪后更新当前 tab 快照
+    prevTabRef.value = null; // 新 tab 加载成功：清除回滚标记
   } catch (e) {
     ElMessage.error('行情加载失败：' + (e instanceof Error ? e.message : String(e)));
+    // 新开 tab 拉取失败：回滚该空 tab 并切回上一个 tab（避免残留错误/旧数据的行情窗口）
+    if (prevTabRef.value && !tabSnap[activeTab.value] && !candles.value.length) {
+      const prev = prevTabRef.value;
+      const failed = activeTab.value;
+      const idx = tabs.value.findIndex((t) => t.symbol === failed);
+      if (idx >= 0) tabs.value.splice(idx, 1);
+      delete tabSnap[failed];
+      prevTabRef.value = null;
+      if (tabs.value.some((t) => t.symbol === prev)) {
+        activeTab.value = prev;
+        symbol.value = prev;
+        const s = tabSnap[prev];
+        if (s && s.candles.length) { applySnap(s); renderAndKeepStrat(); }
+        else { invalidateStrat(); bindTicker(); load(true); }
+      }
+    }
   } finally {
     loading.value = false;
   }
@@ -2265,6 +2310,9 @@ onBeforeUnmount(() => {
 .mk-x { font-size: 12px; line-height: 1; color: var(--text-dim); border-radius: 3px; padding: 0 2px; }
 .mk-x:hover { color: #f56c6c; background: rgba(245,108,108,0.18); }
 .mk-add { flex: none; }
+.sym-opt { display: inline-flex; align-items: center; gap: 6px; }
+.sym-opt b { font-family: var(--mono); font-weight: 600; }
+.sym-mk { font-size: 11px; color: var(--text-dim, rgba(255,255,255,0.5)); font-style: normal; }
 
 /* 图表 + 图例浮层 + 面板拖拽手柄 */
 .chart-wrap { position: relative; flex: 1; min-height: 420px; }

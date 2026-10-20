@@ -57,7 +57,17 @@ export function restCandidatesFor(market: Market, opts: HostOptions = {}): strin
   ]);
 }
 
-/** 探测主机可用性（ping，4s 超时；要求 200 且响应为合法 JSON——202/空响应视为不可用） */
+/** 受限地区错误：连接成功（HTTP 200）但币安拒绝当前出口地区（Restricted Location）——区别于 DNS 污染/不可达 */
+export class RestrictedLocationError extends Error {
+  /** 同时可用于校验用途的静态标记 */
+  readonly restricted = true as const;
+  constructor(detail: string) {
+    super('币安限制当前代理出口地区（Restricted Location），请更换代理节点地区（如香港/新加坡/日本等）：' + detail);
+    this.name = 'RestrictedLocationError';
+  }
+}
+
+/** 探测主机可用性（ping，4s 超时；要求 200 且响应为合法 JSON——202/空响应视为不可用；受限地区响应会抛出受限错误而非返回 false） */
 export async function probeBase(base: string, market: Market, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis), dispatcher?: unknown): Promise<boolean> {
   try {
     const path = isSpotGroup(market) ? '/api/v3/ping' : market === 'USDT_M' ? '/fapi/v1/ping' : '/dapi/v1/ping';
@@ -67,15 +77,22 @@ export async function probeBase(base: string, market: Market, fetchImpl: typeof 
       const init: RequestInit = { signal: ctrl.signal };
       if (dispatcher) (init as Record<string, unknown>)['dispatcher'] = dispatcher;
       const res = await fetchImpl(base + path, init);
-      if (res.status !== 200) return false;
       const text = await res.text();
+      if (res.status !== 200) {
+        // 受限地区：币安返回 451（Unavailable For Legal Reasons）或 200+受限文本——抛受限错误，区别于 DNS 污染/不可达
+        if (res.status === 451 || /restricted location|Service unavailable from a restricted/i.test(text)) {
+          throw new RestrictedLocationError(text.slice(0, 160) || ('HTTP ' + res.status));
+        }
+        return false;
+      }
       if (!text.trim()) return false;
       JSON.parse(text); // ping 返回 {}，202/空/非 JSON 均视为不可用
       return true;
     } finally {
       clearTimeout(timer);
     }
-  } catch {
+  } catch (e) {
+    if (e instanceof RestrictedLocationError) throw e; // 受限地区错误向上传递，调用方可区分定位
     return false;
   }
 }

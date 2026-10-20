@@ -208,9 +208,16 @@ async function refreshStatus() {
         ? '直连模式，币安可达'
         : '直连模式，币安不可达（建议开启代理）：' + (st.message ?? '');
     } else if (!exit || exit.success === false) {
-      proxyCls.value = 'err';
-      proxyText.value = '代理异常';
-      proxyMsg.value = '代理连接异常：' + (exit?.error ?? '代理出口检测失败');
+      // 出口地区检测失败时，若币安探活明确返回受限地区（Restricted Location），仍归类为"代理受限"而非模糊的"代理异常"
+      if ((st.message ?? '').includes('Restricted Location')) {
+        proxyCls.value = 'warn';
+        proxyText.value = '代理受限';
+        proxyMsg.value = st.message ?? '代理出口被币安限制，请更换代理节点地区（如香港/新加坡/日本等）';
+      } else {
+        proxyCls.value = 'err';
+        proxyText.value = '代理异常';
+        proxyMsg.value = '代理连接异常：' + (exit?.error ?? '代理出口检测失败');
+      }
     } else if (st.reachable) {
       proxyCls.value = 'ok';
       proxyText.value = '代理已连接';
