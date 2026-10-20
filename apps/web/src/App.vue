@@ -16,32 +16,17 @@
             :key="item.path"
             :to="item.path"
             class="nav-item"
+            :title="item.label"
             :class="{ active: isActive(item) }"
           >
             <el-icon class="nav-ic"><component :is="item.icon" /></el-icon>
-            <span class="nav-label">{{ item.label }}</span>
             <span v-if="badgeOf(item) > 0" class="nav-badge">{{ badgeOf(item) }}</span>
           </router-link>
         </nav>
       </aside>
 
-      <!-- 右侧弹性内容区 -->
+      <!-- 右侧弹性内容区（主页面顶部不再显示菜单 title，侧边栏即为导航） -->
       <div class="main">
-        <!-- 数据中心页：隐藏顶栏（菜单名/价格 chip），行情 Tab 栏直接占据顶部，避免多层头部 -->
-        <header v-if="route.path !== '/data'" class="topbar">
-          <div class="crumb">
-            <b>{{ crumbTitle }}</b>
-          </div>
-          <div class="top-right">
-            <!-- 全站统一：BTCUSDT 实时价格（含设置页） -->
-            <div class="btc-chip" title="BTCUSDT 现货 · 24h 涨跌幅">
-              <span class="btc-sym">BTCUSDT</span>
-              <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
-              <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
-            </div>
-          </div>
-        </header>
-
         <main class="content">
           <router-view v-slot="{ Component }">
             <transition name="fade" mode="out-in">
@@ -55,7 +40,7 @@
       </div>
     </div>
 
-    <!-- 底部固定 bar（贯穿整个页面）：左侧入口 + 右下角 代理/直连切换（含现货行情延迟）+ AI -->
+    <!-- 底部固定 bar（贯穿整个页面）：版本 + 入口（左）；BTC 实时价格 + 代理/直连切换（含延迟）+ AI（右） -->
     <footer class="bottom-bar">
       <div class="bar-left">
         <!-- 设置（进入设置页后切换为「返回」） -->
@@ -72,9 +57,16 @@
           <el-icon class="nav-ic"><ArrowLeft /></el-icon>
           <span>返回</span>
         </button>
+        <span class="bar-ver mono">v{{ appVersion }}</span>
       </div>
 
       <div class="bar-right">
+        <!-- 全站统一：BTCUSDT 实时价格（24h 涨跌幅） -->
+        <div class="btc-chip" title="BTCUSDT 现货 · 24h 涨跌幅">
+          <span class="btc-sym">BTCUSDT</span>
+          <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
+          <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
+        </div>
         <!-- 代理/直连：点击直接切换（直连 / 走代理），小绿点 + 现货行情延迟（<100ms 绿 / <1s 橙 / 以上红） -->
         <el-dropdown trigger="click" @command="onProxyCommand">
           <button class="conn-chip" :class="connCls" :title="connTitle">
@@ -148,6 +140,8 @@ const proxyText = ref('检测中…');
 const proxyMsg = ref('');
 const chatVisible = ref(false);
 
+/** 应用版本（底部 bar 展示，来自 /health） */
+const appVersion = ref('');
 /** 现货行情联通性延迟（ms，以 data-api.binance.vision 为准）；null = 检测中/不可达 */
 const latencyMs = ref<number | null>(null);
 /** 当前代理模式（直连 off / 代理 on / 自动 auto） */
@@ -211,9 +205,7 @@ function isActive(item: NavItem): boolean {
   return route.path.startsWith(item.path);
 }
 
-const crumbTitle = computed(() => (route.meta.title as string) ?? '仪表盘');
-
-/** 顶栏 BTCUSDT 实时价格 */
+/** 底部 bar BTCUSDT 实时价格 */
 const btcUp = computed(() => btcChg.value >= 0);
 /** 顶栏价格：统一两位小数（与行情页 fmtPrice 一致） */
 function fmtBtc(v: number | null): string {
@@ -250,7 +242,8 @@ interface LatencyLite { ok?: boolean; latencyMs?: number | null; host?: string }
  */
 async function refreshStatus() {
   try {
-    await api.get<{ ok?: boolean }>('/health');
+    const h = await api.get<{ ok?: boolean; version?: string }>('/health').catch(() => null);
+    if (h?.version) appVersion.value = h.version;
     const [st, ps, lat] = await Promise.all([
       api.get<BinanceStatusLite>('/binance/status').catch(() => null),
       api.get<ProxyStatusLite>('/binance/proxy-status').catch(() => null),
@@ -358,8 +351,8 @@ onBeforeUnmount(() => {
 
 .side-nav { flex: 1; overflow-y: auto; padding: 4px 0; }
 .nav-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 16px; color: var(--aw-text-dim); text-decoration: none;
+  display: flex; align-items: center; justify-content: center; gap: 0;
+  padding: 8px 0; margin: 2px 10px; color: var(--aw-text-dim); text-decoration: none;
   font-size: 13px; border-left: 3px solid transparent; position: relative;
   transition: all var(--aw-dur-fast) var(--aw-ease);
 }
@@ -374,6 +367,7 @@ onBeforeUnmount(() => {
 }
 .bar-left { display: flex; align-items: center; gap: 4px; }
 .bar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.bar-ver { font-size: 11px; color: var(--aw-text-disabled); opacity: 0.8; padding-left: 4px; }
 .bar-item {
   display: inline-flex; align-items: center; gap: 7px;
   height: 30px; padding: 0 12px; border-radius: 8px;
@@ -417,24 +411,17 @@ button.nav-item { background: none; border: none; cursor: pointer; font: inherit
   border-left-color: var(--aw-accent);
 }
 .nav-ic { font-size: 16px; }
-.nav-label { flex: 1; }
 .nav-badge {
   min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
   background: var(--aw-todo); color: #1a1205; font-size: 11px; font-weight: 700;
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--aw-mono);
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
 }
 
 
 /* ---------- 主区 ---------- */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.topbar {
-  height: var(--aw-topbar-h); display: flex; align-items: center; gap: 14px;
-  padding: 0 20px; border-bottom: 1px solid var(--aw-border); background: var(--aw-bg);
-}
-.crumb { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.crumb b { color: var(--aw-text-title); font-weight: 600; }
-.top-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 /* 代理连接状态（文字 chip：直连/已连接/受限/异常） */
 .proxy-chip {
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
@@ -468,7 +455,7 @@ button.nav-item { background: none; border: none; cursor: pointer; font: inherit
 
 
 
-/* ---------- 顶栏 BTC 实时价格 ---------- */
+/* ---------- 底部 bar BTC 实时价格 ---------- */
 .btc-chip {
   display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px;
   background: var(--aw-bg-card); border: 1px solid var(--aw-border); border-radius: 8px;

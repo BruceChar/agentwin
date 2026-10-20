@@ -1,4 +1,5 @@
 import { promises as dns } from 'node:dns';
+import { readFileSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import type { Interval, Market, Candle, StrategyParamValue } from '@agentwin/shared';
 import { INTERVAL_MS } from '@agentwin/shared';
@@ -37,11 +38,21 @@ function str(v: unknown, dflt = ''): string {
 export function registerRoutes(app: FastifyInstance, services: AppServices, paper: PaperManager, runtime: StrategyRuntimeManager): void {
   const { storage, marketData, toolkit, llm, sentiment, rest, sync } = services;
 
+  // 应用版本（底部 bar 展示；与根 package.json 同步）
+  const APP_VERSION: string = (() => {
+    try {
+      return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
+    } catch {
+      return '0.1.0';
+    }
+  })();
+
   // ---------------- 健康检查 ----------------
   app.get('/api/health', async () => {
     const binance = await marketData.ping().catch((e: Error) => ({ ok: false, detail: e.message }));
     return {
       ok: true, time: Date.now(), storage: storage.engine,
+      version: APP_VERSION,
       paperRunning: paper.running,
       llmModel: llm.model,
       binance,
