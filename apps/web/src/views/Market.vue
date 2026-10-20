@@ -290,7 +290,7 @@
       <span class="dim">收</span><span :class="status.cls">{{ status.close }}</span>
       <span class="dim">涨跌</span><span :class="status.cls">{{ status.change }} · {{ status.changePct }}</span>
       <span class="dim">量</span><span>{{ status.volume }}</span>
-      <span class="dim" style="margin-left:12px"><button class="dbg-toggle" :class="{ on: showDbg }" @click="showDbg = !showDbg">DBG</button></span>
+      <span class="dim" style="margin-left:12px"><button type="button" class="dbg-toggle" :class="{ on: showDbg }" @click="showDbg = !showDbg">DBG</button></span>
       <span v-if="showDbg" class="dbg-panel mono">{{ dbgZoom }}</span>
     </div>
   </el-card>
@@ -2486,8 +2486,8 @@ onBeforeUnmount(() => {
 
 /* TradingView 风格状态栏 */
 .tv-status { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); font-size: 11px; flex-wrap: wrap; }
-.dbg-toggle { background: transparent; border: 1px solid rgba(128,140,155,0.35); color: #8a94a3; font-size: 10px; padding: 1px 7px; border-radius: 3px; cursor: pointer; line-height: 1.5; }
+.dbg-toggle { background: transparent; border: 1px solid rgba(128,140,155,0.35); color: #8a94a3; font-size: 10px; padding: 1px 7px; border-radius: 3px; cursor: pointer; line-height: 1.5; position: relative; z-index: 10; }
 .dbg-toggle:hover { border-color: #f0a35e; color: #f0a35e; }
 .dbg-toggle.on { color: #f0a35e; border-color: #f0a35e; }
-.dbg-panel { flex: 1 1 100%; margin-top: 2px; color: #f0a35e; font-size: 11px; max-height: 140px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
+.dbg-panel { flex: 1 1 100%; margin-top: 2px; color: #f0a35e; font-size: 11px; max-height: 140px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.5; pointer-events: none; }
 </style>
