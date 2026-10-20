@@ -50,6 +50,21 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
   });
 
   // ---------------- 行情 ----------------
+  // 现货行情联通性延迟：以现货 K 线主主机 data-api.binance.vision 为准（该主机永远直连，
+  // 无论代理开关如何都反映真实行情可达性）；<100ms 绿 / <1s 橙 / ≥1s 或失败红
+  app.get('/api/market/latency', async () => {
+    const host = 'data-api.binance.vision';
+    const url = 'https://' + host + '/api/v3/ping';
+    const t0 = performance.now();
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) return { ok: false, host, latencyMs: null };
+      return { ok: true, host, latencyMs: Math.round(performance.now() - t0) };
+    } catch {
+      return { ok: false, host, latencyMs: null };
+    }
+  });
+
   app.get('/api/market/symbols', async (req) => {
     const market = str((req.query as Body)['market'], 'SPOT') as Market;
     try {

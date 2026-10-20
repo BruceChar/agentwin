@@ -1,80 +1,105 @@
 <template>
   <div class="shell">
-    <!-- 左侧固定侧边栏 200px -->
-    <aside class="sidebar">
-      <div class="side-brand">
-        <span class="logo-dot"></span>
-        <span class="brand-name">AgentWin</span>
-        <span class="brand-sub">久赌必赢</span>
+    <!-- 主体行：侧边栏 + 内容区 -->
+    <div class="body-row">
+      <!-- 左侧固定侧边栏 200px -->
+      <aside class="sidebar">
+        <div class="side-brand">
+          <span class="logo-dot"></span>
+          <span class="brand-name">AgentWin</span>
+          <span class="brand-sub">久赌必赢</span>
+        </div>
+
+        <nav class="side-nav">
+          <router-link
+            v-for="item in navItems"
+            :key="item.path"
+            :to="item.path"
+            class="nav-item"
+            :class="{ active: isActive(item) }"
+          >
+            <el-icon class="nav-ic"><component :is="item.icon" /></el-icon>
+            <span class="nav-label">{{ item.label }}</span>
+            <span v-if="badgeOf(item) > 0" class="nav-badge">{{ badgeOf(item) }}</span>
+          </router-link>
+        </nav>
+      </aside>
+
+      <!-- 右侧弹性内容区 -->
+      <div class="main">
+        <!-- 数据中心页：隐藏顶栏（菜单名/价格 chip），行情 Tab 栏直接占据顶部，避免多层头部 -->
+        <header v-if="route.path !== '/data'" class="topbar">
+          <div class="crumb">
+            <b>{{ crumbTitle }}</b>
+          </div>
+          <div class="top-right">
+            <!-- 全站统一：BTCUSDT 实时价格（含设置页） -->
+            <div class="btc-chip" title="BTCUSDT 现货 · 24h 涨跌幅">
+              <span class="btc-sym">BTCUSDT</span>
+              <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
+              <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
+            </div>
+          </div>
+        </header>
+
+        <main class="content">
+          <router-view v-slot="{ Component }">
+            <transition name="fade" mode="out-in">
+              <!-- KeepAlive 缓存行情/舆情两页：行情↔舆情切换保留 K 线状态（缩放/拖拽/数据），避免重载 -->
+              <keep-alive :include="['DataCenter', 'Sentiment']">
+                <component :is="Component" />
+              </keep-alive>
+            </transition>
+          </router-view>
+        </main>
       </div>
+    </div>
 
-      <nav class="side-nav">
-        <router-link
-          v-for="item in navItems"
-          :key="item.path"
-          :to="item.path"
-          class="nav-item"
-          :class="{ active: isActive(item) }"
-        >
-          <el-icon class="nav-ic"><component :is="item.icon" /></el-icon>
-          <span class="nav-label">{{ item.label }}</span>
-          <span v-if="badgeOf(item) > 0" class="nav-badge">{{ badgeOf(item) }}</span>
-        </router-link>
-      </nav>
-
-      <!-- 底部固定：设置（进入设置页后切换为「返回」）+ 右侧连接状态（直连/已连接/受限/异常） -->
-      <div class="side-bottom">
+    <!-- 底部固定 bar（贯穿整个页面）：左侧入口 + 右下角 代理/直连切换（含现货行情延迟）+ AI -->
+    <footer class="bottom-bar">
+      <div class="bar-left">
+        <!-- 设置（进入设置页后切换为「返回」） -->
         <router-link
           v-if="route.path !== '/settings'"
           to="/settings"
-          class="nav-item settings-pin"
+          class="bar-item"
           :class="{ active: route.path === '/settings' }"
         >
           <el-icon class="nav-ic"><Setting /></el-icon>
-          <span class="nav-label">设置</span>
+          <span>设置</span>
         </router-link>
-        <button v-else class="nav-item settings-pin" @click="goBackFromSettings">
+        <button v-else class="bar-item" @click="goBackFromSettings">
           <el-icon class="nav-ic"><ArrowLeft /></el-icon>
-          <span class="nav-label">返回</span>
-        </button>
-        <!-- 代理连接状态：点击直达设置页修改代理/直连 -->
-        <button class="proxy-chip" :class="proxyCls" :title="proxyMsg" @click="$router.push('/settings')">
-          <span class="proxy-dot"></span>
-          <span class="proxy-text">{{ proxyText }}</span>
+          <span>返回</span>
         </button>
       </div>
-    </aside>
 
-    <!-- 右侧弹性内容区 -->
-    <div class="main">
-      <!-- 数据中心页：隐藏顶栏（菜单名/价格 chip），行情 Tab 栏直接占据顶部，避免多层头部 -->
-      <header v-if="route.path !== '/data'" class="topbar">
-        <div class="crumb">
-          <b>{{ crumbTitle }}</b>
-        </div>
-        <div class="top-right">
-          <!-- 全站统一：BTCUSDT 实时价格（含设置页） -->
-          <div class="btc-chip" title="BTCUSDT 现货 · 24h 涨跌幅">
-            <span class="btc-sym">BTCUSDT</span>
-            <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
-            <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
-          </div>
-        </div>
-      </header>
+      <div class="bar-right">
+        <!-- 代理/直连：点击直接切换（直连 / 走代理），小绿点 + 现货行情延迟（<100ms 绿 / <1s 橙 / 以上红） -->
+        <el-dropdown trigger="click" @command="onProxyCommand">
+          <button class="conn-chip" :class="connCls" :title="connTitle">
+            <span class="conn-dot"></span>
+            <span class="conn-lat mono">{{ latencyText }}</span>
+            <span class="conn-mode">{{ proxyModeText }}</span>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="off">直连（不走代理）</el-dropdown-item>
+              <el-dropdown-item command="on">走代理（{{ proxyUrl || '127.0.0.1:7890' }}）</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <!-- AI 策略顾问（随底部 bar，不再悬浮右下角） -->
+        <button
+          class="ai-bubble"
+          :class="{ open: chatVisible }"
+          :title="chatVisible ? '收起 AI 顾问' : '打开 AI 顾问'"
+          @click="chatVisible = !chatVisible"
+        >AI</button>
+      </div>
+    </footer>
 
-      <main class="content">
-        <router-view v-slot="{ Component }">
-          <transition name="fade" mode="out-in">
-            <!-- KeepAlive 缓存行情/舆情两页：行情↔舆情切换保留 K 线状态（缩放/拖拽/数据），避免重载 -->
-            <keep-alive :include="['DataCenter', 'Sentiment']">
-              <component :is="Component" />
-            </keep-alive>
-          </transition>
-        </router-view>
-      </main>
-    </div>
-
-    <!-- 全局 AI 聊天浮窗（右下角） -->
+    <!-- 全局 AI 聊天浮窗 -->
     <Transition name="chat-pop">
       <div v-if="chatVisible" class="ai-chat-panel">
         <div class="ai-chat-head">
@@ -84,12 +109,12 @@
         <div class="ai-chat-body"><AiChat /></div>
       </div>
     </Transition>
-    <button class="ai-bubble" :class="{ open: chatVisible }" :title="chatVisible ? '收起 AI 顾问' : '打开 AI 顾问'" @click="chatVisible = !chatVisible">AI</button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { ElMessage } from 'element-plus';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from './api.ts';
 import AiChat from './components/AiChat.vue';
@@ -122,6 +147,41 @@ const proxyCls = ref('');
 const proxyText = ref('检测中…');
 const proxyMsg = ref('');
 const chatVisible = ref(false);
+
+/** 现货行情联通性延迟（ms，以 data-api.binance.vision 为准）；null = 检测中/不可达 */
+const latencyMs = ref<number | null>(null);
+/** 当前代理模式（直连 off / 代理 on / 自动 auto） */
+const proxyMode = ref<'off' | 'on' | 'auto' | null>(null);
+const proxyUrl = ref('');
+
+/** 延迟文本：检测中显示 --，否则 xx ms */
+const latencyText = computed(() => (latencyMs.value == null ? '--' : latencyMs.value + 'ms'));
+/** 联通性颜色：<100ms 绿（ok）/ <1s 橙（warn）/ ≥1s 或失败红（err） */
+const connCls = computed(() => {
+  const ms = latencyMs.value;
+  if (ms == null) return 'err';
+  if (ms < 100) return 'ok';
+  if (ms < 1000) return 'warn';
+  return 'err';
+});
+/** 代理模式文本（下拉/展示用） */
+const proxyModeText = computed(() => (proxyMode.value === 'off' ? '直连' : proxyMode.value === 'on' ? '代理' : proxyMode.value === 'auto' ? '自动' : '检测中…'));
+const connTitle = computed(() => {
+  const lat = latencyMs.value == null ? '不可达/检测中' : '现货行情延迟 ' + latencyMs.value + 'ms';
+  return proxyModeText.value + ' · ' + lat + '（点击切换直连/代理）';
+});
+
+/** 点击底部连接 chip：直接切换代理模式（直连 / 走代理），切换后立即重新检测 */
+async function onProxyCommand(cmd: string) {
+  try {
+    const res = await api.post<{ enabled: boolean; mode: string; url?: string | null }>('/binance/proxy', { mode: cmd });
+    proxyMode.value = res.mode as 'off' | 'on' | 'auto';
+    proxyUrl.value = res.url ?? '';
+    refreshStatus();
+  } catch (e) {
+    ElMessage.error('切换失败：' + (e instanceof Error ? e.message : String(e)));
+  }
+}
 
 const btcPrice = ref<number | null>(null);
 const btcChg = ref(0);
@@ -176,9 +236,10 @@ async function refreshPrice() {
   } catch { /* 保留上一次价格 */ }
 }
 
-interface BinanceStatusLite { configured?: boolean; reachable?: boolean; message?: string; proxy?: { enabled?: boolean } }
+interface BinanceStatusLite { configured?: boolean; reachable?: boolean; message?: string; proxy?: { enabled?: boolean; mode?: string; url?: string | null } }
 interface ProxyExitLite { success?: boolean; country?: string; countryCode?: string; restricted?: boolean; error?: string }
 interface ProxyStatusLite { enabled?: boolean; exit?: ProxyExitLite | null }
+interface LatencyLite { ok?: boolean; latencyMs?: number | null; host?: string }
 
 /**
  * 代理连接状态：以真实数据判定，而非单看行情源 ping——
@@ -190,10 +251,15 @@ interface ProxyStatusLite { enabled?: boolean; exit?: ProxyExitLite | null }
 async function refreshStatus() {
   try {
     await api.get<{ ok?: boolean }>('/health');
-    const [st, ps] = await Promise.all([
+    const [st, ps, lat] = await Promise.all([
       api.get<BinanceStatusLite>('/binance/status').catch(() => null),
       api.get<ProxyStatusLite>('/binance/proxy-status').catch(() => null),
+      api.get<LatencyLite>('/market/latency').catch(() => null),
     ]);
+    // 代理模式与现货行情延迟（底部 bar 展示，以现货行情联通性为准）
+    proxyMode.value = (st?.proxy?.mode as 'off' | 'on' | 'auto' | null) ?? proxyMode.value;
+    if (st?.proxy?.url) proxyUrl.value = st.proxy.url;
+    latencyMs.value = lat?.latencyMs ?? null;
     const exit = ps?.exit;
     if (!st) {
       proxyCls.value = 'err';
@@ -272,7 +338,9 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.shell { display: flex; height: 100%; }
+/* 主体行（侧边栏 + 内容） + 底部贯穿 bar */
+.shell { display: flex; flex-direction: column; height: 100%; }
+.body-row { flex: 1; display: flex; min-height: 0; }
 
 /* ---------- 侧边栏 ---------- */
 .sidebar {
@@ -289,25 +357,57 @@ onBeforeUnmount(() => {
 .brand-sub { font-size: 10px; color: var(--aw-text-dim); }
 
 .side-nav { flex: 1; overflow-y: auto; padding: 4px 0; }
-/* 底部固定区：设置 + 连接状态并排 */
-.side-bottom {
-  border-top: 1px solid var(--aw-border);
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 8px 8px;
-}
-.side-bottom .settings-pin { border-top: none; flex: 1; min-width: 0; padding: 8px 10px; }
-/* 侧边栏内紧凑版连接状态 chip */
-.side-bottom .proxy-chip {
-  height: 28px; padding: 0 8px; font-size: 11px; flex: none; max-width: 74px;
-  justify-content: center; cursor: pointer;
-}
-.side-bottom .proxy-chip:hover { border-color: var(--aw-accent); color: var(--aw-accent); }
-.side-bottom .proxy-text { overflow: hidden; text-overflow: ellipsis; }
 .nav-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 16px; color: var(--aw-text-dim); text-decoration: none;
   font-size: 13px; border-left: 3px solid transparent; position: relative;
   transition: all var(--aw-dur-fast) var(--aw-ease);
+}
+
+/* ---------- 底部贯穿 bar ---------- */
+.bottom-bar {
+  height: 46px; flex: none;
+  border-top: 1px solid var(--aw-border);
+  background: var(--aw-bg-sidebar);
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 14px;
+}
+.bar-left { display: flex; align-items: center; gap: 4px; }
+.bar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.bar-item {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 30px; padding: 0 12px; border-radius: 8px;
+  border: 1px solid transparent; background: transparent;
+  color: var(--aw-text-dim); font-size: 13px; text-decoration: none; cursor: pointer;
+  transition: all var(--aw-dur-fast) var(--aw-ease);
+}
+button.bar-item { font: inherit; }
+.bar-item:hover { color: var(--aw-accent); background: rgba(255, 255, 255, 0.04); }
+.bar-item.active { color: var(--aw-accent); background: rgba(6, 182, 212, 0.08); }
+
+/* 代理/直连 + 联通性（小绿点 + 现货行情延迟，<100ms 绿 / <1s 橙 / 以上红） */
+.conn-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 30px; padding: 0 12px; border-radius: 8px;
+  background: var(--aw-bg-card); border: 1px solid var(--aw-border);
+  font-size: 12px; color: var(--aw-text-dim); cursor: pointer; white-space: nowrap;
+  transition: all var(--aw-dur-fast) var(--aw-ease);
+}
+.conn-chip:hover { border-color: var(--aw-accent); }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--aw-text-disabled); flex: none; }
+.conn-chip.ok { color: var(--aw-up); border-color: rgba(16, 185, 129, 0.4); }
+.conn-chip.ok .conn-dot { background: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.5); }
+.conn-chip.warn { color: var(--aw-todo); border-color: rgba(245, 158, 11, 0.4); }
+.conn-chip.warn .conn-dot { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.5); }
+.conn-chip.err { color: var(--aw-down); border-color: rgba(239, 68, 68, 0.4); }
+.conn-chip.err .conn-dot { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.5); }
+.conn-lat { font-family: var(--aw-mono); font-weight: 600; }
+.conn-mode { opacity: 0.85; }
+
+/* AI 按钮随底部 bar（覆盖原悬浮样式） */
+.bottom-bar .ai-bubble {
+  position: static; width: 36px; height: 30px; border-radius: 8px;
+  font-size: 13px; box-shadow: none;
 }
 .nav-item:hover { color: var(--aw-text-body); background: rgba(255,255,255,0.03); }
 button.nav-item { background: none; border: none; cursor: pointer; font: inherit; width: 100%; text-align: left; }
