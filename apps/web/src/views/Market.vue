@@ -1140,9 +1140,10 @@ function closeTab(sym: string) {
   }
 }
 
-/** 右侧留空填充量：用于自由往右拖拽（最新值拖到中间、右边留空） */
+/** 右侧留空填充量：允许把最新值往左拖到中间、右边留空（TradingView 式自由平移）；
+ *  约数据量的 1/5，默认视图下最新 K 线贴近窗口右侧（原先 0.6 倍导致右侧大片空白、最新 K 线不在窗口右缘） */
 function rightPadFor(len: number): number {
-  return Math.max(20, Math.ceil(len * 0.6));
+  return Math.max(16, Math.ceil(len * 0.2));
 }
 
 /** 面板布局计算（K线 + 可选副图面板，高度可调） */
@@ -1272,6 +1273,8 @@ async function load(resetZoom = true) {
  */
 let refreshingLatest = false; // 防重入：上一次刷新还在请求中则跳过本次（1s 高频下避免重叠/竞态）
 async function refreshLatest() {
+  // 切换品种/周期/tab 的异步加载进行中：跳过增量刷新，避免用新 symbol 的数据与旧数据合并产生竞态
+  if (loading.value) return;
   if (refreshingLatest) return;
   if (!chart || !candles.value.length) return load();
   refreshingLatest = true;

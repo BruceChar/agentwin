@@ -7,6 +7,10 @@
 
 <script setup lang="ts">
 import Market from './Market.vue';
+
+// 显式声明组件名：App 层 KeepAlive `:include="['DataCenter','Sentiment']"` 依赖该名字做缓存匹配，
+// 仅靠 SFC 文件名推导在某些构建缓存场景下可能失效，导致切回时整页重建、行情状态（tab/缩放/数据）被重置
+defineOptions({ name: 'DataCenter' });
 </script>
 
 <style scoped>

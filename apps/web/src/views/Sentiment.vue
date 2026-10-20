@@ -295,6 +295,9 @@ import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
 import { api, type SentimentAggregate, type SentimentRecord, type StrategyConfig } from '../api.ts';
 
+// 显式声明组件名：App 层 KeepAlive include 缓存匹配依赖该名字（同 DataCenter.vue 说明）
+defineOptions({ name: 'Sentiment' });
+
 // ---------- 常量 ----------
 const route = useRoute();
 const router = useRouter();
