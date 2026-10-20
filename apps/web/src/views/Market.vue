@@ -290,6 +290,7 @@
       <span class="dim">收</span><span :class="status.cls">{{ status.close }}</span>
       <span class="dim">涨跌</span><span :class="status.cls">{{ status.change }} · {{ status.changePct }}</span>
       <span class="dim">量</span><span>{{ status.volume }}</span>
+      <span v-if="dbgZoom" class="dim" style="margin-left:12px;color:#f0a35e">DBG</span><span v-if="dbgZoom" style="color:#f0a35e;font-size:11px">{{ dbgZoom }}</span>
     </div>
   </el-card>
 </template>
@@ -540,7 +541,7 @@ function onStratSel(id: string) {
   stratErr.value = '';
   persistStrat();
 }
-async function applyStrategy() {
+async function applyStrategy(moveView = true) {
   if (!stratSel.value) return;
   if (stratLoading.value) return;
   const cs = candles.value;
@@ -565,7 +566,9 @@ async function applyStrategy() {
     }));
     if (!stratPoints.value.length) stratErr.value = '该区间无交易信号';
     persistStrat();
-    focusStratMarks();
+    // 仅用户主动点击「应用」时聚焦标注视图；数据重载/恢复视图时的自动重算不移动视图
+    // （否则标注范围会把默认视图拉成几乎全图，最新 K 线被压缩、画面比例异常）
+    if (moveView) focusStratMarks();
     render();
   } catch (e) {
     stratErr.value = '回测失败：' + (e instanceof Error ? e.message : String(e));
@@ -1005,6 +1008,8 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let resizeHandler: (() => void) | null = null;
 let zoomStart = 0;
 let zoomEnd = 100;
+// setOption 引发的 datazoom 事件不应回写 zoomStart/zoomEnd（否则 ECharts 读回值会污染视图）
+let suppressZoomEvent = false;
 let mainGridH = 300;
 // 视图平移（上下拖拽价格轴）与历史分页状态
 let yPan = 0;                          // 价格轴上下平移量（相对可见区间基准范围）
@@ -1027,6 +1032,12 @@ let lastGridIdx: Record<string, number> = {};
 const chartH = ref(660);
 const panelH = reactive<{ vol: number; macd: number; rsi: number }>({ vol: 86, macd: 86, rsi: 86 });
 const dragHandles = ref<{ top: number }[]>([]);
+// 临时调试：追踪 zoomStart/zoomEnd 的最后设置来源（验证后移除）
+const dbgZoom = ref('');
+function dbg(msg: string) {
+  const t = new Date().toISOString().slice(11, 19);
+  dbgZoom.value = (t + ' ' + msg + '\n' + dbgZoom.value).slice(0, 3000);
+}
 
 // ---------- 多行情 tab：每品种独立窗口（数据/缩放/周期/面板各自保持，切换即恢复） ----------
 interface TabSnap {
@@ -1083,13 +1094,14 @@ function applySnap(s: TabSnap) {
   panelH.vol = s.panelH.vol;
   panelH.macd = s.panelH.macd;
   panelH.rsi = s.panelH.rsi;
+  dbg('applySnap z=' + s.zoomStart.toFixed(1) + '/' + s.zoomEnd.toFixed(1) + ' len=' + s.candles.length);
 }
 /** 渲染当前视图（chart 已存在时）并保持策略标注一致 */
 function renderAndKeepStrat() {
   invalidateStrat();
   render();
   bindTicker();
-  if (stratSel.value) applyStrategy();
+  if (stratSel.value) applyStrategy(false);
 }
 function switchTab(sym: string) {
   if (sym === activeTab.value) return;
@@ -1209,6 +1221,7 @@ async function load(resetZoom = true) {
   if (resetZoom) {
     zoomStart = 0;
     zoomEnd = 100;
+    dbgZoom.value = '';
   }
   loading.value = true;
   try {
@@ -1216,9 +1229,13 @@ async function load(resetZoom = true) {
     // 额外多拉 WARMUP 根作为左侧预热（MA/EMA 左侧值用，不参与默认可见窗口）
     const { base, factor } = intervalFetch();
     const total = Math.min((limit.value + WARMUP) * factor, Math.floor(1000 / factor) * factor);
+    // 记录请求时的品种/市场：响应返回前若已切换到其它 tab/品种，丢弃过期响应（防止覆盖当前数据）
+    const reqSymbol = symbol.value;
+    const reqMarket = market.value;
     const res = await api.get<{ candles: CandleView[] }>(
-      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + base + '&limit=' + total,
+      '/market/klines?symbol=' + reqSymbol + '&market=' + reqMarket + '&interval=' + base + '&limit=' + total,
     );
+    if (reqSymbol !== symbol.value || reqMarket !== market.value) return;
     baseCandles = res.candles;
     candles.value = factor > 1 ? aggregateCandles(baseCandles, factor) : baseCandles;
     invalidateStrat(); // 行情数据变化，旧信号不再对应图表
@@ -1229,6 +1246,7 @@ async function load(resetZoom = true) {
       // 默认视图：最近 limit 根可见，左侧预热数据隐藏（用于 MA/EMA 左侧值），右侧留空可自由平移
       const warmup = Math.max(0, candles.value.length - limit.value);
       anchorZoom(warmup, candles.value.length);
+      dbg('load warmup=' + warmup + ' limit=' + limit.value);
     }
     const cs = candles.value;
     if (cs.length) {
@@ -1239,8 +1257,9 @@ async function load(resetZoom = true) {
       lastChangePct.value = prev > 0 ? ((last.close - prev) / prev) * 100 >= 0 ? '+' + (((last.close - prev) / prev) * 100).toFixed(2) + '%' : (((last.close - prev) / prev) * 100).toFixed(2) + '%' : '';
     }
     render();
+    dbg('postRender z=' + zoomStart.toFixed(2) + '/' + zoomEnd.toFixed(2));
     // 数据整体变化（初始化/切换币种/市场/周期）：若已选策略则自动重算标注，保持信号状态
-    if (stratSel.value) applyStrategy();
+    if (stratSel.value) applyStrategy(false);
     tabSnap[activeTab.value] = snapActive(); // 数据就绪后更新当前 tab 快照
     prevTabRef.value = null; // 新 tab 加载成功：清除回滚标记
     errBanner.value = ''; // 数据恢复：清除失败横幅
@@ -1274,6 +1293,7 @@ async function load(resetZoom = true) {
 let refreshingLatest = false; // 防重入：上一次刷新还在请求中则跳过本次（1s 高频下避免重叠/竞态）
 async function refreshLatest() {
   // 切换品种/周期/tab 的异步加载进行中：跳过增量刷新，避免用新 symbol 的数据与旧数据合并产生竞态
+  dbg('tickStart z=' + zoomStart.toFixed(2) + ' uA=' + userAdjusted);
   if (loading.value) return;
   if (refreshingLatest) return;
   if (!chart || !candles.value.length) return load();
@@ -1281,9 +1301,13 @@ async function refreshLatest() {
   try {
     const { base, factor } = intervalFetch();
     const n = Math.min(limit.value * factor, Math.floor(1000 / factor) * factor);
+    // 记录请求时的品种/市场：响应返回前若用户已切换 tab/品种，丢弃过期数据（防止旧 symbol 数据被合并进新数据）
+    const reqSymbol = symbol.value;
+    const reqMarket = market.value;
     const res = await api.get<{ candles: CandleView[] }>(
-      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + base + '&limit=' + n,
+      '/market/klines?symbol=' + reqSymbol + '&market=' + reqMarket + '&interval=' + base + '&limit=' + n,
     );
+    if (reqSymbol !== symbol.value || reqMarket !== market.value) return;
     const latestBase = res.candles;
     if (!latestBase.length) return;
     const prevArr = candles.value;
@@ -1324,9 +1348,11 @@ async function refreshLatest() {
       const newToPadded = Math.min(newPadded, Math.max(newFrom + 1, oldToPadded));
       zoomStart = (newFrom / newPadded) * 100;
       zoomEnd = (newToPadded / newPadded) * 100;
+      dbg('refresh(uA) z=' + zoomStart.toFixed(1) + '/' + zoomEnd.toFixed(1) + ' len=' + cs.length + ' oldFrom=' + oldFrom);
     } else {
       const nf = Math.max(0, cs.length - 1 - leftOff);
       const nt = Math.min(cs.length, cs.length - rightOff);
+      dbg('refresh(follow) preZoom=' + zoomStart.toFixed(2) + ' uA=' + userAdjusted + ' leftOff=' + leftOff + ' rightOff=' + rightOff + ' nf=' + nf + ' nt=' + nt + ' len=' + cs.length);
       if (nf < cs.length && nt > nf + 1) {
         anchorZoom(nf, nt);
       }
@@ -1399,12 +1425,17 @@ async function refreshLatest() {
     if (macdOn.value && lastGridIdx.macd !== undefined) catAxisUpdate.push({ id: 'x-cat-' + lastGridIdx.macd, data: times });
     if (rsiOn.value && lastGridIdx.rsi !== undefined) catAxisUpdate.push({ id: 'x-cat-' + lastGridIdx.rsi, data: times });
 
-    chart.setOption({
-      dataZoom: [{ start: zoomStart, end: zoomEnd }],
-      yAxis: [{ gridIndex: 0, min: priceMin, max: priceMax }],
-      xAxis: catAxisUpdate,
-      series: seriesUpdate,
-    });
+    suppressZoomEvent = true;
+    try {
+      chart.setOption({
+        dataZoom: [{ start: zoomStart, end: zoomEnd }],
+        yAxis: [{ gridIndex: 0, min: priceMin, max: priceMax }],
+        xAxis: catAxisUpdate,
+        series: seriesUpdate,
+      });
+    } finally {
+      suppressZoomEvent = false;
+    }
 
     // 图例 / 状态栏 / 顶栏价格
     const maLegend = buildMaLegend(closes);
@@ -1844,6 +1875,8 @@ function render() {
   // 图表内部左右只留一点点边距（左侧 8px，右侧 60px 仅容纳价格标签），K 线区域更宽
   const grids = gridTop.map((g) => ({ left: 8, right: 60, top: g.top, height: g.height }));
 
+  suppressZoomEvent = true;
+  try {
   chart.setOption(
     {
       animation: false,
@@ -1873,6 +1906,9 @@ function render() {
     },
     true,
   );
+  } finally {
+    suppressZoomEvent = false;
+  }
 
   // TradingView 风格：各面板图例（左上角，悬停联动）+ 状态栏（最新可见 K 线 OHLC）
   legendTops = { price: 6 };
@@ -1954,6 +1990,7 @@ function anchorZoom(fromIdx: number, toIdx: number) {
   const paddedLen = candles.value.length + rightPadFor(candles.value.length);
   zoomStart = Math.max(0, Math.min(100, (fromIdx / paddedLen) * 100));
   zoomEnd = Math.max(zoomStart + 1e-3, Math.min(100, (toIdx / paddedLen) * 100));
+  dbg('anchor[' + fromIdx + ',' + toIdx + '] z=' + zoomStart.toFixed(1) + '/' + zoomEnd.toFixed(1) + ' len=' + candles.value.length);
 }
 
 /** 加载更早一页历史（endTime 取当前最旧 K 线之前），追加后保持当前可见窗口不变 */
@@ -1966,9 +2003,13 @@ async function loadOlderPage() {
     if (!baseMs) return;
     const n = Math.min(limit.value * factor, Math.floor(1000 / factor) * factor);
     const endTime = baseCandles[0]!.openTime - baseMs;
+    const reqSymbol = symbol.value;
+    const reqMarket = market.value;
     const res = await api.get<{ candles: CandleView[] }>(
-      '/market/klines?symbol=' + symbol.value + '&market=' + market.value + '&interval=' + base + '&limit=' + n + '&endTime=' + endTime,
+      '/market/klines?symbol=' + reqSymbol + '&market=' + reqMarket + '&interval=' + base + '&limit=' + n + '&endTime=' + endTime,
     );
+    // 请求期间切换了品种/周期：丢弃过期分页数据
+    if (reqSymbol !== symbol.value || reqMarket !== market.value) return;
     const page = res.candles;
     if (!page.length) {
       reachedStart = true; // 已到数据起点，无法再往前翻
@@ -2006,9 +2047,12 @@ function onZoom() {
   const s = arr[0]?.start;
   const e = arr[0]?.end;
   if (s == null || e == null) return;
+  dbg('onZoomREAD s=' + s.toFixed(3) + ' e=' + e.toFixed(3) + ' suppress=' + suppressZoomEvent);
+  if (suppressZoomEvent) return; // setOption 引发的 datazoom 事件：不回写 zoom
   userAdjusted = true; // 用户手动拖拽/缩放：自动刷新不再跟随最新 K 线
   zoomStart = s;
   zoomEnd = e;
+  dbg('onZoomWRITE z=' + s.toFixed(1) + '/' + e.toFixed(1));
   if (tabSnap[activeTab.value]) {
     tabSnap[activeTab.value].zoomStart = s;
     tabSnap[activeTab.value].zoomEnd = e;
