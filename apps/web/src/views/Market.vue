@@ -947,14 +947,16 @@ function rightPadFor(len: number): number {
 function computeGridLayout(panels: { key: 'vol' | 'macd' | 'rsi' }[]) {
   const gridTop: { top: number; height: number }[] = [];
   const gridIdx: Record<string, number> = {};
-  const mainH = chartH.value - 8 - panels.reduce((a, p) => a + panelH[p.key], 0) - panels.length * GRID_GAP;
-  gridTop.push({ top: 4, height: mainH });
-  mainGridH = mainH;
-  let top = 4 + mainH + GRID_GAP;
+  // 所有网格尺寸取整到物理像素，避免小数布局导致亚像素模糊
+  const mainH = Math.round(chartH.value) - 8 - panels.reduce((a, p) => a + panelH[p.key], 0) - panels.length * GRID_GAP;
+  gridTop.push({ top: 4, height: Math.round(mainH) });
+  mainGridH = Math.round(mainH);
+  let top = 4 + Math.round(mainH) + GRID_GAP;
   for (let i = 0; i < panels.length; i++) {
-    gridTop.push({ top, height: panelH[panels[i]!.key] });
+    const ph = Math.round(panelH[panels[i]!.key]);
+    gridTop.push({ top, height: ph });
     gridIdx[panels[i]!.key] = i + 1;
-    top += panelH[panels[i]!.key] + GRID_GAP;
+    top += ph + GRID_GAP;
   }
   return { gridTop, gridIdx, catAxisIdx: [0, ...panels.map((_, i) => i + 1)] };
 }
@@ -963,7 +965,7 @@ function measureChart() {
   if (!chartEl.value) return;
   const h = chartEl.value.clientHeight;
   if (h > 100 && Math.abs(h - chartH.value) > 2) {
-    chartH.value = h;
+    chartH.value = Math.round(h);   // 取整：小数容器高度会导致 canvas 亚像素渲染发虚
     render();
   }
 }
@@ -1157,11 +1159,11 @@ async function refreshLatest() {
       seriesUpdate.push({ id: 'vpvr', data: profile.map((b) => [b.volume / maxVol, b.lo, b.hi]) });
     }
     if (volOn.value) {
-      seriesUpdate.push({ id: 'vol', data: padNull(cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } }))) });
+      seriesUpdate.push({ id: 'vol', data: padNull(cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.9)' : 'rgba(245,108,108,0.9)' } }))) });
       seriesUpdate.push({ id: 'volma5', data: padNull(volMa) });
     }
     if (macdOn.value) {
-      seriesUpdate.push({ id: 'macd', data: padNull(macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } }))) });
+      seriesUpdate.push({ id: 'macd', data: padNull(macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.9)' : 'rgba(245,108,108,0.9)' } }))) });
       seriesUpdate.push({ id: 'dif', data: padNull(macdRes.dif) });
       seriesUpdate.push({ id: 'dea', data: padNull(macdRes.dea) });
     }
@@ -1243,7 +1245,10 @@ function heatColor(f: number): string {
 function render() {
   if (!chartEl.value) return;
   if (!chart) {
-    chart = echarts.init(chartEl.value);
+    // devicePixelRatio 取整（外接屏/缩放可能产生 1.25/1.5 等非整数 DPR，
+    // 非整数倍 canvas 会被浏览器重采样导致整体发虚；round 后按 1/2/3 倍超采样保证锐利）
+    const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
+    chart = echarts.init(chartEl.value, null, { devicePixelRatio: dpr });
     chart.on('datazoom', onZoom);
     chart.on('restore', onZoom);
     chart.on('axisareaselected', onZoom);
@@ -1506,9 +1511,14 @@ function render() {
         // VPVR 归一化限宽：最大量柱映射到目标宽度（网格 14%，上限 110px），其余按量等比缩放，不截断
         const maxBarW = Math.min(110, params.coordSys.width * 0.14);
         const w = Math.max(1, frac * maxBarW);
+        // 全部取整到物理像素：亚像素 rect + 半透明叠加是 VPVR 发虚/边缘模糊的主因
+        const rx = Math.round(right - w);
+        const rw = Math.round(w);
+        const ry = Math.round(yTop);
+        const rh = Math.round(h);
         return {
           type: 'rect',
-          shape: { x: right - w, y: yTop, width: w, height: h },
+          shape: { x: rx, y: ry, width: rw, height: rh },
           style: { fill: heatColor(frac) },
         };
       },
@@ -1523,7 +1533,7 @@ function render() {
       type: 'bar',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: padNull(cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.5)' : 'rgba(245,108,108,0.5)' } }))),
+      data: padNull(cs.map((c) => ({ value: c.volume, itemStyle: { color: c.close >= c.open ? 'rgba(103,194,58,0.9)' : 'rgba(245,108,108,0.9)' } }))),
       barMaxWidth: 8,
       valueFormatter: (v: unknown) => fmtVol(v as number),
     });
@@ -1550,7 +1560,7 @@ function render() {
       type: 'bar',
       xAxisIndex: gi,
       yAxisIndex: gi,
-      data: padNull(macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.55)' : 'rgba(245,108,108,0.55)' } }))),
+      data: padNull(macdRes.hist.map((h) => (h == null ? null : { value: h, itemStyle: { color: h >= 0 ? 'rgba(103,194,58,0.9)' : 'rgba(245,108,108,0.9)' } }))),
       barMaxWidth: 6,
       valueFormatter: (v: unknown) => fmtPrice(v as number),
     });
@@ -2093,15 +2103,15 @@ onBeforeUnmount(() => {
 .ht-k { color: var(--text-dim); }
 /* 可见区间最高/最低点：锚定在所在 K 线上，标签 + 连接线指向该点 */
 .hl-mark { position: absolute; transform: translateX(-50%); z-index: 6; font-size: 10px; font-family: var(--mono); padding: 1px 5px; border-radius: 3px; background: rgba(17,22,29,0.9); border: 1px solid; pointer-events: none; white-space: nowrap; line-height: 1.4; }
-.hl-high { color: #67c23a; border-color: rgba(103,194,58,0.55); }
+.hl-high { color: #67c23a; border-color: rgba(103,194,58,0.9); }
 .hl-high::after { content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%); width: 1px; height: 5px; background: rgba(103,194,58,0.8); }
-.hl-low { color: #f56c6c; border-color: rgba(245,108,108,0.55); }
+.hl-low { color: #f56c6c; border-color: rgba(245,108,108,0.9); }
 .hl-low::after { content: ''; position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%); width: 1px; height: 5px; background: rgba(245,108,108,0.8); }
 /* POC 价格标记：右侧价格列（网格右缘往右 6px），与价格标签一起显示 */
 .poc-mark { position: absolute; left: auto; right: 4px; transform: translateY(-50%); z-index: 6; font-size: 10px; color: #e6c55a; padding: 1px 4px; border-radius: 3px; background: rgba(17,22,29,0.85); border: 1px solid rgba(230,197,90,0.35); pointer-events: none; white-space: nowrap; line-height: 1.4; }
 /* 右侧价格列：最高/最低（与 POC 同列同式样，仅颜色区分） */
-.poc-mark.hl-r-h { color: #67c23a; border-color: rgba(103,194,58,0.55); }
-.poc-mark.hl-r-l { color: #f56c6c; border-color: rgba(245,108,108,0.55); }
+.poc-mark.hl-r-h { color: #67c23a; border-color: rgba(103,194,58,0.9); }
+.poc-mark.hl-r-l { color: #f56c6c; border-color: rgba(245,108,108,0.9); }
 .period-input { width: 56px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; font-family: var(--mono); padding: 2px 4px; text-align: center; }
 .period-input:focus { outline: none; border-color: var(--accent); }
 .del { border: none; background: none; color: var(--text-dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
