@@ -23,13 +23,6 @@
             <span v-if="badgeOf(item) > 0" class="nav-badge">{{ badgeOf(item) }}</span>
           </router-link>
         </nav>
-
-        <!-- 侧边栏底部右侧：BTCUSDT 实时价格（无边框文本，24h 涨跌幅） -->
-        <div class="side-btc" title="BTCUSDT 现货 · 24h 涨跌幅">
-          <span class="btc-sym">BTCUSDT</span>
-          <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
-          <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
-        </div>
       </aside>
 
       <!-- 右侧弹性内容区（主页面顶部不再显示菜单 title，侧边栏即为导航） -->
@@ -65,6 +58,12 @@
           <span>返回</span>
         </button>
         <span class="bar-ver mono">v{{ appVersion }}</span>
+        <!-- 全站统一：BTCUSDT 实时价格（无边框文本，前面空出侧边栏宽度，不与入口组挤最左） -->
+        <div class="btc-chip" title="BTCUSDT 现货 · 24h 涨跌幅">
+          <span class="btc-sym">BTCUSDT</span>
+          <span class="btc-px mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtc(btcPrice) }}</span>
+          <span class="btc-chg mono" :class="btcUp ? 'up' : 'down'">{{ fmtBtcChg(btcChg) }}</span>
+        </div>
         <!-- 已生效启动的策略（运行中，来自 /strategy-runtime） -->
         <div v-if="activeRuntimes.length" class="bar-strategies" title="已生效启动的策略">
           <span class="bs-badge">策略 {{ activeRuntimes.length }}</span>
@@ -371,12 +370,6 @@ onBeforeUnmount(() => {
   font-size: 13px; border-left: 3px solid transparent; position: relative;
   transition: all var(--aw-dur-fast) var(--aw-ease);
 }
-/* 侧边栏底部右侧：BTC 实时价格（无边框文本，右对齐） */
-.side-btc {
-  border-top: 1px solid var(--aw-border);
-  display: flex; align-items: baseline; justify-content: flex-end; gap: 6px;
-  padding: 10px 14px; font-size: 11px; white-space: nowrap; overflow: hidden;
-}
 
 /* ---------- 底部贯穿 bar ---------- */
 .bottom-bar {
@@ -476,7 +469,8 @@ button.nav-item { background: none; border: none; cursor: pointer; font: inherit
 
 
 
-/* ---------- 底部 bar BTC 实时价格（已移至侧边栏底部，此处仅保留颜色类） ---------- */
+/* 底部 bar：BTC 实时价格（无边框文本，margin 侧边栏宽度，视觉上从侧边栏右缘开始） */
+.btc-chip { display: flex; align-items: baseline; gap: 7px; margin-left: var(--aw-sidebar-w); }
 .btc-sym { color: var(--aw-text-dim); font-size: 11px; font-weight: 600; }
 .btc-px { font-size: 13px; font-weight: 700; }
 .btc-chg { font-size: 11px; }
