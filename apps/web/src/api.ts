@@ -94,3 +94,10 @@ export interface SentimentAggregate {
   lastAt: number | null;
 }
 export interface JournalEntry { id: string; kind: string; title: string; body: string; tags: string[]; createdAt: number }
+
+// ---------- 币安交易对（行情搜索新开行情窗口） ----------
+export interface BinanceSymbolInfo { symbol: string; baseAsset: string; quoteAsset: string; market: string }
+export interface BinanceSymbolsResp { symbols: BinanceSymbolInfo[]; updatedAt: number }
+export function binanceSymbols(): Promise<BinanceSymbolsResp> {
+  return api.get<BinanceSymbolsResp>('/binance/symbols');
+}

@@ -63,7 +63,10 @@
       <main class="content">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
-            <component :is="Component" />
+            <!-- KeepAlive 缓存行情/舆情两页：行情↔舆情切换保留 K 线状态（缩放/拖拽/数据），避免重载 -->
+            <keep-alive :include="['DataCenter', 'Sentiment']">
+              <component :is="Component" />
+            </keep-alive>
           </transition>
         </router-view>
       </main>
@@ -106,7 +109,8 @@ const navItems: NavItem[] = [
   { path: '/', label: '仪表盘', icon: 'Odometer' },
   { path: '/journal', label: '日志中心', icon: 'Notebook', badgeKey: 'journal' },
   { path: '/strategies', label: '策略中心', icon: 'SetUp', badgeKey: 'strategies' },
-  { path: '/data', label: '数据中心', icon: 'DataLine' },
+  { path: '/data', label: '行情', icon: 'DataLine' },
+  { path: '/sentiment', label: '舆情', icon: 'ChatDotRound' },
 ];
 
 const counts = ref<Record<string, number>>({ plan: 0, holding: 0, pending: 0, done: 0 });

@@ -11,8 +11,23 @@
         <span class="mk-name">{{ t.symbol }}</span>
         <span v-if="tabs.length > 1" class="mk-x" title="关闭该行情" @click.stop="closeTab(t.symbol)">×</span>
       </div>
-      <el-select class="mk-add" :model-value="''" placeholder="＋ 新行情" size="small" style="width: 96px" @change="addTab" @click.stop>
-        <el-option v-for="s in symbols.filter((x) => !tabs.some((t) => t.symbol === x))" :key="s" :value="s" :label="s" />
+      <!-- 搜索币安全量交易对（币/股票代币等），选中未开的新开行情窗口，已开的切换 -->
+      <el-select
+        class="mk-add"
+        :model-value="''"
+        filterable
+        remote
+        :remote-method="searchSymbols"
+        :loading="symLoading"
+        placeholder="搜索交易对…"
+        size="small"
+        style="width: 132px"
+        :clearable="false"
+        no-data-text="输入代码搜索，如 BTC / TSLA"
+        @change="addTab"
+        @click.stop
+      >
+        <el-option v-for="s in searchResults" :key="s" :value="s" :label="s" />
       </el-select>
     </div>
     <!-- TradingView 风格顶栏：品种 + 周期选择 + 指标菜单 -->
@@ -280,7 +295,8 @@ import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, react
 import * as echarts from 'echarts';
 import { ElMessage } from 'element-plus';
 import { ArrowLeft, DataAnalysis, DataLine, Delete, EditPen, Histogram, Odometer, PieChart, Top, TrendCharts, View } from '@element-plus/icons-vue';
-import { api, type BacktestResult, type StrategyMeta } from '../api.ts';
+import { api, binanceSymbols, type BacktestResult, type StrategyMeta } from '../api.ts';
+import { useRouter } from 'vue-router';
 import { accountStore } from '../store.ts';
 import { subscribePrice } from '../lib/prices.ts';
 import {
@@ -298,6 +314,31 @@ import {
 
 // ---------- 常量 ----------
 const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
+// 币安全量交易对（后端 /api/binance/symbols 现货+USDT-M 合约，含股票代币等），本地过滤搜索
+const allSymbols = ref<string[]>([]);
+const searchResults = ref<string[]>([]);
+const symLoading = ref(false);
+async function loadAllSymbols() {
+  symLoading.value = true;
+  try {
+    const r = await binanceSymbols();
+    allSymbols.value = r.symbols.map((s) => s.symbol).sort((a, b) => a.localeCompare(b));
+    searchResults.value = allSymbols.value.slice(0, 50);
+  } catch { /* 代理/网络不可用时静默：搜索框保持可输入，结果为空提示 */ }
+  finally { symLoading.value = false; }
+}
+/** 本地过滤币安全量交易对（remote 模式但无网络请求）：输入代码/币名匹配 symbol 或 baseAsset */
+function searchSymbols(q: string) {
+  const query = q.trim().toUpperCase();
+  if (!query) {
+    searchResults.value = allSymbols.value.slice(0, 50);
+    return;
+  }
+  const hit = allSymbols.value.filter((s) => s.includes(query)).slice(0, 50);
+  // 无精确命中时优先把 symbol 开头匹配的排前面（如输入 BTC → BTC 开头的交易对）
+  if (hit.length > 0) searchResults.value = hit;
+  else searchResults.value = allSymbols.value.filter((s) => s.replace(/USDT|BUSD|FDUSD|BTC|ETH$/, '') === query || s.startsWith(query)).slice(0, 50);
+}
 const marketOptions = [
   { value: 'SPOT', label: '现货' },
   { value: 'USDT_M', label: 'U本位合约' },
@@ -383,6 +424,7 @@ const WARMUP = 250;
 
 // ---------- 状态 ----------
 const symbol = ref('BTCUSDT');
+const router = useRouter();
 const market = ref('SPOT');
 const interval = ref('1h');
 // 时间周期：置顶 / 常用 / 自定义 三组（按账户持久化）
@@ -782,9 +824,10 @@ function bindTicker() {
 
 function onSymbol(v: string) { symbol.value = v; invalidateStrat(); load(true); bindTicker(); }
 function onMarket(v: string) { market.value = v; invalidateStrat(); load(true); bindTicker(); }
-const emit = defineEmits<{ 'open-sentiment': [] }>();
-/** 舆情入口：行情页右上角 icon，点击切到舆情视图（DataCenter 内 KeepAlive 切换） */
-function onSentiment() { emit('open-sentiment'); }
+/** 舆情入口：行情页右上角 icon，进入独立舆情页并携带当前行情币种（舆情页按 symbol 联动） */
+function onSentiment() {
+  router.push({ path: '/sentiment', query: { symbol: activeTab.value } });
+}
 function changeInterval(v: string) {
   if (interval.value === v) return;
   interval.value = v;
@@ -2096,9 +2139,10 @@ onMounted(() => {
   load();
   bindTicker();
   startAutoRefresh();
+  loadAllSymbols();
 });
 
-// 数据中心 Tab（行情↔舆情）用 KeepAlive 保留状态：切走暂停刷新，切回恢复
+// 行情/舆情在 App 层 KeepAlive 互保状态（跨路由切换）：切走暂停刷新，切回恢复
 onDeactivated(() => {
   if (timer) { clearInterval(timer); timer = null; }
 });

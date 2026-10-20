@@ -52,6 +52,21 @@
       <div v-if="extremeWarn" class="warn-pill">{{ extremeWarn }}</div>
     </div>
 
+    <!-- ══════════ 平台指标：跨平台数据聚合（CMC / Binance 等，数据源接入中） ══════════ -->
+    <div class="panel pm-panel">
+      <div class="panel-head">
+        <span class="panel-title">平台指标</span>
+        <span class="panel-sub">舆情聚合的一部分 · 跨平台数据源接入中</span>
+      </div>
+      <div class="pm-grid">
+        <div v-for="m in METRICS" :key="m.key" class="pm-card">
+          <div class="pm-name">{{ m.name }}</div>
+          <div class="pm-val mono">—</div>
+          <div class="pm-src">{{ m.src }}</div>
+        </div>
+      </div>
+    </div>
+
     <!-- ══════════ 上区：情绪趋势 + 聚合仪表盘 ══════════ -->
     <div class="upper">
       <div class="panel trend-panel">
@@ -283,12 +298,21 @@ import { api, type SentimentAggregate, type SentimentRecord, type StrategyConfig
 // ---------- 常量 ----------
 const route = useRoute();
 const router = useRouter();
-/** 返回行情主视图（行情页右上角 icon 进入舆情，这里回退） */
+/** 返回行情主视图（行情页右上角 icon 进入舆情，这里回行情页） */
 function backToMarket() {
-  router.replace({ query: { ...route.query, tab: 'market' } });
+  router.push('/data');
 }
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
+
+/** 平台指标（规划）：舆情聚合页的跨平台数据板块，数据源逐步接入 */
+const METRICS = [
+  { key: 'cmc-fng', name: 'CMC 恐惧贪婪指数', src: 'CoinMarketCap' },
+  { key: 'funding', name: '资金费率', src: 'Binance' },
+  { key: 'btc-dom', name: 'BTC 市占率', src: 'CoinMarketCap' },
+  { key: 'oi', name: '未平仓合约', src: 'Binance' },
+  { key: 'long-short', name: '多空账户比', src: 'Binance' },
+];
 const COIN_COLORS: Record<string, string> = {
   BTCUSDT: '#F7931A', ETHUSDT: '#627EEA', SOLUSDT: '#14F195',
   BNBUSDT: '#F3BA2F', XRPUSDT: '#00AAE4', DOGEUSDT: '#C2A633',
@@ -315,7 +339,8 @@ const BULLISH = new Set(['surge', 'rally', 'soar', 'gain', 'upgrade', 'adopt', '
 const BEARISH = new Set(['crash', 'plunge', 'drop', 'fall', 'dump', 'hack', 'exploit', 'ban', 'lawsuit', 'securities', 'fine', 'arrest', 'rug pull', 'fraud', 'bearish', 'sell-off', 'decline', 'fear', 'outflow', 'delist', 'collapse', 'warning', 'scam', 'pump and dump', 'regulation']);
 
 // ---------- 状态 ----------
-const symbol = ref('BTCUSDT');
+/** 初始币种：优先取行情页带入的 symbol（行情 icon 进入联动对应币种），否则默认 BTCUSDT */
+const symbol = ref((route.query.symbol as string) || 'BTCUSDT');
 const range = ref('24h');
 const customRange = ref<[Date, Date] | null>(null);
 const sources = ref<string[]>(['rss']);
@@ -396,6 +421,17 @@ function setRange(k: string) {
   if (k !== 'custom') load();
 }
 watch(customRange, () => { if (range.value === 'custom') load(); });
+
+/** 行情页切换币种后再次进入：按新的 symbol 联动刷新舆情 */
+watch(
+  () => route.query.symbol,
+  (v) => {
+    if (typeof v === 'string' && SYMBOLS.includes(v) && v !== symbol.value) {
+      symbol.value = v;
+      onSymbolChange();
+    }
+  },
+);
 
 function toggleSource(key: string) {
   const i = sources.value.indexOf(key);
@@ -822,6 +858,17 @@ onBeforeUnmount(() => { ro?.disconnect(); chart?.dispose(); chart = null; });
 
 /* ---------- 上区 ---------- */
 .upper { display: flex; gap: 12px; flex: 0 0 auto; height: 300px; }
+/* 平台指标（跨平台聚合占位） */
+.pm-panel { flex: 0 0 auto; }
+.pm-grid { display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 16px 16px; }
+.pm-card {
+  flex: 1 1 180px; min-width: 150px; display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+.pm-name { font-size: 12px; color: var(--aw-text-dim); }
+.pm-val { font-size: 16px; color: var(--aw-text-dim); }
+.pm-src { font-size: 11px; color: var(--aw-text-faint, rgba(255,255,255,0.35)); }
 .trend-panel { flex: 1.9; }
 .gauge-panel { flex: 1; }
 .trend-chart { flex: 1; min-height: 0; margin: 8px 12px 12px; }

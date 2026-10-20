@@ -353,6 +353,25 @@ export function registerRoutes(app: FastifyInstance, services: AppServices, pape
     return { ...st, proxy: services.proxySettings.get() };
   });
 
+  // 币安全量可交易对（现货 + USDT-M 合约，含股票代币等）：行情页搜索新开行情窗口用，10 分钟缓存
+  let symbolsCache: { list: { symbol: string; baseAsset: string; quoteAsset: string; market: string }[]; at: number } | null = null;
+  app.get('/api/binance/symbols', async () => {
+    const now = Date.now();
+    if (!symbolsCache || now - symbolsCache.at > 10 * 60_000) {
+      const [spot, um] = await Promise.all([
+        services.rest.exchangeInfo('SPOT').catch(() => []),
+        services.rest.exchangeInfo('USDT_M').catch(() => []),
+      ]);
+      const seen = new Set<string>();
+      const list = [...spot, ...um]
+        .filter((s) => s.status === 'TRADING')
+        .map((s) => ({ symbol: s.symbol, baseAsset: s.baseAsset, quoteAsset: s.quoteAsset, market: s.market }))
+        .filter((s) => (seen.has(s.symbol) ? false : (seen.add(s.symbol), true)));
+      symbolsCache = { list, at: now };
+    }
+    return { symbols: symbolsCache.list, updatedAt: symbolsCache.at };
+  });
+
   // 运行时代理开关（前端可手动切换，即时生效）
   app.get('/api/binance/proxy', async () => services.proxySettings.get());
 
